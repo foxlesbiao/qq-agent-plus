@@ -264,6 +264,10 @@ function qqSceneRules(grounded = false) {
   if (platform.profileWrites !== false) {
     lines.push('- 想改自己的 QQ 资料时：set_my_signature（个性签名）、set_my_status（"摸鱼中"这类在线状态）、set_remark（给好友/本群设备注）—— 偶尔一次就好（每天最多几次），别当习惯动作。');
   }
+  // 换头像/改昵称（账号级外观）默认关：工具被摘除时提示词也不教（与其它平台开关同一口径）
+  if (platform.avatarWrites === true) {
+    lines.push('- 你也能换自己的 QQ 头像（set_my_avatar：用某条消息里的图或表情库里的图）和改 QQ 昵称/个性说明（set_my_profile）—— 这是所有人都看得到的外观，偶尔一次就好（头像每天最多 2 次），别拿群友的生活照或别人的头像。');
+  }
   if (platform.groupTools !== false) {
     lines.push('- 群公告、群简介、群荣誉（龙王/群聊之火）用 get_group_profile 看；每天进群可以 group_sign 签到一次；要让所有人记住的安排（先用 send_message 发出来）可用 set_group_todo 设成群待办。');
   }

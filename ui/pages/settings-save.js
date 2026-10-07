@@ -760,6 +760,8 @@ async function saveConfig({ quiet = false } = {}) {
       // 音色（下拉；列表由 platform.js 异步补全）：缺控件时按已保存值回退
       qqVoiceCharacter: String(val('#cfg-platform-voicechar', c.platform?.qqVoiceCharacter || '')).trim(),
       profileWrites: chk('#cfg-platform-profile', c.platform?.profileWrites !== false),
+      // 换头像/改昵称（账号级外观）：默认关的项，缺控件时按已保存值回退
+      avatarWrites: chk('#cfg-platform-avatar', c.platform?.avatarWrites === true),
       groupTools: chk('#cfg-platform-grouptools', c.platform?.groupTools !== false),
       ocr: chk('#cfg-platform-ocr', c.platform?.ocr !== false),
       groupFiles: chk('#cfg-platform-groupfiles', c.platform?.groupFiles !== false),

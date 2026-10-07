@@ -73,7 +73,9 @@ export const EXPERIMENTAL_SAME_ROUND_ACTION_TOOLS = new Set([
   'send_group_file',  // 对外写：发文件到群
   'like_album_photo', // 对外写：相册点赞
   'comment_album_photo', // 对外写：相册评论
-  'upload_to_group_album' // 对外写：传图进群相册（默认关，控制台开）
+  'upload_to_group_album', // 对外写：传图进群相册（默认关，控制台开）
+  'set_my_avatar',    // 对外写：换 QQ 头像（账号级外观，默认关；有每日闸门）
+  'set_my_profile'    // 对外写：改 QQ 昵称/个性说明/性别（默认关；与签名共享闸门）
 ]);
 
 export function experimentalToolSchedulerConfig(cfg = {}) {

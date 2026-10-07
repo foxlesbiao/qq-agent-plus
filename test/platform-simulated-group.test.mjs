@@ -211,6 +211,37 @@ it('模拟群：签名 / 在线状态 / 备注 / 陌生人资料 / 翻译 走真
   });
 });
 
+it('模拟群：换头像 / 改 QQ 资料走真 HTTP；改昵称后登录信息随之刷新', async () => {
+  resetPlatformQuotasForTest();
+  const store = new ChatStore(0, { dataDir: dir });
+  try {
+    await withSim({
+      respond: (action) => {
+        if (action === 'get_login_info') return { user_id: 3808482642, nickname: '犊子二号' };
+        return {};
+      }
+    }, async (sim, client) => {
+      const ctx = groupCtx(client, {
+        store: { findByMid: () => ({ mid: '9', media: [{ kind: 'image', url: 'https://example.com/pic.png' }] }), recent: () => [] },
+        // 本地托管的图（base64）——与 send_sticker 同一口径，不走外网探活
+        stickers: { findForSend: async () => ({ id: 'st1', url: 'base64://aGVsbG8=', localFile: 'f.png' }) }
+      });
+
+      const avatar = parse(await tool('set_my_avatar').execute(ctx, { messageId: '9' }));
+      assert.equal(avatar.changed, true);
+      assert.deepEqual(sim.last('set_qq_avatar').params, { file: 'https://example.com/pic.png' });
+
+      const prof = parse(await tool('set_my_profile').execute(ctx, { nickname: '犊子二号', sex: 1 }));
+      assert.equal(prof.nickname, '犊子二号');
+      assert.deepEqual(sim.last('set_qq_profile').params, { nickname: '犊子二号', sex: 1 });
+      assert.equal(sim.byAction('get_login_info').length, 1, '改昵称后要重新拉一次登录信息');
+      assert.equal(client.selfNickname, '犊子二号', '真客户端要把新昵称带回来（@我 判定靠它）');
+    });
+  } finally {
+    store.close();
+  }
+});
+
 it('模拟群：群文件（列目录 / 直链 / 发文本与直链文件）走真 HTTP', async () => {
   const store = new ChatStore(0, { dataDir: dir });
   try {
@@ -462,6 +493,13 @@ it('提示词门控：平台开关关掉后不再教用法（工具已被摘除�
   const pinnedVoice = withPlatform({ qqVoiceCharacter: 'lucy-voice-houge' });
   assert.ok(pinnedVoice.includes('音色已由管理员固定'), '固定音色后要换口径');
   assert.ok(!pinnedVoice.includes('先不传 character 拿角色列表'), '固定后不该再教拉列表');
+
+  // 换头像/改昵称默认关 → 不教；开了才教（工具也是同门控）
+  assert.ok(!all.includes('set_my_avatar'), '默认关：提示词不该教换头像');
+  const withAvatar = withPlatform({ avatarWrites: true });
+  assert.ok(withAvatar.includes('set_my_avatar'), '开了外观开关才教');
+  assert.ok(withAvatar.includes('set_my_profile'));
+  assert.ok(withAvatar.includes('头像每天最多 2 次'), '额度要写进提示词');
 
   const noProfile = withPlatform({ profileWrites: false });
   assert.ok(!noProfile.includes('set_my_signature'));

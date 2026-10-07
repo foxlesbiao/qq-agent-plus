@@ -27,11 +27,13 @@ export function resetImageQuotaForTest() {
 const reactionQuota = createQuota({ windowMs: 3600_000 });      // 贴表情：每小时封顶
 const profileQuota = createQuota({ windowMs: 24 * 3600_000 });  // 签名/在线状态：每天封顶
 const remarkQuota = createQuota({ windowMs: 24 * 3600_000 });   // 备注：每天封顶
+const avatarQuota = createQuota({ windowMs: 24 * 3600_000 });   // 换头像：每天封顶（最显眼，卡最紧）
 /** 仅供测试：清空平台互动闸门。 */
 export function resetPlatformQuotasForTest() {
   reactionQuota.reset();
   profileQuota.reset();
   remarkQuota.reset();
+  avatarQuota.reset();
 }
 
 // 平台能力开关（控制台「平台能力」页）→ 工具名的映射：orchestrator 的工具过滤与测试共用一份，
@@ -40,6 +42,7 @@ export const PLATFORM_TOOL_GATES = {
   reactions: ['react_to_message', 'get_message_reactions'],
   qqVoice: ['send_qq_voice'],
   profileWrites: ['set_my_signature', 'set_my_status', 'set_remark'],
+  avatarWrites: ['set_my_avatar', 'set_my_profile'],
   groupTools: ['get_group_profile', 'group_sign', 'set_group_todo'],
   ocr: ['read_image_text'],
   groupFiles: ['list_group_files', 'group_file_url', 'send_group_file'],
@@ -47,16 +50,21 @@ export const PLATFORM_TOOL_GATES = {
   albumUpload: ['upload_to_group_album']
 };
 
+// "默认关"的开关（未显式 true 就不放行）。与 config.js 的 platform 默认值一一对应：
+// 会往群里**发布内容**或改**账号外观**的项默认关（相册上传、换头像/改昵称）。
+const PLATFORM_DEFAULT_OFF = new Set(['albumUpload', 'avatarWrites']);
+
 /**
  * 某个工具在当前平台配置下是否可用。默认值语义与 config.js 的 platform 段一致：
- * 只有 albumUpload 是"默认关"（未显式 true 就不放行），其余都是"默认开"（显式 false 才关）。
+ * 只有 PLATFORM_DEFAULT_OFF 里的键是"默认关"（未显式 true 就不放行），其余都是"默认开"
+ * （显式 false 才关）。
  */
 export function platformToolAllowed(name, platform = {}) {
   const tool = String(name || '');
   for (const [key, tools] of Object.entries(PLATFORM_TOOL_GATES)) {
     if (!tools.includes(tool)) continue;
     const raw = platform?.[key];
-    return key === 'albumUpload' ? raw === true : raw !== false;
+    return PLATFORM_DEFAULT_OFF.has(key) ? raw === true : raw !== false;
   }
   return true;
 }
@@ -828,6 +836,99 @@ export function buildToolDefs() {
           return ok({ wording, note: '在线状态已改。' });
         } catch (error) {
           return err(`改在线状态失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'set_my_avatar',
+      description: '换你自己的 QQ 头像（账号级，所有人都看得到）。图源二选一：messageId＝用某条消息里的图；stickerId＝表情库里的图（生成的图也在库里，见【可用表情包】）。很显眼的能力：别拿群友的生活照/别人的头像，偶尔一次就好（每天最多 2 次）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          messageId: { type: ['integer', 'string'], description: '图片所在消息的 id（聊天记录里的 #数字）' },
+          stickerId: { type: 'string', description: '表情库里的图（备注名或 id）' }
+        }
+      },
+      async execute(ctx, args) {
+        try {
+          const stickerId = unquoteJsonString(String(args.stickerId ?? '')).trim();
+          const mid = normalizeMid(args.messageId);
+          if (!stickerId && !mid) return err('要给图源：messageId（消息里的图）或 stickerId（表情库里的图）二选一');
+          let file = '';
+          if (stickerId) {
+            const sticker = await ctx.stickers.findForSend(stickerId).catch(() => null);
+            if (!sticker?.url) return err(`找不到表情 ${stickerId}。${await stickerLookupHint(ctx, stickerId)}`);
+            // 与 send_sticker 同一道防线：本地托管的走 base64，公网链接必须过校验
+            const managedInline = Boolean(sticker.localFile) && sticker.url.startsWith('base64://');
+            if (!managedInline) {
+              try {
+                await validateImageUrl(sticker.url);
+              } catch (error) {
+                return err(`表情 ${sticker.id} 的图片地址不合法，已拒绝用作头像：${error?.message ?? error}`);
+              }
+            }
+            file = sticker.url;
+          } else {
+            const entry = ctx.store.findByMid(ctx.chatKey, mid);
+            if (!modelVisible(entry)) return err(`当前会话找不到消息 ${mid}。${midHint(ctx)}`);
+            const media = (Array.isArray(entry.media) ? entry.media : []).filter((m) => m && m.kind === 'image');
+            const target = media.find((m) => /^https?:\/\//i.test(String(m.url || ''))) || media[0];
+            if (!target) return ok(`消息 ${mid} 里没有可用的图片。`);
+            file = /^https?:\/\//i.test(String(target.url || '')) ? String(target.url) : String(target.file || '');
+            if (!file) return err('这张图拿不到可用的地址');
+          }
+          avatarQuota.configure({ globalMax: 2, perChatMax: Infinity });
+          const reservedAt = Date.now();
+          if (!avatarQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的换头像次数用完了（每天最多 2 次）');
+          try {
+            await ctx.onebot.setAvatar(file, { signal: ctx.signal });
+          } catch (error) {
+            avatarQuota.refund(ctx.chatKey, reservedAt);
+            throw error;
+          }
+          return ok({ changed: true, note: '头像已换（各端可能要过一会儿才刷新出来）。' });
+        } catch (error) {
+          return sendErr(error, {}, `换头像失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'set_my_profile',
+      description: '改你自己的 QQ 资料：nickname＝QQ 昵称（好友列表与群里显示的名字，改完"@我"也认新名字）、personalNote＝个性说明（资料页那行小字）、sex＝性别（0 未知 / 1 男 / 2 女）。至少给一项；偶尔一次就好（与签名/在线状态共享每日额度）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          nickname: { type: 'string', description: 'QQ 昵称（≤24 字）' },
+          personalNote: { type: 'string', description: '个性说明（≤40 字，别写联系方式）' },
+          sex: { type: ['integer', 'string'], description: '性别：0 未知 / 1 男 / 2 女' }
+        }
+      },
+      async execute(ctx, args) {
+        try {
+          const nickname = safeSlice(String(args.nickname ?? '').trim(), 24);
+          const wantsNote = args.personalNote !== undefined && args.personalNote !== null;
+          const personalNote = wantsNote ? safeSlice(String(args.personalNote).trim(), 40) : undefined;
+          const sexRaw = String(args.sex ?? '').trim();
+          if (!nickname && !wantsNote && !sexRaw) return err('昵称 / 个性说明 / 性别至少要给一项');
+          let sex;
+          if (sexRaw) {
+            sex = Number(normalizeMid(sexRaw));
+            if (![0, 1, 2].includes(sex)) return err('sex 只能是 0（未知）/ 1（男）/ 2（女）');
+          }
+          profileQuota.configure({ globalMax: 3, perChatMax: Infinity });
+          const reservedAt = Date.now();
+          if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的资料改动次数用完了（每天最多几次）');
+          try {
+            await ctx.onebot.setProfile({ nickname: nickname || undefined, personalNote, sex }, { signal: ctx.signal });
+          } catch (error) {
+            profileQuota.refund(ctx.chatKey, reservedAt);
+            throw error;
+          }
+          // 改昵称后必须刷新登录信息：@我 判定、提示词里的名字、自己贴的表情回应去重都读它
+          if (nickname) await ctx.onebot.refreshSelfInfo?.();
+          return ok({ nickname: nickname || undefined, personalNote, sex, note: '资料已改。' });
+        } catch (error) {
+          return sendErr(error, {}, `改资料失败：${error?.message ?? error}`);
         }
       }
     },

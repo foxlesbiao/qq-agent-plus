@@ -586,6 +586,44 @@ export class OneBotClient {
     return flat;
   }
 
+  /**
+   * 换 QQ 头像（账号级，所有人都看得到）。file 是"图片源"：http(s) 直链、base64:// 或
+   * 协议端能读到的本地路径（SnowLuma 的 image 字段三种都收）。
+   */
+  async setAvatar(file, { signal } = {}) {
+    const source = String(file ?? '').trim();
+    if (!source) throw new OneBotActionError('头像图片源不能为空', { action: 'set_qq_avatar', outcome: 'failed' });
+    return this.call('set_qq_avatar', { file: source }, 60000, signal);
+  }
+
+  /**
+   * 改 QQ 资料（昵称 / 个性说明 / 性别）。只带传进来的字段：没传的字段协议端不动。
+   * 改昵称后要 refreshSelfInfo()，否则 @我 判定与提示词还在用旧名字。
+   */
+  async setProfile({ nickname, personalNote, sex } = {}, { signal } = {}) {
+    const params = {};
+    if (nickname !== undefined && nickname !== null && String(nickname).trim() !== '') params.nickname = String(nickname).trim();
+    if (personalNote !== undefined && personalNote !== null) params.personal_note = String(personalNote);
+    if (sex !== undefined && sex !== null && sex !== '') params.sex = Number(sex);
+    if (!Object.keys(params).length) {
+      throw new OneBotActionError('昵称 / 个性说明 / 性别至少要给一项', { action: 'set_qq_profile', outcome: 'failed' });
+    }
+    return this.call('set_qq_profile', params, 20000, signal);
+  }
+
+  /**
+   * 重新拉一次登录信息。改过昵称之后必须刷新：@我 判定、提示词里的"你在群里的名字"、
+   * 自己贴的表情回应去重都读 selfInfo/selfNickname（2026-10-07 换头像/改资料接入）。
+   * 拉不到就沿用旧值（不能让一次刷新失败把已知身份清空）。
+   */
+  async refreshSelfInfo() {
+    try {
+      const info = await this.call('get_login_info', {}, 15000);
+      if (info && typeof info === 'object') this.selfInfo = info;
+    } catch { /* 沿用旧 selfInfo */ }
+    return this.selfInfo;
+  }
+
   async sendFace(kind, id, faceId, { replyToMessageId = null, atUserId = null, text = null, signal } = {}) {
     const segments = [];
     if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {

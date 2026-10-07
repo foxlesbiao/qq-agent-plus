@@ -162,14 +162,14 @@ test('真实 DOM 冒烟：「平台能力」页的开关能真的存下去（保
     menuItem.click();
     await settle(80);
 
-    // ① 渲染侧：这一页的复选框 id 就是这 11 个
+    // ① 渲染侧：这一页的复选框 id 就是这 12 个
     const renderedIds = [...window.document.querySelectorAll('#settings-form input[type="checkbox"]')]
       .map((el) => el.id).filter(Boolean).sort();
     assert.deepEqual(renderedIds, [
-      'cfg-platform-albumread', 'cfg-platform-albumupload', 'cfg-platform-forwardcards',
-      'cfg-platform-groupfiles', 'cfg-platform-grouptools', 'cfg-platform-ocr',
-      'cfg-platform-profile', 'cfg-platform-qqvoice', 'cfg-platform-reactions',
-      'cfg-platform-readreceipts', 'cfg-typing'
+      'cfg-platform-albumread', 'cfg-platform-albumupload', 'cfg-platform-avatar',
+      'cfg-platform-forwardcards', 'cfg-platform-groupfiles', 'cfg-platform-grouptools',
+      'cfg-platform-ocr', 'cfg-platform-profile', 'cfg-platform-qqvoice',
+      'cfg-platform-reactions', 'cfg-platform-readreceipts', 'cfg-typing'
     ], '「平台能力」页渲染出来的开关集合变了');
 
     // ② 保存侧：settings-save.js 读取的控件 id 必须与渲染侧一一对应（改名没同步就红）
@@ -202,10 +202,11 @@ test('真实 DOM 冒烟：「平台能力」页的开关能真的存下去（保
     assert.equal(patch.platform?.reactions, false, '改过的开关要按界面状态存下去（挂了错误分区时这里是 undefined）');
     assert.equal(patch.platform?.qqVoice, true, '没动过的开关按当前值存');
     assert.equal(patch.platform?.readReceipts, false, '默认关的项没勾 = false');
+    assert.equal(patch.platform?.avatarWrites, false, '换头像/改昵称默认关（没勾就是 false）');
     assert.equal(patch.platform?.qqVoiceCharacter, 'lucy-voice-daji', '选中的音色要跟着保存');
     assert.deepEqual(Object.keys(patch.platform || {}).sort(), [
-      'albumRead', 'albumUpload', 'forwardCards', 'groupFiles', 'groupTools', 'ocr',
-      'profileWrites', 'qqVoice', 'qqVoiceCharacter', 'reactions', 'readReceipts'
+      'albumRead', 'albumUpload', 'avatarWrites', 'forwardCards', 'groupFiles', 'groupTools',
+      'ocr', 'profileWrites', 'qqVoice', 'qqVoiceCharacter', 'reactions', 'readReceipts'
     ], '这一页的每个开关/选择都要进 patch（漏一个 = 下次的"配了不生效"）');
     assert.equal(patch.send?.typingIndicator, true, '「正在输入」也归这一页保存');
   } finally { window.happyDOM?.abort?.(); }

@@ -383,6 +383,9 @@ test('onebot：get_login_info 连续失败后重试，selfId 最终拿到', asyn
   // 建联成功后客户端还会补一次系统表情目录（fetch_sys_faces，2026-10-07 协议端能力升级）；
   // 假服务端对它回 404，属于预期内的失败（补缺失败静默）。这里只约束请求形态：
   // 两个路径都必须是 POST 且不带查询串（令牌走请求头）。
+  // 它是**建联后的异步补缺**，不能在拿到 selfId 时假定它已经发出 —— 机器忙时会差一条请求的距离
+  // （2026-10-07 全量并行跑时偶发过一次"只看到 get_login_info"）。先等它出现再断言形态。
+  await waitFor(() => seen.includes('POST /fetch_sys_faces'), 5000);
   assert.deepEqual([...new Set(seen)].sort(), ['POST /fetch_sys_faces', 'POST /get_login_info'],
     `请求形态必须恰好是 POST /get_login_info（令牌走请求头，不许出现在查询串），实际：${seen.join(', ')}`);
 });

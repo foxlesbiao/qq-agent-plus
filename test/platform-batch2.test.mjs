@@ -47,17 +47,22 @@ it('工具表：第二批工具都在；平台开关默认值正确', () => {
     assert.ok(names.has(expected), `缺工具 ${expected}`);
   }
   assert.equal(DEFAULT_CONFIG.platform.albumUpload, false, '相册上传默认关');
+  assert.equal(DEFAULT_CONFIG.platform.avatarWrites, false, '换头像/改昵称默认关（账号级外观）');
   assert.equal(DEFAULT_CONFIG.platform.readReceipts, false, '已读标记默认关');
   assert.equal(DEFAULT_CONFIG.platform.forwardCards, true, '日报卡片默认开');
   assert.equal(DEFAULT_CONFIG.platform.qqVoiceCharacter, '', 'QQ 语音音色默认不固定');
   assert.equal(DEFAULT_CONFIG.send.typingIndicator, true, '正在输入默认开');
 });
 
-it('platformToolAllowed：默认全开（相册上传除外），显式关生效', () => {
+it('platformToolAllowed：默认全开（相册上传/换头像除外），显式关生效', () => {
   assert.equal(platformToolAllowed('react_to_message', {}), true);
   assert.equal(platformToolAllowed('send_qq_voice', {}), true);
   assert.equal(platformToolAllowed('upload_to_group_album', {}), false, '默认关：未显式开就不放行');
   assert.equal(platformToolAllowed('upload_to_group_album', { albumUpload: true }), true);
+  assert.equal(platformToolAllowed('set_my_avatar', {}), false, '换头像也是默认关');
+  assert.equal(platformToolAllowed('set_my_avatar', { avatarWrites: true }), true);
+  assert.equal(platformToolAllowed('set_my_profile', { avatarWrites: false }), false);
+  assert.equal(platformToolAllowed('set_my_profile', { avatarWrites: true }), true);
   assert.equal(platformToolAllowed('react_to_message', { reactions: false }), false);
   assert.equal(platformToolAllowed('send_group_file', { groupFiles: false }), false);
   assert.equal(platformToolAllowed('list_group_album', { albumRead: false }), false);

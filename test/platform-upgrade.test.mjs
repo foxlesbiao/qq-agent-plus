@@ -156,6 +156,60 @@ it('资料类：签名/状态/备注每天封顶，参数形状正确', async ()
   resetPlatformQuotasForTest();
 });
 
+it('set_my_avatar：消息图 / 表情库图两种图源，每天封顶 2 次', async () => {
+  resetPlatformQuotasForTest();
+  const avatars = [];
+  const ctx = {
+    kind: 'group', chatId: '433', chatKey: 'group:433',
+    session: { id: 's', sent: [] },
+    store: { findByMid: () => ({ mid: '9', media: [{ kind: 'image', url: 'https://example.com/pic.png' }] }) },
+    // 本地托管的图走 base64（与 send_sticker 同一口径，不发外网探活）
+    stickers: { findForSend: async () => ({ id: 'st1', url: 'base64://aGVsbG8=', localFile: 'f.png' }) },
+    onebot: { setAvatar: async (file) => { avatars.push(file); return {}; } }
+  };
+  const res = parse(await tool('set_my_avatar').execute(ctx, { messageId: '#9' }));
+  assert.equal(res.changed, true);
+  assert.equal(avatars.at(-1), 'https://example.com/pic.png', '消息里的图直接用');
+
+  await tool('set_my_avatar').execute(ctx, { stickerId: 'st1' });
+  assert.equal(avatars.at(-1), 'base64://aGVsbG8=', '表情库的图（本地托管）按 base64 交出去');
+
+  assert.equal((await tool('set_my_avatar').execute(ctx, {})).isError, true, '不给图源要报错');
+  const third = await tool('set_my_avatar').execute(ctx, { messageId: '9' });
+  assert.match(third.content, /用完了/, '换头像每天最多 2 次');
+  resetPlatformQuotasForTest();
+});
+
+it('set_my_profile：至少给一项、性别有校验、改昵称后刷新登录信息、与资料共享每日额度', async () => {
+  resetPlatformQuotasForTest();
+  const profiled = [];
+  let refreshes = 0;
+  const ctx = {
+    kind: 'group', chatId: '433', chatKey: 'group:433',
+    onebot: {
+      setProfile: async (payload) => { profiled.push(payload); return {}; },
+      refreshSelfInfo: async () => { refreshes += 1; }
+    }
+  };
+  const res = parse(await tool('set_my_profile').execute(ctx, { nickname: '犊子二号' }));
+  assert.equal(res.nickname, '犊子二号');
+  assert.deepEqual(profiled.at(-1), { nickname: '犊子二号', personalNote: undefined, sex: undefined });
+  assert.equal(refreshes, 1, '改昵称后必须刷新登录信息（@我 判定、提示词里的名字都读它）');
+
+  await tool('set_my_profile').execute(ctx, { nickname: '犊子', sex: '2', personalNote: '  摸鱼中  ' });
+  assert.deepEqual(profiled.at(-1), { nickname: '犊子', personalNote: '摸鱼中', sex: 2 }, '只带传进来的字段，且要清洗');
+  assert.equal(refreshes, 2);
+
+  assert.equal((await tool('set_my_profile').execute(ctx, { sex: '9' })).isError, true, '性别只有 0/1/2');
+  assert.equal((await tool('set_my_profile').execute(ctx, {})).isError, true, '至少要给一项');
+  assert.equal(profiled.length, 2, '校验失败不该真的调协议端');
+
+  await tool('set_my_profile').execute(ctx, { personalNote: '继续摸鱼' });
+  const fourth = await tool('set_my_profile').execute(ctx, { nickname: '再改一次' });
+  assert.match(fourth.content, /用完了/, '与签名/在线状态共享每日 3 次的额度');
+  resetPlatformQuotasForTest();
+});
+
 it('get_group_profile：群聊聚合三类资料；私聊拒绝', async () => {
   const ctx = {
     kind: 'group', chatId: '433', chatKey: 'group:433',

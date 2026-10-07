@@ -29,6 +29,8 @@ function renderPlatformSection(c) {
     </div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-platform-profile" ${p.profileWrites !== false ? 'checked' : ''} />
       <label for="cfg-platform-profile">允许改自己的资料：个性签名 / 在线状态 / 给好友或群设备注（每天有次数上限）</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-platform-avatar" ${p.avatarWrites === true ? 'checked' : ''} />
+      <label for="cfg-platform-avatar">换头像 / 改 QQ 昵称与个性说明（账号级外观，<b>所有人都看得到</b>，默认关）</label></div>
 
     <h3>信息与素材</h3>
     <div class="checkbox-row"><input type="checkbox" id="cfg-platform-grouptools" ${p.groupTools !== false ? 'checked' : ''} />

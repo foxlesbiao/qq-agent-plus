@@ -520,6 +520,9 @@ export const DEFAULT_CONFIG = {
     // 空 = 不固定：模型每次自己从协议端返回的角色目录里挑一个。
     qqVoiceCharacter: '',
     profileWrites: true,    // 改签名/在线状态/备注（账号侧可见，带 24h 闸门）
+    // 换头像 / 改 QQ 昵称与个性说明（set_my_avatar / set_my_profile）——账号级外观，
+    // 所有人都看得到、且不像发言那样可以被上下文解释，默认关（与相册上传同一档）。
+    avatarWrites: false,
     groupTools: true,       // 群资料/公告/荣誉、签到、群待办
     ocr: true,              // 服务端 OCR（读图上的文字）
     groupFiles: true,       // 群文件：列表 / 取下载链 / 发文件
