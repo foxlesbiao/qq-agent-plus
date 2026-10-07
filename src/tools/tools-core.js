@@ -3,8 +3,6 @@
 // 不再需要 key/token 参数 —— 模型物理上无法把消息发到别的群/私聊，安全性反而更强。
 //
 // 工具命名去掉了 qq_ 前缀（更短，省 token）。
-import fs from 'node:fs';
-import path from 'node:path';
 import crypto from 'node:crypto';
 import { getConfig, imageGenAvailable, imageGenMaxPerHour } from '../core/config.js';
 import { imageType } from '../core/image-type.js';
@@ -23,6 +21,19 @@ export function resetImageQuotaForTest() {
   imageQuota.reset();
 }
 
+// 平台互动类动作的闸门：贴表情 / 改签名·在线状态 / 改备注都是"账号侧可见"的写入，
+// 且都不经过发送队列的限频（没有 outbox、没有每分钟上限），所以在这里单独封顶，
+// 防模型抽风把这些动作刷成噪音（群友会在 QQ 通知里看到资料变动）。
+const reactionQuota = createQuota({ windowMs: 3600_000 });      // 贴表情：每小时封顶
+const profileQuota = createQuota({ windowMs: 24 * 3600_000 });  // 签名/在线状态：每天封顶
+const remarkQuota = createQuota({ windowMs: 24 * 3600_000 });   // 备注：每天封顶
+/** 仅供测试：清空平台互动闸门。 */
+export function resetPlatformQuotasForTest() {
+  reactionQuota.reset();
+  profileQuota.reset();
+  remarkQuota.reset();
+}
+
 // 消息 id 归一化：模型常把聊天记录里的 "#123" 连 # 一起传进来，而 OneBot 只认纯数字 id。
 // store.js 里有一份同名函数但没导出，所以这里保留 tools 层自用的一份。
 // **导出**：orchestrator 记录"续接线索参与者"时读的是工具调用的原始参数，
@@ -38,33 +49,17 @@ function stripMemorySources(entry) {
   return rest;
 }
 
-// QQ 系统表情：中文名 → 编号。表由 /home/ubuntu/export-face-names.sh 从 SnowLuma 容器导出到数据目录。
-let FACE_INDEX = null;
-function faceIndex() {
-  if (FACE_INDEX) return FACE_INDEX;
-  FACE_INDEX = new Map();
-  try {
-    const dir = process.env.QQ_AGENT_DATA_DIR || path.join(process.cwd(), 'data');
-    const bySid = JSON.parse(fs.readFileSync(path.join(dir, 'face-names.json'), 'utf8')).bySid || {};
-    for (const [sid, name] of Object.entries(bySid)) {
-      const key = String(name).trim();
-      if (!key) continue;
-      const prev = FACE_INDEX.get(key);
-      const num = Number(sid);
-      // 同名时优先数字较小的经典表情（0~103 那批）
-      if (prev === undefined || (Number.isFinite(num) && num < Number(prev))) FACE_INDEX.set(key, sid);
-    }
-  } catch { /* 表不存在时退化为只认编号 */ }
-  return FACE_INDEX;
-}
+// QQ 系统表情的"中文名 → 编号"查表在 face-catalog.js 里统一维护：与 onebot.js 来信渲染
+// （[QQ表情14 微笑]）共用一份表，来源 = 离线导出表 + 协议端在线目录（fetch_sys_faces，建联后补缺）。
+import { faceIdByName, faceNameList, faceNameOf } from '../onebot/face-catalog.js';
 
 function faceLookup(name) {
   const key = String(name ?? '').trim().replace(/^\/+/, '');
   if (!key) return { error: 'name 不能为空，请填表情中文名，如 微笑' };
-  const idx = faceIndex();
-  if (idx.has(key)) return { face: { id: idx.get(key), name: key } };
+  const id = faceIdByName(key);
+  if (id !== null && id !== undefined) return { face: { id, name: key } };
   if (/^\d+$/.test(key)) return { face: { id: key, name: `编号${key}` } };
-  const like = [...idx.keys()].filter((n) => n.includes(key) || key.includes(n)).slice(0, 12);
+  const like = faceNameList().filter((n) => n.includes(key) || key.includes(n)).slice(0, 12);
   return {
     error: `找不到表情「${key}」。` + (like.length
       ? `你是不是想发：${like.join('、')}`
@@ -230,6 +225,17 @@ function midHint(ctx) {
   return uniq.length
     ? `消息 id 只能用聊天记录里每条消息前的 #数字（最近可见：${uniq.join(' ')}），不要自己编`
     : '聊天记录里还没有带 #id 的消息';
+}
+
+// 从聊天记录里反查一个 QQ 号的最近昵称（表情回应用户列表等场景；查不到就回号码本身）。
+function recentNameOf(ctx, userId) {
+  try {
+    const rows = ctx.store?.recent?.(ctx.chatKey, { limit: 500 }) || [];
+    const hit = rows.find((m) => String(m.senderId) === String(userId) && String(m.senderName || ''));
+    return hit ? String(hit.senderName) : String(userId);
+  } catch {
+    return String(userId);
+  }
 }
 
 // 需要数字 QQ 号但模型传了名字时，把当前会话真实可见的成员列出来，让它选一个。
@@ -650,6 +656,338 @@ export function buildToolDefs() {
           return ok({ sent: true, faceId: hit.face.id, name: hit.face.name, messageId: result?.message_id ?? null, note: '系统表情已发送。' });
         } catch (error) {
           return sendErr(error);
+        }
+      }
+    },
+    {
+      name: 'react_to_message',
+      description: '给一条消息贴 QQ「表情回应」（消息下方多一个表情，比回一句话更轻）。messageId 用聊天记录里那条消息前的 #数字；emojiId 用 QQ 系统表情编号（和 send_face 同一套：经典小黄脸 14=微笑、13=呲牙、179=抠鼻，新表情如 128077=👍、128514=😂、128064=👀）。'
+        + '适合"看到/赞同/笑死/无语但不想开口"的时候；别人给你贴了表情可以回敬一个（聊天记录里会出现 [贴表情] 行）。set=false 撤回自己贴的。别每条都贴。',
+      parameters: {
+        type: 'object',
+        properties: {
+          messageId: { type: ['integer', 'string'], description: '要贴的那条消息 id（聊天记录里的 #数字）' },
+          emojiId: { type: ['integer', 'string'], description: 'QQ 系统表情编号（数字）' },
+          set: { type: 'boolean', description: '默认 true=贴上；false=撤回自己贴的这个' }
+        },
+        required: ['messageId', 'emojiId']
+      },
+      async execute(ctx, args) {
+        try {
+          const mid = normalizeMid(args.messageId);
+          if (!mid) return err('messageId 不能为空，用聊天记录里那条消息前的 #数字');
+          const emojiId = String(args.emojiId ?? '').trim();
+          if (!/^\d+$/.test(emojiId)) return err('emojiId 要是 QQ 系统表情编号（数字），如 14 微笑、128077 👍');
+          reactionQuota.configure({ globalMax: 30, perChatMax: Infinity });
+          const reservedAt = Date.now();
+          const gate = reactionQuota.tryConsume(ctx.chatKey, reservedAt);
+          if (!gate.ok) return err('这一小时贴的表情够多了，过一会儿再贴');
+          try {
+            await ctx.onebot.call('set_msg_emoji_like', {
+              message_id: Number(mid),
+              emoji_id: emojiId,
+              set: args.set !== false
+            }, 15000, ctx.signal);
+          } catch (error) {
+            reactionQuota.refund(ctx.chatKey, reservedAt);
+            throw error;
+          }
+          const name = faceNameOf(emojiId);
+          const verb = args.set === false ? '撤回' : '贴上';
+          afterSent(() => {
+            ctx.session.sent.push({ type: 'reaction', text: `[贴表情]${verb} ${name || emojiId}（消息 #${mid}）`, at: new Date().toLocaleTimeString('zh-CN', { hour12: false }) });
+            ctx.emit('session-update', ctx.session.id);
+          });
+          return ok({ reacted: true, messageId: mid, emojiId, note: `表情回应已${verb}。` });
+        } catch (error) {
+          return err(`贴表情失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'get_message_reactions',
+      description: '看一条消息被贴了哪些表情回应、都是谁贴的。适合确认"刚才那个表情是对我发的吗"、或想知道自己哪句话被点了什么。',
+      parameters: {
+        type: 'object',
+        properties: { messageId: { type: ['integer', 'string'], description: '消息 id（聊天记录里的 #数字）' } },
+        required: ['messageId']
+      },
+      async execute(ctx, args) {
+        try {
+          const mid = normalizeMid(args.messageId);
+          if (!mid) return err('messageId 不能为空');
+          const res = await ctx.onebot.call('get_msg_emoji_likes', { message_id: Number(mid) }, 15000, ctx.signal);
+          const list = Array.isArray(res) ? res : [];
+          if (!list.length) return ok({ messageId: mid, reactions: [], note: '这条消息还没有表情回应。' });
+          const reactions = list.slice(0, 10).map((item) => {
+            const emojiId = String(item?.emoji_id ?? '');
+            const users = (Array.isArray(item?.users) ? item.users : [])
+              .map((u) => ({ userId: String(u?.user_id ?? u ?? ''), name: recentNameOf(ctx, u?.user_id ?? u) }))
+              .filter((u) => u.userId);
+            return { emojiId, name: faceNameOf(emojiId) || '', count: Number(item?.count) || users.length || 1, users };
+          });
+          return ok({ messageId: mid, reactions });
+        } catch (error) {
+          return err(`查表情回应失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'set_my_signature',
+      description: '改你自己的 QQ 个性签名（资料页上那行字）。偶尔配合心情/近况改一句（如"摸鱼中""今日宜发呆"），别频繁（每天最多几次）、别写成广告或联系方式。',
+      parameters: {
+        type: 'object',
+        properties: { signature: { type: 'string', description: '签名内容（≤40 字，随手一句最好）' } },
+        required: ['signature']
+      },
+      async execute(ctx, args) {
+        try {
+          const signature = safeSlice(String(args.signature ?? '').trim(), 40);
+          if (!signature) return err('signature 不能为空');
+          profileQuota.configure({ globalMax: 3, perChatMax: Infinity });
+          const reservedAt = Date.now();
+          if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的资料改动次数用完了（每天最多几次）');
+          try {
+            await ctx.onebot.call('set_self_longnick', { long_nick: signature }, 15000, ctx.signal);
+          } catch (error) {
+            profileQuota.refund(ctx.chatKey, reservedAt);
+            throw error;
+          }
+          return ok({ signature, note: '个性签名已改。' });
+        } catch (error) {
+          return err(`改签名失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'set_my_status',
+      description: '改你自己的自定义在线状态（"摸鱼中"这种，别人看你头像旁会显示）。wording 写状态文案；faceId 是状态图标编号，不知道就传 0 用默认图标。偶尔用（每天最多几次）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          wording: { type: 'string', description: '状态文案（≤16 字，如 摸鱼中 / 睡觉中 / 写代码中）' },
+          faceId: { type: ['integer', 'string'], description: '可选：状态图标编号，缺省 0' }
+        },
+        required: ['wording']
+      },
+      async execute(ctx, args) {
+        try {
+          const wording = safeSlice(String(args.wording ?? '').trim(), 16);
+          if (!wording) return err('wording 不能为空');
+          const faceId = Number(normalizeMid(args.faceId) || 0) || 0;
+          profileQuota.configure({ globalMax: 3, perChatMax: Infinity });
+          const reservedAt = Date.now();
+          if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的资料改动次数用完了（每天最多几次）');
+          try {
+            await ctx.onebot.call('set_diy_online_status', { face_id: faceId, face_type: 1, wording }, 15000, ctx.signal);
+          } catch (error) {
+            profileQuota.refund(ctx.chatKey, reservedAt);
+            throw error;
+          }
+          return ok({ wording, note: '在线状态已改。' });
+        } catch (error) {
+          return err(`改在线状态失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'get_group_profile',
+      description: '看本群的资料：群详情（简介/群备注/人数）、群公告、群荣誉（龙王/群聊之火这类）。群聊限定、不用参数。被问到群规、公告、谁最活跃时用它；别在没人问的时候念公告。',
+      parameters: {
+        type: 'object',
+        properties: { what: { type: 'string', description: '可选：detail | notice | honors，缺省三样都取' } }
+      },
+      async execute(ctx, args) {
+        try {
+          if (ctx.kind !== 'group') return err('群资料只能在群聊里看');
+          const groupId = Number(ctx.chatId);
+          const what = String(args.what ?? '').trim();
+          const want = (name) => !what || what === name;
+          const out = {};
+          const failures = [];
+          if (want('detail')) {
+            try {
+              const d = await ctx.onebot.call('get_group_detail_info', { group_id: groupId }, 15000, ctx.signal) || {};
+              out.detail = {
+                name: d.group_name ?? d.groupName ?? '',
+                remark: d.group_remark ?? '',
+                intro: d.group_desc ?? d.groupDesc ?? d.description ?? d.intro ?? d.memo ?? '',
+                memberCount: d.member_count ?? d.memberCount ?? null,
+                maxMembers: d.max_member_count ?? null
+              };
+            } catch (error) { failures.push(`群详情：${error?.message ?? error}`); }
+          }
+          if (want('notice')) {
+            try {
+              const notices = await ctx.onebot.call('_get_group_notice', { group_id: groupId }, 15000, ctx.signal);
+              out.notices = (Array.isArray(notices) ? notices : []).slice(0, 3).map((n) => ({
+                time: n?.publish_time ?? n?.time ?? null,
+                forNewMembers: n?.send_to_new_members === true,
+                text: safeSlice(String(n?.message?.text ?? n?.text ?? n?.content ?? '').trim(), 500)
+              })).filter((n) => n.text);
+              if (!out.notices.length) out.notices = [];
+            } catch (error) { failures.push(`群公告：${error?.message ?? error}`); }
+          }
+          if (want('honors')) {
+            try {
+              out.honors = await ctx.onebot.call('get_group_honor_info', { group_id: groupId, type: 'all' }, 15000, ctx.signal) || {};
+            } catch (error) { failures.push(`群荣誉：${error?.message ?? error}`); }
+          }
+          if (failures.length && !Object.keys(out).length) return err(failures.join('；'));
+          return ok(failures.length ? { ...out, failures } : out);
+        } catch (error) {
+          return err(`取群资料失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'group_sign',
+      description: '在群里签到打卡（一天一次就够；签到结果群里可见）。适合每天头一回进群时顺手点一下。',
+      parameters: { type: 'object', properties: {} },
+      async execute(ctx) {
+        try {
+          if (ctx.kind !== 'group') return err('签到只能在群聊里做');
+          await ctx.onebot.call('set_group_sign', { group_id: Number(ctx.chatId) }, 15000, ctx.signal);
+          return ok({ signed: true, note: '已签到。' });
+        } catch (error) {
+          return err(`签到失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'set_group_todo',
+      description: '把群里某条消息设成群待办（会显示在群聊输入框上方，所有人可见）。适合"今晚八点狼人杀"这类要让所有人记住的安排 —— 先 send_message 发出来，再把它设成待办。别滥用。',
+      parameters: {
+        type: 'object',
+        properties: { messageId: { type: ['integer', 'string'], description: '要设成待办的消息 id（聊天记录里的 #数字）' } },
+        required: ['messageId']
+      },
+      async execute(ctx, args) {
+        try {
+          if (ctx.kind !== 'group') return err('群待办只能在群聊里设');
+          const mid = normalizeMid(args.messageId);
+          if (!mid) return err('messageId 不能为空');
+          await ctx.onebot.call('set_group_todo', { group_id: Number(ctx.chatId), message_id: Number(mid) }, 15000, ctx.signal);
+          return ok({ todo: true, messageId: mid, note: '已设成群待办。' });
+        } catch (error) {
+          return err(`设群待办失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'read_image_text',
+      description: '读出消息里图片上的文字（QQ 服务端 OCR，只认文字不认画面）。看截图/通知/表格里的字用它，省算力；要理解画面内容（表情、照片）还是用 get_message_images。id 用聊天记录里每条消息前的 #数字。',
+      parameters: {
+        type: 'object',
+        properties: { messageId: { type: ['integer', 'string'], description: 'QQ 消息 id（聊天记录里的 #数字，可能为负数）' } },
+        required: ['messageId']
+      },
+      async execute(ctx, args) {
+        try {
+          const entry = ctx.store.findByMid(ctx.chatKey, args.messageId);
+          if (!modelVisible(entry)) return err(`当前会话找不到消息 ${args.messageId}。${midHint(ctx)}`);
+          const media = (Array.isArray(entry.media) ? entry.media : []).filter((m) => m && m.kind === 'image');
+          if (!media.length) return ok(`消息 ${args.messageId} 里没有图片。`);
+          const candidates = [];
+          for (const m of media) {
+            const url = String(m.url || '').trim();
+            if (/^https?:\/\//i.test(url)) candidates.push(url);
+            const file = String(m.file || '').trim();
+            if (file) candidates.push(file);
+          }
+          const texts = [];
+          let lastError = '';
+          for (const image of candidates) {
+            ctx.signal?.throwIfAborted();
+            try {
+              const res = await ctx.onebot.call('ocr_image', { image }, 30000, ctx.signal);
+              for (const t of (Array.isArray(res?.texts) ? res.texts : [])) {
+                const line = String(t?.text ?? '').trim();
+                if (line) texts.push(line);
+              }
+              if (texts.length) break;
+            } catch (error) { lastError = String(error?.message ?? error); }
+          }
+          if (!texts.length) return err(lastError ? `OCR 失败：${lastError}` : '这张图里没认出文字（可能是纯画面或表情包）。');
+          return ok({ text: safeSlice(texts.join('\n'), 4000), note: '以上是图上的文字（OCR）。' });
+        } catch (error) {
+          return err(error?.message ?? error);
+        }
+      }
+    },
+    {
+      name: 'send_qq_voice',
+      description: '用 QQ 内置的 AI 语音角色给群里发一条语音（群聊限定）。第一次先不传 character：返回可选角色列表，挑一个再带 character 调一次。text 是让它说的那句话（≤60 字，短句最自然）。玩梗、撒娇、念台词时用，别频繁。',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: '要说的内容（≤60 字）' },
+          character: { type: 'string', description: '语音角色 id（省略则返回可用角色列表）' }
+        },
+        required: ['text']
+      },
+      async execute(ctx, args) {
+        try {
+          if (ctx.kind !== 'group') return err('QQ 语音只能发在群聊里');
+          const groupId = Number(ctx.chatId);
+          const text = safeSlice(String(args.text ?? '').trim(), 80);
+          if (!text) return err('text 不能为空');
+          const character = String(args.character ?? '').trim();
+          if (!character) {
+            const list = await ctx.onebot.call('get_ai_characters', { group_id: groupId }, 20000, ctx.signal);
+            const flat = [];
+            for (const group of (Array.isArray(list) ? list : [])) {
+              for (const ch of (group?.characters ?? [])) {
+                flat.push({ characterId: ch?.character_id ?? '', name: ch?.character_name ?? '', category: group?.type ?? '' });
+              }
+            }
+            return ok({ characters: flat.slice(0, 40), note: flat.length ? '挑一个 characterId，再带 text 调一次就能发。' : '这个群暂时没有可用的 QQ 语音角色。' });
+          }
+          await ctx.onebot.call('send_group_ai_record', { group_id: groupId, character, text }, 60000, ctx.signal);
+          afterSent(() => {
+            ctx.session.sent.push({ type: 'voice', text: `[QQ语音]${text}`, at: new Date().toLocaleTimeString('zh-CN', { hour12: false }) });
+            ctx.emit('session-update', ctx.session.id);
+          });
+          return ok({ sent: true, note: '语音已发送。' });
+        } catch (error) {
+          return err(`发 QQ 语音失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'set_remark',
+      description: '给你 QQ 里的好友/群设备注（只有你自己看得到的那种，客户端里可见）。userId 填某人 QQ 号＝给这个人备注；不填＝给当前群备注。写短、有辨识度的称呼或梗（≤16 字），别乱改、别写奇怪东西（每天最多几次）。',
+      parameters: {
+        type: 'object',
+        properties: {
+          remark: { type: 'string', description: '备注内容（≤16 字）' },
+          userId: { type: ['integer', 'string'], description: '可选：要备注的好友 QQ 号；不填＝当前群' }
+        },
+        required: ['remark']
+      },
+      async execute(ctx, args) {
+        try {
+          const remark = safeSlice(String(args.remark ?? '').trim(), 16);
+          if (!remark) return err('remark 不能为空');
+          const userId = normalizeMid(args.userId);
+          if (!userId && ctx.kind !== 'group') return err('私聊里要传 userId 指定给谁备注');
+          remarkQuota.configure({ globalMax: 5, perChatMax: Infinity });
+          const reservedAt = Date.now();
+          if (!remarkQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的备注次数用完了（每天最多几次）');
+          try {
+            if (userId) {
+              if (!/^\d+$/.test(userId)) return err('userId 要是数字 QQ 号（不知道就先查 get_active_members）');
+              await ctx.onebot.call('set_friend_remark', { user_id: Number(userId), remark }, 15000, ctx.signal);
+            } else {
+              await ctx.onebot.call('set_group_remark', { group_id: Number(ctx.chatId), remark }, 15000, ctx.signal);
+            }
+          } catch (error) {
+            remarkQuota.refund(ctx.chatKey, reservedAt);
+            throw error;
+          }
+          return ok({ remark, target: userId || ctx.chatId, note: '备注已设置。' });
+        } catch (error) {
+          return err(`设备注失败：${error?.message ?? error}`);
         }
       }
     },

@@ -214,6 +214,19 @@ export class SendQueue {
     return Math.min(15000, Math.max(min, randInt(min, max) * 0.5 + byLength * 0.5));
   }
 
+  /**
+   * 私聊「正在输入…」（群聊没有这个能力，协议端侧会 no-op）。开关 send.typingIndicator
+   * 默认开；纯装饰，任何失败（协议端不支持、超时）都吞掉，绝不影响本次发送。
+   */
+  async #signalTyping(kind, id, options) {
+    if (kind !== 'private') return;
+    if (getConfig().send?.typingIndicator === false) return;
+    if (typeof this.onebot?.setInputStatus !== 'function') return;
+    try {
+      await this.onebot.setInputStatus('private', id, true, options?.signal);
+    } catch { /* 输入状态只是装饰 */ }
+  }
+
   async #deliver(chatKey, options, payload, send) {
     await this.#assertNotMuted(chatKey);
     // gameScoped：只由群游戏管理器对"本局在册玩家"设置（access.assertCanSend 里放宽 allow.private）
@@ -315,6 +328,8 @@ export class SendQueue {
         assertCanSend(chatKey, options.signal, { gameScoped: options.gameScoped === true });
         if (options.runId && this.store.hasUncertainEffects(options.runId)) throw new Error('Previous send delivery is uncertain');
         this.#checkRate(chatKey);
+        // 先亮"正在输入"再等间隔：对方看到的状态是"它正在打字"，而不是干等（私聊限定）。
+        await this.#signalTyping(kind, id, options);
         if (gap > 0) await sleep(gap);
         const data = await this.#deliver(chatKey, options, { type: 'text', text }, () => this.onebot.sendText(kind, id, text, {
           replyToMessageId: i === 0 ? options.replyToMessageId : null, // 引用挂在第一条上：回的就是那条
@@ -376,6 +391,7 @@ export class SendQueue {
       // 避免"不知道发没发出去"的消息与表情/拍一拍叠加出多笔 unknown 记账。
       if (options.runId && this.store.hasUncertainEffects(options.runId)) throw new Error('Previous send delivery is uncertain');
       this.#checkRate(chatKey);
+      await this.#signalTyping(kind, id, options); // 私聊发表情前同样先亮输入状态
       await sleep(randInt(600, 1500)); // 发表情前真人式的短暂停顿
       const data = await this.#deliver(chatKey, options, { type: 'sticker', id: sticker.id }, () => this.onebot.sendSticker(kind, id, sticker.url, {
         replyToMessageId: options.replyToMessageId ?? null,

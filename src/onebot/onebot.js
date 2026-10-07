@@ -1,21 +1,9 @@
 // OneBot v11 客户端：WebSocket 只收事件，HTTP API 负责发送与查询。
 import WebSocket from 'ws';
-import fs from 'node:fs';
-import path from 'node:path';
 import { sanitizeUserText, escapeCqText, formatQuoteRef } from '../core/util.js';
-
-// QQ 系统表情对照表：把「[表情14]」渲染成「[表情14 微笑]」，让模型知道对方发的是哪个表情。
-// 表来自容器内 QQ 自带的 sys-face-catalog.json，由 /home/ubuntu/export-face-names.sh 导出到数据目录。
-let FACE_NAMES = null;
-function faceNameOf(id) {
-  if (FACE_NAMES === null) {
-    try {
-      const dir = process.env.QQ_AGENT_DATA_DIR || path.join(process.cwd(), 'data');
-      FACE_NAMES = JSON.parse(fs.readFileSync(path.join(dir, 'face-names.json'), 'utf8')).bySid || {};
-    } catch { FACE_NAMES = {}; }
-  }
-  return FACE_NAMES[String(id ?? '')] || '';
-}
+// QQ 系统表情对照表（离线导出表 + 协议端在线目录）在 face-catalog.js 里统一维护：
+// 「[表情14]」渲染成「[表情14 微笑]」用它取名；send_face 的中文名 → 编号也读同一份。
+import { faceNameOf, refreshFaceCatalog } from './face-catalog.js';
 
 const RECONNECT_MIN_MS = 3000;
 const RECONNECT_MAX_MS = 30000;
@@ -196,6 +184,11 @@ export class OneBotClient {
         }
       };
       await fetchLoginInfo(1);
+      // 表情目录补缺（fetch_sys_faces）：离线导出表是某次快照，新表情只有线上有。
+      // 每进程只试一次、失败静默，不阻塞建联（face-catalog.js 内部处理）。
+      refreshFaceCatalog(this)
+        .then((added) => { if (added) console.log('[onebot] 系统表情目录已并入在线补缺'); })
+        .catch(() => {});
     });
     socket.on('message', (data) => {
       if (!isCurrent(socket)) return;
@@ -531,6 +524,27 @@ export class OneBotClient {
     // 本函数是全仓唯一的图片段出口（贴纸库是机器人唯一的出图渠道），所以只加在这一处。
     segments.push({ type: 'image', data: { file: String(imageUrl), sub_type: 1, summary: '[动画表情]' } });
     return this.sendSegments(kind, id, segments, signal, { timeoutMs: MEDIA_TIMEOUT_MS });
+  }
+
+  /**
+   * 私聊「正在输入…」。QQ 只有 1v1 会显示输入状态（群聊没有这个概念），
+   * 所以 kind !== 'private' 直接 no-op；调用方一律 best-effort，失败不影响正常发送。
+   */
+  async setInputStatus(kind, id, typing = true, signal) {
+    if (kind !== 'private') return null;
+    return this.call('set_input_status', { user_id: Number(id), event_type: typing ? 1 : 0 }, 8000, signal);
+  }
+
+  /**
+   * 给一条消息贴「表情回应」（对方消息下方会多一个表情）。emoji_id 用 QQ 系统表情编号
+   * （与 send_face 同一套编号，如 128077 是 👍 那批新表情里的；经典小黄脸用 0~103 的编号）。
+   */
+  async reactToMessage(messageId, emojiId, set = true, signal) {
+    return this.call('set_msg_emoji_like', {
+      message_id: Number(messageId),
+      emoji_id: String(emojiId),
+      set: set === true
+    }, 15000, signal);
   }
 
   async sendFace(kind, id, faceId, { replyToMessageId = null, atUserId = null, text = null, signal } = {}) {

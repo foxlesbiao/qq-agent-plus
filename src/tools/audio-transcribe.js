@@ -398,6 +398,23 @@ export async function audioBufferToPcm(buffer, { name = '', signal } = {}) {
 export async function transcribeMessageAudio(ctx, entry) {
   const target = await currentMessageAudioUrl(ctx, entry);
   if (!target) return { ok: false, error: '这条消息里没有可识别的音频/视频内容' };
+  // QQ 自带转写（协议端 fetch_ptt_text）：拿得到就直接用 —— 不用配外部 ASR、不占转写额度，
+  // 也没有下载/转码开销（没配 ASR 的部署第一次也能读语音）。拿不到（QQ 没转写这条/协议端
+  // 不支持/超时）再落回下面的老链路，行为不变。
+  // 只对"QQ 语音"试：实时段是 record/voice；从存档走的（target.segment 为空）看名字/地址
+  // 是否 .amr/.silk —— 视频（.mp4）没有服务端转写，别白等它一次超时。
+  const looksVoice = target.segment === 'record' || target.segment === 'voice'
+    || /\.(amr|silk|slk)(\?|$)/i.test(String(target.name || target.url || ''));
+  if (looksVoice && !target.fileSegId && entry?.mid != null) {
+    const mid = Number(String(entry.mid).replace(/^#+/, ''));
+    if (Number.isFinite(mid) && mid !== 0) {
+      try {
+        const res = await ctx.onebot?.call?.('fetch_ptt_text', { message_id: mid }, 10000, ctx.signal);
+        const qqText = String(res?.text ?? '').trim();
+        if (qqText) return { ok: true, text: qqText };
+      } catch { /* 没有现成转写：走外部识别 */ }
+    }
+  }
   {
     if (!target.url && !target.fileSegId && target.name
       && (target.segment === 'record' || target.segment === 'voice')) {

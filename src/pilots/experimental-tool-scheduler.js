@@ -14,7 +14,9 @@ export const EXPERIMENTAL_READ_ONLY_TOOLS = new Set([
   'person_memory_lookup',
   'web_search',
   'web_fetch',
-  'dice'          // 纯计算、无 IO 与副作用，可并行
+  'dice',         // 纯计算、无 IO 与副作用，可并行
+  'get_message_reactions',  // 协议端只读查询（贴了哪些表情、谁贴的）
+  'get_group_profile'       // 协议端只读查询（群详情/公告/荣誉），无本地副作用
 ]);
 
 // 这些也是“读取/观察”类工具，但当前不做并发预启动：
@@ -32,7 +34,8 @@ export const EXPERIMENTAL_ORDERED_READ_TOOLS = new Set([
   'get_message_images',
   'get_message_audio',
   'get_group_member_list',   // 走协议端的读，保持串行
-  'generate_image'           // 按张计费的生成：串行 + 结果决定下一步
+  'generate_image',          // 按张计费的生成：串行 + 结果决定下一步
+  'read_image_text'          // OCR：与 get_message_images/get_message_audio 同类的观察动作，不并发
 ]);
 
 export const EXPERIMENTAL_TERMINAL_TOOL = 'finish';
@@ -54,7 +57,14 @@ export const EXPERIMENTAL_SAME_ROUND_ACTION_TOOLS = new Set([
   'remind',        // 本地持久化写入
   'group_game',    // 开局/结束：本地状态 + 对外公告
   'send_voice',    // 对外发送
-  'set_group_card' // 对外写：改自己的群名片
+  'set_group_card', // 对外写：改自己的群名片
+  'react_to_message', // 对外写：给消息贴表情回应
+  'send_qq_voice',    // 对外发送：QQ 内置语音角色
+  'group_sign',       // 对外写：群签到
+  'set_group_todo',   // 对外写：把消息设成群待办
+  'set_my_signature', // 对外写：改个性签名（有每日闸门）
+  'set_my_status',    // 对外写：改在线状态（有每日闸门）
+  'set_remark'        // 对外写：给好友/群设备注（有每日闸门）
 ]);
 
 export function experimentalToolSchedulerConfig(cfg = {}) {

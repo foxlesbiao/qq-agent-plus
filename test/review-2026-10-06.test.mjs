@@ -380,7 +380,10 @@ test('onebot：get_login_info 连续失败后重试，selfId 最终拿到', asyn
   const ok = await waitFor(() => bot.selfId === '12345', 15000);
   assert.ok(ok, `get_login_info 失败后应重试并最终拿到 selfId，实际：'${bot.selfId}'（HTTP 失败 ${2 - fails} 次后成功）`);
   assert.ok(seen.length >= 3, `500 两次 + 成功一次，至少 3 个请求，实际 ${seen.length}`);
-  assert.deepEqual([...new Set(seen)], ['POST /get_login_info'],
+  // 建联成功后客户端还会补一次系统表情目录（fetch_sys_faces，2026-10-07 协议端能力升级）；
+  // 假服务端对它回 404，属于预期内的失败（补缺失败静默）。这里只约束请求形态：
+  // 两个路径都必须是 POST 且不带查询串（令牌走请求头）。
+  assert.deepEqual([...new Set(seen)].sort(), ['POST /fetch_sys_faces', 'POST /get_login_info'],
     `请求形态必须恰好是 POST /get_login_info（令牌走请求头，不许出现在查询串），实际：${seen.join(', ')}`);
 });
 

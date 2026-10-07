@@ -17,6 +17,7 @@ import { appendAudit, queryAudit } from '../core/audit-log.js';
 import { lastTraceId } from '../core/logger.js';
 import { customSearch } from '../llm/web-search.js';
 import { OneBotClient, segmentsToText, extractMediaFromSegments, expandForwardNodes } from '../onebot/onebot.js';
+import { faceNameOf } from '../onebot/face-catalog.js';
 import { readForwardMessages } from '../onebot/forward-reader.js';
 import { ChatStore } from '../core/store.js';
 import { MemoryStore } from '../memory/memory.js';
@@ -1269,6 +1270,54 @@ export function createApp({
     orchestrator.onIncoming(`${isGroup ? 'group' : 'private'}:${id}`);
   }
 
+  async function ingestEmojiLike(event, arrivedInactive = false) {
+    // OneBot（SnowLuma / NapCat 命名）：notice_type=group_msg_emoji_like、
+    // sub_type=add|remove、likes:[{emoji_id, count}]，message_id 是被贴的那条消息。
+    // 设计取舍：贴的是**机器人自己发的消息**才唤醒本轮（那是对它发言的反馈）；
+    // 群友之间互相贴只落一条记录（acked），进未来运行的上下文，不单独叫醒它 ——
+    // 否则活跃群里每个表情回应都触发一次运行，太吵。
+    const groupId = String(event.group_id ?? '');
+    if (!groupId) return;
+    const cfgNow = getConfig();
+    if (!allowed('group', groupId, cfgNow)) return;
+    const operatorId = String(event.user_id ?? '');
+    if (operatorId && operatorId === onebot.selfId) return;   // 自己贴的自己在发送时不重复记
+    if (operatorId && (cfgNow.blocklist?.[groupId] || []).map(String).includes(operatorId)) return;
+    const chatKeyNow = `group:${groupId}`;
+    let operatorName = (await resolveAtName(groupId, operatorId)) || '';
+    if (!operatorName) {
+      const prior = (store.recent(chatKeyNow, { limit: 500 }) || [])
+        .find((m) => !m.self && String(m.senderId) === operatorId && String(m.senderName || ''));
+      operatorName = prior ? String(prior.senderName) : operatorId;
+    }
+    const likes = Array.isArray(event.likes) ? event.likes : [];
+    const parts = likes.map((like) => {
+      const emojiId = String(like?.emoji_id ?? '');
+      const name = faceNameOf(emojiId);
+      const count = Number(like?.count) || 1;
+      return `${name ? `「${name}」` : ''}${emojiId || '?'}${count > 1 ? `×${count}` : ''}`;
+    }).filter(Boolean).join('、') || '一个表情';
+    let toSelf = false;
+    if (event.message_id != null) {
+      try { toSelf = store.findByMid?.(chatKeyNow, event.message_id)?.self === true; } catch { toSelf = false; }
+    }
+    const verb = event.sub_type === 'remove' ? '撤回了表情回应' : '贴了表情';
+    const text = sanitizeUserText(toSelf
+      ? `[贴表情] ${operatorName} ${verb}：${parts}（贴的是你说的那条）`
+      : `[贴表情] ${operatorName} ${verb}：${parts}`);
+    store.appendIncoming(chatKeyNow, {
+      mid: null,
+      ts: event.time ? Math.round(Number(event.time) * 1000) : Date.now(),
+      senderId: operatorId,
+      senderName: operatorName,
+      text,
+      media: [],
+      eventKind: 'emoji-like'
+    }, { recordOnly: arrivedInactive || !isTimeActive(chatKeyNow) || !toSelf });
+    emit('chat-update', chatKeyNow);
+    if (toSelf) orchestrator.onIncoming(chatKeyNow);
+  }
+
   const ingress = new Map();
   function handleOneBotEvent(event) {
     const key = event?.group_id ? `group:${event.group_id}` : `private:${event?.user_id}`;
@@ -1291,6 +1340,9 @@ export function createApp({
     }
     if (event.post_type === 'notice' && event.notice_type === 'notify' && event.sub_type === 'poke') {
       return ingestPoke(event, arrivedInactive);
+    }
+    if (event.post_type === 'notice' && event.notice_type === 'group_msg_emoji_like' && event.group_id != null) {
+      return ingestEmojiLike(event, arrivedInactive);
     }
     if (
       event.post_type === 'request'
