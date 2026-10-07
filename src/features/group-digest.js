@@ -157,7 +157,10 @@ export class GroupDigestManager {
     // 卡片把一段较长的汇总收在一个可展开的气泡里，比一长串文字更清爽；
     // 关掉开关（控制台「平台能力」）就回到原来的纯文本发送。
     const appCfg = getConfig();
-    if (appCfg.platform?.forwardCards !== false && typeof this.sender.sendForwardCard === 'function') {
+    // asCard 报告"真的走了卡片"：sender 没有这个能力（老接线/降级）时会回落文本，
+    // 只看开关键就会回一个与实际不符的 true（2026-10-07 复审 P3）。
+    const asCard = appCfg.platform?.forwardCards !== false && typeof this.sender.sendForwardCard === 'function';
+    if (asCard) {
       const nickname = String(appCfg.persona?.selfNickname || '').trim() || '群日报';
       await this.sender.sendForwardCard(chatKey, [{
         type: 'node',
@@ -166,6 +169,6 @@ export class GroupDigestManager {
     } else {
       await this.sender.sendTextBatch(chatKey, [text], {});
     }
-    return { ok: true, chars: text.length, messages: rows.length, text, asCard: appCfg.platform?.forwardCards !== false };
+    return { ok: true, chars: text.length, messages: rows.length, text, asCard };
   }
 }

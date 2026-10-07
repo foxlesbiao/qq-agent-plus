@@ -91,13 +91,16 @@ it('react_to_message：参数归一化、非数字编号被拒、每小时封顶
   const ctx = {
     kind: 'group', chatId: '1', chatKey: 'group:1',
     session: { id: 's', sent: [], leaseId: 'l' },
-    onebot: { call: async (action, params) => { calls.push([action, params]); return {}; } },
+    // 工具经由 OneBotClient.reactToMessage 发出（wire 形状只留一处）：这里只验工具传了什么
+    onebot: { call: async (action, params) => { calls.push([action, params]); return {}; },
+      reactToMessage: async (...args) => { calls.push(['reactToMessage', args]); return {}; } },
     emit: () => {}
   };
   const def = tool('react_to_message');
   const res = parse(await def.execute(ctx, { messageId: '#123', emojiId: '14' }));
   assert.equal(res.reacted, true);
-  assert.deepEqual(calls.at(-1), ['set_msg_emoji_like', { message_id: 123, emoji_id: '14', set: true }]);
+  assert.deepEqual(calls.at(-1), ['reactToMessage', ['123', '14', true, undefined]],
+    '归一化后的 mid、编号、set 与 signal 要原样传给客户端方法');
 
   const bad = await def.execute(ctx, { messageId: '123', emojiId: '微笑' });
   assert.equal(bad.isError, true, '编号必须是数字');
@@ -191,11 +194,12 @@ it('群签到 / 群待办：只进群、参数正确', async () => {
   assert.equal(priv.isError, true);
 });
 
-it('send_qq_voice：先取角色列表，再带 character 发送', async () => {
+it('send_qq_voice：先取角色列表，再带 character 发送（发送走队列）', async () => {
   const calls = [];
+  const voiceCalls = [];
   const ctx = {
     kind: 'group', chatId: '433', chatKey: 'group:433',
-    session: { id: 's', sent: [] },
+    session: { id: 's', sent: [], leaseId: 'l1' },
     onebot: {
       call: async (action, params) => {
         calls.push([action, params]);
@@ -205,13 +209,20 @@ it('send_qq_voice：先取角色列表，再带 character 发送', async () => {
         return {};
       }
     },
+    // 发送这一步走发送队列（限频/禁言/outbox，2026-10-07 复审 P2）：工具与队列的
+    // 交接在这里验，队列→协议端的真实 wire 形状在 platform-simulated-group 里验。
+    sender: { aiVoice: async (chatKey, payload, options) => { voiceCalls.push({ chatKey, payload, options }); return { message_id: 1 }; } },
     emit: () => {}
   };
   const list = parse(await tool('send_qq_voice').execute(ctx, { text: '大家好呀' }));
   assert.deepEqual(list.characters, [{ characterId: 'c1', name: '小新', category: '热门' }]);
   const sent = parse(await tool('send_qq_voice').execute(ctx, { text: '大家好呀', character: 'c1' }));
   assert.equal(sent.sent, true);
-  assert.deepEqual(calls.at(-1), ['send_group_ai_record', { group_id: 433, character: 'c1', text: '大家好呀' }]);
+  assert.deepEqual(voiceCalls.at(-1), {
+    chatKey: 'group:433',
+    payload: { character: 'c1', text: '大家好呀' },
+    options: { runId: 'l1', signal: undefined }
+  }, '发送要交给 sender.aiVoice，并带上本轮租约');
 
   const priv = await tool('send_qq_voice').execute({ kind: 'private', chatId: '2', chatKey: 'private:2' }, { text: '喂' });
   assert.equal(priv.isError, true, 'QQ 语音只有群聊');
@@ -331,4 +342,16 @@ it('表情回应通知：贴别人的消息只记录；贴机器人的消息才�
   });
   await new Promise((resolve) => setTimeout(resolve, 50));
   assert.equal(recentTexts().length, countBefore, '自己贴的不该再记一条');
+
+  // ④ 撤回表情（sub_type=remove）：落记录，但**不**当唤醒源 —— 撤回不是对发言的反馈
+  // （2026-10-07 复审 P3：原来 remove 也会唤醒一轮）。
+  const unreadBeforeRemove = app.store.unreadCount('group:1');
+  await app.onebot.onEvent({
+    post_type: 'notice', notice_type: 'group_msg_emoji_like', sub_type: 'remove',
+    group_id: 1, user_id: 42, message_id: 9002, likes: [{ emoji_id: '14', count: 1 }],
+    time: Math.floor(Date.now() / 1000)
+  });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(recentTexts().some((t) => t.includes('撤回了表情回应')), '撤回要落记录（进下次运行的上下文）');
+  assert.equal(app.store.unreadCount('group:1'), unreadBeforeRemove, '撤回不该叫醒它');
 });

@@ -441,6 +441,99 @@ export class SendQueue {
     });
   }
 
+  /**
+   * QQ 原生 AI 语音（send_qq_voice 工具）：群聊限定，协议端 SnowLuma ≥1.14.20。
+   * 走 #deliver —— 与文本/语音/贴纸同款：限频、禁言预检、outbox 记账。
+   * （2026-10-07 复审 P2：原先工具直接 onebot.call，模型抽风时没有任何限频。）
+   */
+  aiVoice(chatKey, { character, text, label = '' } = {}, options = {}) {
+    const [kind, id] = String(chatKey).split(':');
+    if (kind !== 'group') throw new Error('QQ 原生语音只能发在群聊里');
+    const chain = this.#chain(chatKey);
+    return chain(async () => {
+      if (options.runId && this.store.hasUncertainEffects(options.runId)) throw new Error('Previous send delivery is uncertain');
+      this.#checkRate(chatKey);
+      await sleep(randInt(600, 1500));
+      const data = await this.#deliver(chatKey, options, { type: 'ai-voice', character },
+        () => this.onebot.call('send_group_ai_record', {
+          group_id: Number(id), character, text
+        }, 60000, options.signal));
+      const ts = Date.now();
+      this.#afterSent(() => {
+        this.store.appendSelf(chatKey, {
+          text: `[QQ语音]${String(label || text).slice(0, 60)}`,
+          ts,
+          mid: data?.message_id ?? null,
+          targetUserId: '',
+          eventKind: 'message'
+        });
+        this.onSent?.({ chatKey, text: '[QQ语音]', messageId: data?.message_id ?? null });
+      });
+      return { message_id: data?.message_id ?? null };
+    });
+  }
+
+  /**
+   * 往群里发一个文件（send_group_file 工具）：群聊限定。文件在群里可见，与发消息同类，
+   * 同样走 #deliver（限频/禁言预检/outbox；上传 5xx 后的"结果未知"也能在控制台核对）。
+   */
+  groupFile(chatKey, { file, name }, options = {}) {
+    const [kind, id] = String(chatKey).split(':');
+    if (kind !== 'group') throw new Error('群文件只能发在群聊里');
+    const chain = this.#chain(chatKey);
+    return chain(async () => {
+      if (options.runId && this.store.hasUncertainEffects(options.runId)) throw new Error('Previous send delivery is uncertain');
+      this.#checkRate(chatKey);
+      const data = await this.#deliver(chatKey, options, { type: 'file', name },
+        () => this.onebot.call('upload_group_file', {
+          group_id: Number(id), file, name
+        }, 120000, options.signal));
+      const ts = Date.now();
+      this.#afterSent(() => {
+        this.store.appendSelf(chatKey, {
+          text: `[群文件]${String(name || '').slice(0, 60)}`,
+          ts,
+          mid: data?.message_id ?? null,
+          targetUserId: '',
+          eventKind: 'message'
+        });
+        this.onSent?.({ chatKey, text: '[群文件]', messageId: data?.message_id ?? null });
+      });
+      return { file_id: data?.file_id ?? null, message_id: data?.message_id ?? null };
+    });
+  }
+
+  /**
+   * 把一张图传进群相册（upload_to_group_album 工具）：群聊限定、开关默认关。
+   * 同样是"所有人都看得到"的写操作，走 #deliver —— 限频 / 禁言预检 / outbox
+   * （上传 120 秒超时后的"结果未知"能在控制台核对，而不是只留在调用栈里）。
+   */
+  albumPhoto(chatKey, { file, albumId, albumName }, options = {}) {
+    const [kind, id] = String(chatKey).split(':');
+    if (kind !== 'group') throw new Error('群相册只能在群聊里操作');
+    const chain = this.#chain(chatKey);
+    return chain(async () => {
+      if (options.runId && this.store.hasUncertainEffects(options.runId)) throw new Error('Previous send delivery is uncertain');
+      this.#checkRate(chatKey);
+      const data = await this.#deliver(chatKey, options, { type: 'album-photo', albumId },
+        () => this.onebot.call('upload_image_to_qun_album', {
+          group_id: Number(id), album_id: albumId, album_name: albumName || albumId, file
+        }, 120000, options.signal));
+      const ts = Date.now();
+      this.#afterSent(() => {
+        this.store.appendSelf(chatKey, {
+          text: `[群相册]上传了一张照片（${String(albumName || albumId).slice(0, 40)}）`,
+          ts,
+          mid: data?.message_id ?? null,
+          targetUserId: '',
+          eventKind: 'message'
+        });
+        this.onSent?.({ chatKey, text: '[群相册]', messageId: data?.message_id ?? null });
+      });
+      return { message_id: data?.message_id ?? null };
+    });
+  }
+
   /** 发送语音（本地合成的音频 → base64 record 段）。发送成功后留档，否则下次运行不知道自己发过语音。 */
   voice(chatKey, { file, seconds = 0, label = '' } = {}, options = {}) {
     const [kind, id] = String(chatKey).split(':');

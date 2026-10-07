@@ -661,25 +661,9 @@ async function saveConfig({ quiet = false } = {}) {
       maxPerMinute: Number(val('#cfg-maxpermin', c.send?.maxPerMinute)) || 80,
       maxPerHour: Number(val('#cfg-maxperhour', c.send?.maxPerHour)) || 500,
       byLengthMs: Number(val('#cfg-bylength', c.send?.byLengthMs)) || 20,
-      hardSplitAt: Number(val('#cfg-hardsplit', c.send?.hardSplitAt)) || 0,
-      // 私聊「正在输入」（控件在「平台能力」页；缺控件时按已保存值回退，默认开）
-      typingIndicator: chk('#cfg-typing', c.send?.typingIndicator !== false)
-    };
-    // 平台能力开关（2026-10-07，控件在「平台能力」页）：与 DEFAULT_CONFIG.platform 一一对应，
-    // 缺控件时按已保存值回退（旧页面/旧存档不会把开关误抹）。
-    patch.platform = {
-      ...c.platform,
-      reactions: chk('#cfg-platform-reactions', c.platform?.reactions !== false),
-      qqVoice: chk('#cfg-platform-qqvoice', c.platform?.qqVoice !== false),
-      profileWrites: chk('#cfg-platform-profile', c.platform?.profileWrites !== false),
-      groupTools: chk('#cfg-platform-grouptools', c.platform?.groupTools !== false),
-      ocr: chk('#cfg-platform-ocr', c.platform?.ocr !== false),
-      groupFiles: chk('#cfg-platform-groupfiles', c.platform?.groupFiles !== false),
-      albumRead: chk('#cfg-platform-albumread', c.platform?.albumRead !== false),
-      // 两个"默认关"的项（相册上传、已读标记）：缺控件时同样按已保存值回退
-      albumUpload: chk('#cfg-platform-albumupload', c.platform?.albumUpload === true),
-      readReceipts: chk('#cfg-platform-readreceipts', c.platform?.readReceipts === true),
-      forwardCards: chk('#cfg-platform-forwardcards', c.platform?.forwardCards !== false)
+      hardSplitAt: Number(val('#cfg-hardsplit', c.send?.hardSplitAt)) || 0
+      // typingIndicator 的控件在「平台能力」页 → 由下面 sec === 'platform' 的块负责保存；
+      // 这里靠 ...c.send 原样带过，不读别的分区的控件
     };
     patch.proactive = {
       ...c.proactive,
@@ -755,6 +739,34 @@ async function saveConfig({ quiet = false } = {}) {
     // 清掉已废弃的两个字段，避免残留配置误导后来读代码的人
     delete patch.store.pastStateLimit;
     delete patch.store.pastStateMaxChars;
+  }
+
+  // 「平台能力」页的保存块（2026-10-07 复审 P1）：这些控件只由这个分区渲染，
+  // 而这段装配原来挂在 chat 分区里 —— 在平台页点保存时 sec === 'platform'，
+  // 连进去的机会都没有：patch 是空的、界面却提示"已保存"，开关只能手改 config.json 才生效。
+  // 今后这个页面的任何新开关都必须进这个块。
+  if (sec === 'platform') {
+    // 「正在输入」控件在本页、配置键在 send 段：updateConfig 是 deepMerge，
+    // 只带这一个键不会碰 send 段的其他字段。
+    patch.send = {
+      typingIndicator: chk('#cfg-typing', c.send?.typingIndicator !== false)
+    };
+    // 平台能力开关：与 DEFAULT_CONFIG.platform 一一对应，
+    // 缺控件时按已保存值回退（旧页面/旧存档不会把开关误抹）。
+    patch.platform = {
+      ...c.platform,
+      reactions: chk('#cfg-platform-reactions', c.platform?.reactions !== false),
+      qqVoice: chk('#cfg-platform-qqvoice', c.platform?.qqVoice !== false),
+      profileWrites: chk('#cfg-platform-profile', c.platform?.profileWrites !== false),
+      groupTools: chk('#cfg-platform-grouptools', c.platform?.groupTools !== false),
+      ocr: chk('#cfg-platform-ocr', c.platform?.ocr !== false),
+      groupFiles: chk('#cfg-platform-groupfiles', c.platform?.groupFiles !== false),
+      albumRead: chk('#cfg-platform-albumread', c.platform?.albumRead !== false),
+      // 两个"默认关"的项（相册上传、已读标记）：缺控件时同样按已保存值回退
+      albumUpload: chk('#cfg-platform-albumupload', c.platform?.albumUpload === true),
+      readReceipts: chk('#cfg-platform-readreceipts', c.platform?.readReceipts === true),
+      forwardCards: chk('#cfg-platform-forwardcards', c.platform?.forwardCards !== false)
+    };
   }
 
   if (sec === 'desktop') {

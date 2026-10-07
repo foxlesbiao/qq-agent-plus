@@ -14,7 +14,7 @@ process.on('exit', () => fs.rmSync(root, { recursive: true, force: true }));
 const { GroupDigestManager } = await import('../src/features/group-digest.js');
 const { updateConfig, DEFAULT_CONFIG } = await import('../src/core/config.js');
 
-function fixture({ mode = 'active', allow = ['1'] } = {}) {
+function fixture({ mode = 'active', allow = ['1'], sender = null, platform = null, persona = null } = {}) {
   const rows = Array.from({ length: 20 }, (_, i) => ({
     mid: `m${i}`, ts: Date.now() - 60_000, self: false,
     sender: { uin: 100 + i, nickname: `群友${i}` }, text: `第 ${i} 条消息`
@@ -22,12 +22,14 @@ function fixture({ mode = 'active', allow = ['1'] } = {}) {
   const stats = { modelCalls: 0, sent: 0 };
   const manager = new GroupDigestManager({
     store: { recent: () => rows, listChats: () => ['group:1'] },
-    sender: { sendTextBatch: async () => { stats.sent += 1; return { sent: [] }; } }
+    sender: sender ?? { sendTextBatch: async () => { stats.sent += 1; return { sent: [] }; } }
   });
   updateConfig({
     ...DEFAULT_CONFIG,
     runtime: { ...DEFAULT_CONFIG.runtime, mode },
     allow: { groups: allow },
+    platform: { ...DEFAULT_CONFIG.platform, ...(platform ?? {}) },
+    persona: { ...DEFAULT_CONFIG.persona, ...(persona ?? {}) },
     groupDigest: { ...DEFAULT_CONFIG.groupDigest, enabled: true, chats: ['group:1'] }
   });
   // 群日报用 llm.chatCompletion（全局 fetch）→ 用 fetch 桩数调用次数
@@ -56,4 +58,50 @@ test('正常放行时仍会调模型并发送（门禁没把功能打死）', as
   await f.manager.runOnce();
   assert.equal(f.stats.modelCalls, 1, '白名单 + active 模式要照常跑');
   assert.equal(f.stats.sent, 1);
+});
+
+test('日报卡片：forwardCards 开（默认）→ 发合并转发卡片（带群内昵称），不再发纯文本', async () => {
+  const cards = [];
+  const texts = [];
+  const f = fixture({
+    persona: { selfNickname: '犊子' },
+    sender: {
+      sendForwardCard: async (chatKey, nodes, options) => { cards.push({ chatKey, nodes, options }); return { message_id: 7 }; },
+      sendTextBatch: async (chatKey, messages) => { texts.push({ chatKey, messages }); return { sent: [] }; }
+    }
+  });
+  const out = await f.manager.runOnce();
+  assert.equal(cards.length, 1, '默认要发卡片');
+  assert.equal(texts.length, 0, '发了卡片就不该再发文本（否则群里两条日报）');
+  assert.deepEqual(cards[0].nodes, [{
+    type: 'node',
+    data: { nickname: '犊子', content: [{ type: 'text', data: { text: '群里在聊啥' } }] }
+  }]);
+  assert.equal(cards[0].chatKey, 'group:1');
+  assert.equal(out.results[0].asCard, true);
+});
+
+test('日报卡片：开关关掉 / 老 sender 没有 sendForwardCard → 回落纯文本', async () => {
+  // ① 控制台「平台能力」里关掉 forwardCards
+  const texts = [];
+  const f1 = fixture({
+    platform: { forwardCards: false },
+    sender: {
+      sendForwardCard: async () => { throw new Error('关了开关还走卡片 = 回归'); },
+      sendTextBatch: async (chatKey, messages) => { texts.push({ chatKey, messages }); return { sent: [] }; }
+    }
+  });
+  const out1 = await f1.manager.runOnce();
+  assert.equal(texts.length, 1, '关掉开关要回到纯文本');
+  assert.deepEqual(texts[0].messages, ['群里在聊啥']);
+  assert.equal(out1.results[0].asCard, false);
+
+  // ② sender 没有 sendForwardCard 能力（老接线/降级场景）也要能跑
+  const texts2 = [];
+  const f2 = fixture({
+    sender: { sendTextBatch: async (chatKey, messages) => { texts2.push({ chatKey, messages }); return { sent: [] }; } }
+  });
+  const out2 = await f2.manager.runOnce();
+  assert.deepEqual(texts2[0].messages, ['群里在聊啥'], '没有卡片能力就回落文本，不能抛错');
+  assert.equal(out2.results[0].asCard, false, 'asCard 要如实报"没走卡片"（2026-10-07 复审 P3）');
 });

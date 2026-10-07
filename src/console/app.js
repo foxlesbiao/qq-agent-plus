@@ -1305,6 +1305,11 @@ export function createApp({
     const text = sanitizeUserText(toSelf
       ? `[贴表情] ${operatorName} ${verb}：${parts}（贴的是你说的那条）`
       : `[贴表情] ${operatorName} ${verb}：${parts}`);
+    // 只有"贴"才当唤醒源：撤回表情不是对发言的反馈，把它也当唤醒源会让"某人撤回一个表情"
+    // 也叫醒一轮（2026-10-07 复审 P3）。撤回照旧落记录 —— 但必须 recordOnly：
+    // 唤醒标记（pending）是"要跑一轮"的信号，只记不跑的行留在未读里会永远吊着，
+    // 直到下一个无关事件把它顺手带进上下文。
+    const wakeSelf = toSelf && event.sub_type !== 'remove';
     store.appendIncoming(chatKeyNow, {
       mid: null,
       ts: event.time ? Math.round(Number(event.time) * 1000) : Date.now(),
@@ -1313,9 +1318,9 @@ export function createApp({
       text,
       media: [],
       eventKind: 'emoji-like'
-    }, { recordOnly: arrivedInactive || !isTimeActive(chatKeyNow) || !toSelf });
+    }, { recordOnly: arrivedInactive || !isTimeActive(chatKeyNow) || !wakeSelf });
     emit('chat-update', chatKeyNow);
-    if (toSelf) orchestrator.onIncoming(chatKeyNow);
+    if (wakeSelf) orchestrator.onIncoming(chatKeyNow);
   }
 
   const ingress = new Map();

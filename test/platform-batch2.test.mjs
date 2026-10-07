@@ -89,18 +89,27 @@ it('group_file_url：取下载直链；空 id 拒绝', async () => {
   assert.equal(bad.isError, true);
 });
 
-it('send_group_file：text 变 base64 文件、url 原样转发、二选一校验', async () => {
-  const calls = [];
-  const ctx = groupCtx(async (action, params) => { calls.push([action, params]); return { file_id: 'up1' }; });
+it('send_group_file：text 变 base64 文件、url 原样转发、二选一校验（发送走队列）', async () => {
+  const sentCalls = [];
+  const ctx = {
+    ...groupCtx(async () => ({})),
+    // 发送这一步走发送队列（限频/禁言/outbox，2026-10-07 复审 P2）：这里验工具与队列的交接，
+    // 队列→协议端的真实 wire 形状在 platform-simulated-group 里验。
+    sender: {
+      groupFile: async (chatKey, payload, options) => { sentCalls.push({ chatKey, payload, options }); return { file_id: 'up1' }; }
+    }
+  };
   const byText = parse(await tool('send_group_file').execute(ctx, { text: '第一行', name: '名单.txt' }));
   assert.equal(byText.sent, true);
-  const [, textParams] = calls.at(-1);
+  assert.equal(byText.fileId, 'up1');
+  assert.equal(sentCalls.at(-1).chatKey, 'group:433');
+  const textParams = sentCalls.at(-1).payload;
   assert.equal(textParams.name, '名单.txt');
   assert.ok(textParams.file.startsWith('base64://'), '文本要以 base64 文件发出去');
   assert.equal(Buffer.from(textParams.file.slice('base64://'.length), 'base64').toString('utf8'), '第一行');
 
   await tool('send_group_file').execute(ctx, { url: 'https://example.com/a.pdf', name: 'a.pdf' });
-  assert.equal(calls.at(-1)[1].file, 'https://example.com/a.pdf');
+  assert.equal(sentCalls.at(-1).payload.file, 'https://example.com/a.pdf');
 
   assert.equal((await tool('send_group_file').execute(ctx, {})).isError, true);
   assert.equal((await tool('send_group_file').execute(ctx, { text: 'x', url: 'https://e/x' })).isError, true);
@@ -129,18 +138,27 @@ it('list_group_album：列相册 / 列照片；点赞与评论参数形状', asy
   assert.deepEqual(calls.at(-1), ['do_group_album_comment', { group_id: 433, album_id: 'alb1', lloc: 'lo1', content: '哈哈' }]);
 });
 
-it('upload_to_group_album：用消息里的图 + 第一个相册；没有图时报错', async () => {
+it('upload_to_group_album：用消息里的图 + 第一个相册；没有图时报错（上传走队列）', async () => {
   const calls = [];
-  const ctx = groupCtx(async (action, params) => {
-    calls.push([action, params]);
-    if (action === 'get_group_album_list') return [{ id: 'alb1', name: '日常' }];
-    return {};
-  });
+  const uploaded = [];
+  const ctx = {
+    ...groupCtx(async (action, params) => {
+      calls.push([action, params]);
+      if (action === 'get_group_album_list') return [{ id: 'alb1', name: '日常' }];
+      return {};
+    }),
+    sender: {
+      albumPhoto: async (chatKey, payload, options) => { uploaded.push({ chatKey, payload, options }); return {}; }
+    }
+  };
   ctx.store.findByMid = () => ({ mid: '9', media: [{ kind: 'image', url: 'https://example.com/pic.png', file: 'pic.png' }] });
   const res = parse(await tool('upload_to_group_album').execute(ctx, { messageId: '9' }));
   assert.equal(res.uploaded, true);
-  assert.deepEqual(calls.at(-1), ['upload_image_to_qun_album',
-    { group_id: 433, album_id: 'alb1', album_name: '日常', file: 'https://example.com/pic.png' }]);
+  assert.deepEqual(uploaded.at(-1), {
+    chatKey: 'group:433',
+    payload: { file: 'https://example.com/pic.png', albumId: 'alb1', albumName: '日常' },
+    options: { runId: undefined, signal: undefined }
+  }, '上传要交给 sender.albumPhoto（限频/禁言/outbox）');
 
   ctx.store.findByMid = () => ({ mid: '10', media: [] });
   const noPic = await tool('upload_to_group_album').execute(ctx, { messageId: '10' });

@@ -727,11 +727,8 @@ export function buildToolDefs() {
           const gate = reactionQuota.tryConsume(ctx.chatKey, reservedAt);
           if (!gate.ok) return err('这一小时贴的表情够多了，过一会儿再贴');
           try {
-            await ctx.onebot.call('set_msg_emoji_like', {
-              message_id: Number(mid),
-              emoji_id: emojiId,
-              set: args.set !== false
-            }, 15000, ctx.signal);
+            // 与 OneBotClient.reactToMessage 同一实现（wire 形状只留一处，2026-10-07 复审 P3）
+            await ctx.onebot.reactToMessage(mid, emojiId, args.set !== false, ctx.signal);
           } catch (error) {
             reactionQuota.refund(ctx.chatKey, reservedAt);
             throw error;
@@ -759,7 +756,7 @@ export function buildToolDefs() {
       async execute(ctx, args) {
         try {
           const mid = normalizeMid(args.messageId);
-          if (!mid) return err('messageId 不能为空');
+          if (!/^\d+$/.test(mid)) return err('messageId 要是消息 id（聊天记录里那条消息前的 #数字）');
           const res = await ctx.onebot.call('get_msg_emoji_likes', { message_id: Number(mid) }, 15000, ctx.signal);
           const list = Array.isArray(res) ? res : [];
           if (!list.length) return ok({ messageId: mid, reactions: [], note: '这条消息还没有表情回应。' });
@@ -845,7 +842,10 @@ export function buildToolDefs() {
         try {
           if (ctx.kind !== 'group') return err('群资料只能在群聊里看');
           const groupId = Number(ctx.chatId);
-          const what = String(args.what ?? '').trim();
+          // what 只认 detail/notice/honors（缺省全取）；表外的值（模型爱写的 notices/公告）
+          // 一律当"全取" —— 静默返回 {} 会让它以为这个群没有资料（2026-10-07 复审 P3）。
+          const whatRaw = String(args.what ?? '').trim();
+          const what = ['detail', 'notice', 'honors'].includes(whatRaw) ? whatRaw : '';
           const want = (name) => !what || what === name;
           const out = {};
           const failures = [];
@@ -911,7 +911,9 @@ export function buildToolDefs() {
         try {
           if (ctx.kind !== 'group') return err('群待办只能在群聊里设');
           const mid = normalizeMid(args.messageId);
-          if (!mid) return err('messageId 不能为空');
+          // 非数字 mid 会以 NaN 上wire（JSON 序列化成 null）：与 react_to_message 同口径先拦下
+          // （2026-10-07 复审 P3）。
+          if (!/^\d+$/.test(mid)) return err('messageId 要是消息 id（聊天记录里那条消息前的 #数字）');
           await ctx.onebot.call('set_group_todo', { group_id: Number(ctx.chatId), message_id: Number(mid) }, 15000, ctx.signal);
           return ok({ todo: true, messageId: mid, note: '已设成群待办。' });
         } catch (error) {
@@ -975,7 +977,9 @@ export function buildToolDefs() {
         try {
           if (ctx.kind !== 'group') return err('QQ 语音只能发在群聊里');
           const groupId = Number(ctx.chatId);
-          const text = safeSlice(String(args.text ?? '').trim(), 80);
+          // 说明里写的是 ≤60 字（引导模型说短句），硬截断也用同一个数：两处口径必须一致
+          // （2026-10-07 复审 P3：原来代码 80、说明 60）。
+          const text = safeSlice(String(args.text ?? '').trim(), 60);
           if (!text) return err('text 不能为空');
           const character = String(args.character ?? '').trim();
           if (!character) {
@@ -988,14 +992,17 @@ export function buildToolDefs() {
             }
             return ok({ characters: flat.slice(0, 40), note: flat.length ? '挑一个 characterId，再带 text 调一次就能发。' : '这个群暂时没有可用的 QQ 语音角色。' });
           }
-          await ctx.onebot.call('send_group_ai_record', { group_id: groupId, character, text }, 60000, ctx.signal);
+          // 走发送队列（限频 / 禁言预检 / outbox）：与 send_message / send_voice 同款。
+          // 2026-10-07 复审 P2：原先直接 onebot.call —— 模型抽风时这条没有任何限频，
+          // 失败也只在调用栈里（禁言群还会白刷一条异常）。
+          await ctx.sender.aiVoice(ctx.chatKey, { character, text }, { runId: ctx.session?.leaseId, signal: ctx.signal });
           afterSent(() => {
             ctx.session.sent.push({ type: 'voice', text: `[QQ语音]${text}`, at: new Date().toLocaleTimeString('zh-CN', { hour12: false }) });
             ctx.emit('session-update', ctx.session.id);
           });
           return ok({ sent: true, note: '语音已发送。' });
         } catch (error) {
-          return err(`发 QQ 语音失败：${error?.message ?? error}`);
+          return sendErr(error, {}, `发 QQ 语音失败：${error?.message ?? error}`);
         }
       }
     },
@@ -1016,12 +1023,14 @@ export function buildToolDefs() {
           if (!remark) return err('remark 不能为空');
           const userId = normalizeMid(args.userId);
           if (!userId && ctx.kind !== 'group') return err('私聊里要传 userId 指定给谁备注');
+          // 数字校验要在扣额度**之前**：以前放在 tryConsume 之后，模型传个名字就会
+          // 白扣一天 5 次里的一次（2026-10-07 复审 P3；与 react_to_message 同口径）。
+          if (userId && !/^\d+$/.test(userId)) return err('userId 要是数字 QQ 号（不知道就先查 get_active_members）');
           remarkQuota.configure({ globalMax: 5, perChatMax: Infinity });
           const reservedAt = Date.now();
           if (!remarkQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的备注次数用完了（每天最多几次）');
           try {
             if (userId) {
-              if (!/^\d+$/.test(userId)) return err('userId 要是数字 QQ 号（不知道就先查 get_active_members）');
               await ctx.onebot.call('set_friend_remark', { user_id: Number(userId), remark }, 15000, ctx.signal);
             } else {
               await ctx.onebot.call('set_group_remark', { group_id: Number(ctx.chatId), remark }, 15000, ctx.signal);
@@ -1101,10 +1110,12 @@ export function buildToolDefs() {
           const stamp = new Date().toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }).replace(/\//g, '');
           const name = safeSlice(String(args.name ?? '').trim(), 60) || `文本${stamp}.txt`;
           const file = url || `base64://${Buffer.from(text, 'utf8').toString('base64')}`;
-          const res = await ctx.onebot.call('upload_group_file', { group_id: Number(ctx.chatId), file, name }, 120000, ctx.signal);
-          return ok({ sent: true, name, fileId: res?.file_id ?? null, note: '文件已发到群文件。' });
+          // 走发送队列（限频/禁言预检/outbox）：群文件在群里可见，与发消息同类
+          // （2026-10-07 复审 P2）。
+          const sent = await ctx.sender.groupFile(ctx.chatKey, { file, name }, { runId: ctx.session?.leaseId, signal: ctx.signal });
+          return ok({ sent: true, name, fileId: sent.file_id ?? null, note: '文件已发到群文件。' });
         } catch (error) {
-          return err(`发群文件失败：${error?.message ?? error}`);
+          return sendErr(error, {}, `发群文件失败：${error?.message ?? error}`);
         }
       }
     },
@@ -1229,12 +1240,10 @@ export function buildToolDefs() {
             albumId = String(first.id ?? first.album_id);
             albumName = String(first.name ?? first.album_name ?? '');
           }
-          await ctx.onebot.call('upload_image_to_qun_album', {
-            group_id: groupId, album_id: albumId, album_name: albumName || albumId, file
-          }, 120000, ctx.signal);
+          await ctx.sender.albumPhoto(ctx.chatKey, { file, albumId, albumName }, { runId: ctx.session?.leaseId, signal: ctx.signal });
           return ok({ uploaded: true, albumId, note: '已传进群相册（所有人都能看到）。' });
         } catch (error) {
-          return err(`传相册失败：${error?.message ?? error}`);
+          return sendErr(error, {}, `传相册失败：${error?.message ?? error}`);
         }
       }
     },

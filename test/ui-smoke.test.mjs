@@ -146,3 +146,60 @@ test('真实 DOM 冒烟：QARegistry 的 transform / after / override 真的接�
     assert.equal(typeof QARegistry.base('refreshStatus'), 'function', 'override 之后仍能取回原实现');
   } finally { window.happyDOM?.abort?.(); }
 });
+
+// P1（2026-10-07 独立复审）：patch 装配挂错了分区 —— 平台能力页的开关全在 settings-save.js
+// 的 `sec === 'chat'` 块里，在这一页点保存时 patch 为空（界面还提示"已保存"），开关只能手改
+// config.json 才生效。这条用例走真实点按路径：切 tab → 点侧边栏分区 → 改复选框 → 点保存，
+// 断言 POST 体里真的有这一页的开关 —— 纯渲染断言（"不抛"）咬不住这类"存不下去"。
+test('真实 DOM 冒烟：「平台能力」页的开关能真的存下去（保存块不许挂错分区）', { skip: SKIP }, async () => {
+  const { window } = loadPage();
+  await settle();
+  try {
+    window.switchTab('settings');
+    await settle(50);
+    const menuItem = window.document.querySelector('.settings-menu-item[data-section="platform"]');
+    assert.ok(menuItem, '设置侧边栏应有「平台能力」入口');
+    menuItem.click();
+    await settle(80);
+
+    // ① 渲染侧：这一页的复选框 id 就是这 11 个
+    const renderedIds = [...window.document.querySelectorAll('#settings-form input[type="checkbox"]')]
+      .map((el) => el.id).filter(Boolean).sort();
+    assert.deepEqual(renderedIds, [
+      'cfg-platform-albumread', 'cfg-platform-albumupload', 'cfg-platform-forwardcards',
+      'cfg-platform-groupfiles', 'cfg-platform-grouptools', 'cfg-platform-ocr',
+      'cfg-platform-profile', 'cfg-platform-qqvoice', 'cfg-platform-reactions',
+      'cfg-platform-readreceipts', 'cfg-typing'
+    ], '「平台能力」页渲染出来的开关集合变了');
+
+    // ② 保存侧：settings-save.js 读取的控件 id 必须与渲染侧一一对应（改名没同步就红）
+    const saveSrc = fs.readFileSync(path.join(UI, 'pages', 'settings-save.js'), 'utf8');
+    const readIds = [...new Set([...saveSrc.matchAll(/chk\('#(cfg-(?:platform-[a-z]+|typing))'/g)].map((m) => m[1]))].sort();
+    assert.deepEqual(readIds, renderedIds, '保存映射读取的 id 与页面渲染的控件不是同一组');
+
+    // ③ 行为侧：取消勾选「表情回应」再保存，POST 体里要真的带着这个开关
+    const reactions = window.document.querySelector('#cfg-platform-reactions');
+    assert.equal(reactions.checked, true, '未配置时默认开（与 DEFAULT_CONFIG 一致）');
+    reactions.checked = false;
+
+    const posts = [];
+    window.fetch = async (url, options = {}) => {
+      posts.push({ url: String(url), method: options?.method || 'GET', body: options?.body });
+      return { ok: true, status: 200, json: async () => ({ config: {} }) };
+    };
+    window.document.querySelector('#save-cfg-btn').click();
+    await settle(120);
+
+    const save = posts.find((p) => p.url.includes('/api/config') && p.method === 'POST');
+    assert.ok(save, '点「保存设置」必须 POST /api/config');
+    const patch = JSON.parse(save.body || '{}');
+    assert.equal(patch.platform?.reactions, false, '改过的开关要按界面状态存下去（挂了错误分区时这里是 undefined）');
+    assert.equal(patch.platform?.qqVoice, true, '没动过的开关按当前值存');
+    assert.equal(patch.platform?.readReceipts, false, '默认关的项没勾 = false');
+    assert.deepEqual(Object.keys(patch.platform || {}).sort(), [
+      'albumRead', 'albumUpload', 'forwardCards', 'groupFiles', 'groupTools', 'ocr',
+      'profileWrites', 'qqVoice', 'reactions', 'readReceipts'
+    ], '这一页的每个开关都要进 patch（漏一个 = 下次的"配了不生效"）');
+    assert.equal(patch.send?.typingIndicator, true, '「正在输入」也归这一页保存');
+  } finally { window.happyDOM?.abort?.(); }
+});
