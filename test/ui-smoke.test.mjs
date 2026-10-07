@@ -236,10 +236,27 @@ test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能�
     const posts = [];
     window.fetch = async (url, options = {}) => {
       posts.push({ url: String(url), method: options?.method || 'GET', body: options?.body });
+      // 用量接口给一份能算出来的桩：右列要按"服务端生效上限"回填（含被夹过的值）
+      if (String(url).includes('/api/platform/quota-usage')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            quotas: Object.fromEntries(Object.entries({
+              reactions: ['reactionsPerHour', 3600000, 11],
+              albumWrites: ['albumWritesPerHour', 3600000, 999],
+              profile: ['profilePerDay', 86400000, 1],
+              remarks: ['remarksPerDay', 86400000, 1],
+              avatars: ['avatarsPerWeek', 604800000, 1]
+            }).map(([group, [key, windowMs, limit]]) => [group, { key, windowMs, limit, used: 0, chats: [] }]))
+          })
+        };
+      }
       return { ok: true, status: 200, json: async () => ({ config: {} }) };
     };
     window.document.querySelector('#save-cfg-btn').click();
-    await settle(120);
+    await settle(200);
 
     const save = posts.find((p) => p.url.includes('/api/config') && p.method === 'POST');
     assert.ok(save, '点「保存设置」必须 POST /api/config');
@@ -258,6 +275,13 @@ test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能�
       [...PLATFORM_GATE_KEYS, 'qqVoiceCharacter', 'quotas', 'perGroup', 'readReceipts', 'forwardCards'].sort(),
       '这一页的每个控件都要进 patch（漏一个 = 下次的"配了不生效"）');
     assert.equal(patch.send?.typingIndicator, true, '「正在输入」也归这一页保存');
+    // 保存后右列必须重拉（否则一直挂着旧上限，看起来像"改了没生效"）
+    assert.ok(posts.some((p) => p.url.includes('/api/platform/quota-usage')),
+      '保存成功后要重新拉一次用量（右列"当前用量 x / 上限 y"是渲染时拉的）');
+    // 输入框回填成服务端生效值：被夹过的 999 → 200，改过的按新值
+    assert.equal(window.document.querySelector('#cfg-platform-quota-albumWritesPerHour')?.value, '999',
+      '服务端返回什么就显示什么（这里桩给的 999 说明是"按接口值回填"而不是写死 UI 默认）');
+    assert.equal(window.document.querySelector('#cfg-platform-quota-reactionsPerHour')?.value, '11');
     // 保存映射不许再手写第二份键清单（必须用 platform.js 的共享键表）
     const saveSrc = fs.readFileSync(path.join(UI, 'pages', 'settings-save.js'), 'utf8');
     assert.ok(saveSrc.includes('ALL_GATE_KEYS') && saveSrc.includes('gateCheckboxId'),

@@ -19,7 +19,7 @@ import {
 import { pickedGroups, state } from '../core/state.js';
 // 「平台能力」页的键表与配额行：渲染在 platform.js，这里只按同一份键名读控件
 // （键名与 id 约定只维护一处；改名不同步时源码锚点用例会红）。
-import { ALL_GATE_KEYS, QUOTA_ROWS, gateCheckboxId, gateDefaultOn } from './platform.js';
+import { ALL_GATE_KEYS, QUOTA_ROWS, gateCheckboxId, gateDefaultOn, hydratePlatformGates } from './platform.js';
 import { currentPersonaId } from './persona.js';
 import { captureTimeControlRule } from './settings-bind.js';
 import { syncThinkingUi } from './settings.js';
@@ -839,6 +839,9 @@ async function saveConfig({ quiet = false } = {}) {
   // 按群覆盖草稿作废：下次渲染从刚保存的配置重新克隆。不清的话，若别的标签页/直连 API
   // 改过 perGroup，本页再用陈旧草稿提交就会整体覆盖回去（__replace__ 是整表替换，2026-10-07 审计 P3）。
   state.platformPerGroupDraft = undefined;
+  // 「平台能力」页的右列（工具清单 + "当前用量 x / 上限 y"）是**渲染时**拉的：保存后不重拉
+  // 就会一直挂着旧上限，看起来像"改了没生效"（2026-10-07 用户实测反馈）。
+  if (state.settingsSection === 'platform') void hydratePlatformGates();
   state.thinkingTouched = false;
   state.thinkingTouchedHost = '';
   // 思考区（摘要/提示/段位）跟着新配置立即刷新——否则"改了但摘要还是旧值"（2026-09-27 实测）。
