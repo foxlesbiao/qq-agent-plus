@@ -13,6 +13,9 @@
 import { asrAvailable, getConfig, imageGenAvailable } from '../core/config.js';
 import { platformGateAllowed, platformQuotaLimit } from '../core/platform-gates.js';
 import { visionEnabled } from './vision-scan.js';
+// 与 orchestrator 摘 send_voice 的条件同源（enabled && baseUrl 都齐才算能用）：
+// 只看 enabled 会在"勾了启用但没填地址"时教一个不存在的工具（2026-10-07 审计 P0）
+import { ttsConfigured } from './tts-openai.js';
 import { cappedByTokenSaver, tokenSaverCapsOf } from '../core/token-saver.js';
 // 滑条换算放在独立模块（零依赖），避免 config.js ↔ prompt.js 循环依赖。
 // 这里 re-export 是为了让已经从 prompt.js 引用的代码不受影响。
@@ -232,13 +235,27 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '') {
     '- 消息里的 `[卡片 QQ空间：标题 — 描述]` 是别人转发进来的分享（说说、文章、音乐等），方括号里就是可见的标题与描述；写着「你自己的动态」时，那就是你自己的空间动态被转进群了——可以自然接一句（认出来/意外/吐槽都行），别当没看见，也别把它当成图片去发表情。'
   ];
   if (vision) {
-    lines.push(
-      '- 消息里出现 [图片] / [表情包] / [视频]，或要用某个没备注的收藏表情时，可以用 get_message_images / get_sticker_image 看图（你能直接看懂图片内容），再自然回应；不要假装看不到图，也不要编造图片内容；工具获取失败就老实说看不到。',
-      '- 【看图先读情绪，别描述画面】别人发图/表情包时，先定个性：它传达的是什么态度（无语/呆滞、嘲讽/阴阳、卖萌撒娇、赞同捧场、震惊、玩笑式威胁、摆烂、委屈、催人、敷衍…），然后直接对那个态度说话。禁止描述画面：像「你这猫怎么流口水了」「这图是啥意思」都算描述；对态度说话的例子：流口水的猫＝呆滞/看傻 → 「你这是什么呆滞表情」「看傻了？」；维尼拿棍＝玩笑式威胁 → 「拿棍子吓唬谁呢」。拿不准就轻描淡写回一句，别硬编情绪、也别逐帧解释。',
-      '- 消息里的 [QQ表情14 微笑] / [QQ表情489] 是对方发的 QQ 系统表情（编号是 QQ 表情编号，不是表情库的 stickerId）：想回同一个就用 send_face 传名字（如 微笑）；要发图片表情就用 send_sticker 传备注名（见【可用表情包】），别拿这个编号去 get_sticker_image / send_sticker。',
-      '- 想表达情绪时可以用 send_face 发 QQ 系统表情（如 微笑 / 得意 / 流泪 / 玫瑰 / 汪汪），也可以用 send_sticker 发图库里的图片表情（stickerId 直接填备注名，不用背长 id）；都是一条只能一个表情、不能带文字。接梗、被逗笑、吐槽、无语、自嘲时，优先想一下有没有贴切的表情，该用就用，别连着刷。',
-      '- 图库可以自己攒：别人发的表情包会自动进库（不用你操心）；你也可以主动存——看到有意思、能当表情用的图，先 get_message_images 看一眼，确认好玩就用 collect_sticker 存进去（顺手写一句备注）；库里没备注的图，用 list_stickers 找、get_sticker_image 看，再用 sticker_note 补一句备注，以后用 send_sticker 发更准。挑真的会用的存，别什么都收。'
-    );
+    // 表情包工具受两层开关管（orchestrator：sticker.enabled 摘 5 个工具、collectEnabled 单独摘收藏）：
+    // 提示词必须同判，否则"教了但工具不在"（2026-10-07 独立审计 M2/M3）。
+    const stickerOn = getConfig().sticker?.enabled !== false;
+    const collectOn = stickerOn && getConfig().sticker?.collectEnabled !== false;
+    const stickerBits = [
+      '- 消息里出现 [图片] / [表情包] / [视频]，或要用某个没备注的收藏表情时，可以用 get_message_images'
+        + (stickerOn ? ' / get_sticker_image' : '') + ' 看图（你能直接看懂图片内容），再自然回应；不要假装看不到图，也不要编造图片内容；工具获取失败就老实说看不到。',
+      '- 【看图先读情绪，别描述画面】别人发图/表情包时，先定个性：它传达的是什么态度（无语/呆滞、嘲讽/阴阳、卖萌撒娇、赞同捧场、震惊、玩笑式威胁、摆烂、委屈、催人、敷衍…），然后直接对那个态度说话。禁止描述画面：像「你这猫怎么流口水了」「这图是啥意思」都算描述；对态度说话的例子：流口水的猫＝呆滞/看傻 → 「你这是什么呆滞表情」「看傻了？」；维尼拿棍＝玩笑式威胁 → 「拿棍子吓唬谁呢」。拿不准就轻描淡写回一句，别硬编情绪、也别逐帧解释。'
+    ];
+    if (stickerOn) {
+      stickerBits.push('- 消息里的 [QQ表情14 微笑] / [QQ表情489] 是对方发的 QQ 系统表情（编号是 QQ 表情编号，不是表情库的 stickerId）：想回同一个就用 send_face 传名字（如 微笑）；要发图片表情就用 send_sticker 传备注名（见【可用表情包】），别拿这个编号去 get_sticker_image / send_sticker。');
+      stickerBits.push('- 想表达情绪时可以用 send_face 发 QQ 系统表情（如 微笑 / 得意 / 流泪 / 玫瑰 / 汪汪），也可以用 send_sticker 发图库里的图片表情（stickerId 直接填备注名，不用背长 id）；都是一条只能一个表情、不能带文字。接梗、被逗笑、吐槽、无语、自嘲时，优先想一下有没有贴切的表情，该用就用，别连着刷。');
+    } else {
+      stickerBits.push('- 想表达情绪时可以用 send_face 发 QQ 系统表情（如 微笑 / 得意 / 流泪 / 玫瑰 / 汪汪）；一条只能一个表情、不能带文字。接梗、被逗笑、吐槽、无语、自嘲时，优先想一下有没有贴切的表情，该用就用，别连着刷。');
+    }
+    if (collectOn) {
+      stickerBits.push('- 图库可以自己攒：别人发的表情包会自动进库（不用你操心）；你也可以主动存——看到有意思、能当表情用的图，先 get_message_images 看一眼，确认好玩就用 collect_sticker 存进去（顺手写一句备注）；库里没备注的图，用 list_stickers 找、get_sticker_image 看，再用 sticker_note 补一句备注，以后用 send_sticker 发更准。挑真的会用的存，别什么都收。');
+    } else if (stickerOn) {
+      stickerBits.push('- 图库里的表情可以挑着用：list_stickers 找、get_sticker_image 看、sticker_note 补备注，发的时候 send_sticker 传备注名。');
+    }
+    lines.push(...stickerBits);
   } else {
     lines.push(
       '- 你无法查看图片内容：消息里的 [图片] [表情包] 只是占位提示，如实表示"看不到图"即可，绝对不要编造图片内容。'
@@ -266,7 +283,7 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '') {
       // 教了反而会多一次没必要的列表调用、还可能自作主张换音色）。
       // 两条语音路都在时补一条择一规则：审计发现两处分开教、没有规则，模型只能自己猜
       // （TTS 的可用性判断与【玩法与工具箱】里教 send_voice 用同一道门，避免指向不存在的工具）。
-      const ttsOn = getConfig().tts?.enabled === true;
+      const ttsOn = ttsConfigured(getConfig());   // 与 orchestrator 同判；只看 enabled 会指向不存在的工具
       bits.push((String(plat.qqVoiceCharacter || '').trim()
         ? '想玩语音时群里可以 send_qq_voice（音色已由管理员固定，直接给 text 就行）'
         : '想玩语音时群里可以 send_qq_voice（QQ 内置语音角色，先不传 character 拿角色列表）')
@@ -285,10 +302,19 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '') {
   {
     // 换头像/改昵称（账号级外观）默认关：工具被摘除时提示词也不教（与其它平台开关同一口径）
     const bits = [];
-    if (gate('avatarWrites')) bits.push('换 QQ 头像（set_my_avatar：用某条消息里的图或表情库里的图）');
-    if (gate('nicknameWrites')) bits.push('改 QQ 昵称/个性说明（set_my_profile）');
+    const quotaBits = [];
+    if (gate('avatarWrites')) {
+      bits.push('换 QQ 头像（set_my_avatar：用某条消息里的图或表情库里的图）');
+      quotaBits.push(`头像每周最多 ${quotaLimit('avatarsPerWeek')} 次`);
+    }
+    if (gate('nicknameWrites')) {
+      bits.push('改 QQ 昵称/个性说明（set_my_profile）');
+      // 昵称/个性说明吃的是 profilePerDay（与签名、在线状态共享），不是头像那份每周额度 ——
+      // 之前只开昵称时也说"头像每周 N 次"，模型会误判还剩多少（2026-10-07 审计 P2）
+      quotaBits.push(`昵称与签名、在线状态共享每天 ${quotaLimit('profilePerDay')} 次`);
+    }
     if (bits.length) {
-      lines.push(`- 你也能${bits.join('、')} —— 这是所有人都看得到的账号外观，偶尔一次就好（头像每周最多 ${quotaLimit('avatarsPerWeek')} 次），别拿群友的生活照或别人的头像。`);
+      lines.push(`- 你也能${bits.join('、')} —— 这是所有人都看得到的账号外观，偶尔一次就好（${quotaBits.join('；')}），别拿群友的生活照或别人的头像。`);
     }
   }
   {
@@ -299,7 +325,12 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '') {
   }
   {
     const bits = [];
-    if (gate('groupFiles')) bits.push('list_group_files 看目录、group_file_url 拿某个文件的下载直链（文本可以再用 web_fetch 读）');
+    if (gate('groupFiles')) {
+      // web_fetch 受"联网搜索"开关（orchestrator 会在关掉时摘掉它）：关上时别再提，
+      // 否则又是指向不存在工具的一行（2026-10-07 审计 P3）
+      const canFetch = getConfig().webSearch?.enabled !== false;
+      bits.push(`list_group_files 看目录、group_file_url 拿某个文件的下载直链${canFetch ? '（文本可以再用 web_fetch 读）' : ''}`);
+    }
     if (gate('groupFileSend')) bits.push('send_group_file 把一段文字或直链文件发进群（发文件很显眼，别当消息用）');
     if (bits.length) lines.push(`- 群文件：${bits.join('；')}。`);
   }
@@ -349,13 +380,16 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '') {
 // 收尾自检：模型最常见的失误是把想说的话写成最终文本、忘了调工具。
 // 放在系统提示最末尾（recency 位置），每次都最后读到。
 function closingDiscipline() {
+  // 举的发送工具例子要跟着开关走：表情包关掉时 send_sticker 已被摘，
+  // 列在"只有调用过这些才算回了"里会指一个不存在的工具（2026-10-07 审计）。
+  const sendTools = ['send_message', ...(getConfig().sticker?.enabled !== false ? ['send_sticker'] : []), 'send_face'];
   return [
     '【发言与沉默 —— 每次结束前必读】',
     '1. 你没有聊天输入框。你写下的任何正文文本都是草稿纸，QQ 里永远看不到；对方能看到的字，只能从 send_message 里来。',
     '2. 结束这次处理前自问一句：我有没有"想说的话"还躺在草稿纸上？只要有一句，就现在调用 send_message 发出去——没调用，对方眼里你就是已读不回。',
     '3. 决定不说话：文本区一个字都别写。"不回了""不接了""先不理"这种话写在草稿纸上毫无意义——沉默就是零输出。',
     '4. 拿不准说不说：宁可安静，也别用一段分析代替一句话。',
-    '5. finish 的 summary 是给下一次运行看的笔记，不是发言：只有真的调用过发送工具（send_message / send_sticker / send_face），才能写“回了/说了”；没调用过就是没说出口。',
+    `5. finish 的 summary 是给下一次运行看的笔记，不是发言：只有真的调用过发送工具（${sendTools.join(' / ')}），才能写“回了/说了”；没调用过就是没说出口。`,
     '6. 闲聊收尾前再自问一句：这一轮我是不是只对 TA 的话做了反应？如果是闲聊，就顺手把自己的那半句补上（反问一句 / 说说自己这边），再结束。',
   ].join('\n');
 }
@@ -493,12 +527,20 @@ export function buildSystemPrompt({
   // 玩法与工具箱（2026-09-28）：小游戏与"随机/提醒/语音"这几件群友会主动要的事，
   // 工具一直都在，缺的是告诉模型"可以这么玩"。保持 3~4 行，别把省 Token 的收益吃掉。
   {
-    const gameLines = [
-      '【玩法与工具箱】',
-      '- 你会主持小游戏：成语接龙、猜数字、20 个问题、真心话大冒险这类不用记状态的，被点名就直接玩起来；掷骰子/抽签/随机选人用 dice（结果由系统生成，必须如实转述，不要自己编数字）。随机点名可以先 get_group_member_list 拿名单再 dice pick。',
-      '- 群友说「提醒我 / 到点叫我 / 明天 9 点提醒 X」时，用 remind 落一条（时间用 HH:MM 或多少分钟后；这是持久化承诺，重启也不丢）。到点你会被唤醒、用你的口吻说出来；改主意用 remind cancel。'
-    ];
-    if (getConfig().tts?.enabled === true) {
+    const cfgNow = getConfig();
+    const gameLines = ['【玩法与工具箱】'];
+    // 小游戏后端有自己的开关（groupGame.enabled，默认关）：没开时教它主持只会让它调一个
+    // 必然报错的工具 —— 与工具表同一口径（2026-10-07 审计 P2）。
+    const diceLine = '掷骰子/抽签/随机选人用 dice（结果由系统生成，必须如实转述，不要自己编数字）。随机点名可以先 get_group_member_list 拿名单再 dice pick。';
+    gameLines.push(cfgNow.groupGame?.enabled === true
+      ? `- 你会主持小游戏：成语接龙、猜数字、20 个问题、真心话大冒险这类不用记状态的，被点名就直接玩起来；${diceLine}`
+      : `- ${diceLine}`);
+    // 提醒要按 reminders.enabled 收敛（orchestrator 关掉时会摘掉 remind 工具）：之前这里
+    // 无条件教，与工具表不同判（2026-10-07 审计 P1）。
+    if (cfgNow.reminders?.enabled !== false) {
+      gameLines.push('- 群友说「提醒我 / 到点叫我 / 明天 9 点提醒 X」时，用 remind 落一条（时间用 HH:MM 或多少分钟后；这是持久化承诺，重启也不丢）。到点你会被唤醒、用你的口吻说出来；改主意用 remind cancel。');
+    }
+    if (ttsConfigured(cfgNow)) {
       gameLines.push('- 想"说"而不是"打"时可以用 send_voice 发一条短语音（1~3 句、≤120 字）：内容要写成口语，带语气词与标点（「哎——」「不是吧？」「……行吧」）才不会念得像播报；只在被要求或很合适的场合用，平时打字更像真人。');
     }
     // 与工具注入用**同一道门**（orchestrator 按 imageGenAvailable 过滤 generate_image）：

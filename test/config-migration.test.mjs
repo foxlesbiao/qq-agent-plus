@@ -227,3 +227,49 @@ test('平台能力：老配置的 avatarsPerDay 搬成 avatarsPerWeek，值不�
   }));
   assert.equal(junk.config.platform.quotas.avatarsPerWeek, 1, '老键是坏值时按新默认');
 });
+
+// ── 平台能力：老"伞键"被显式关掉时，拆细出来的写侧兄弟键也要跟着关（升级不许静默扩权）──
+test('平台能力：老配置 reactions/profileWrites/groupTools/groupFiles/albumRead=false 时，写侧兄弟键一并关', () => {
+  const off = loadWholeConfigInNewProcess(JSON.stringify({
+    platform: { reactions: false, profileWrites: false, groupTools: false, groupFiles: false, albumRead: false },
+    api: { apiKey: 'keep-me' }
+  }));
+  const p = off.config.platform;
+  for (const [oldKey, newKey] of [['reactions', 'reactionsWrite'], ['profileWrites', 'remarkWrites'],
+    ['groupTools', 'groupWrites'], ['groupFiles', 'groupFileSend'], ['albumRead', 'albumWrites']]) {
+    assert.equal(p[oldKey], false, `${oldKey} 原样保留`);
+    assert.equal(p[newKey], false, `${oldKey}=false 要下传到 ${newKey}（否则升级即悄悄放行写动作）`);
+  }
+  assert.equal(p.avatarWrites, false, '没存过外观开关时仍是默认关');
+  assert.equal(p.nicknameWrites, false);
+  assert.equal(p.qqVoice, true, '没碰过的键仍按默认开');
+  assert.equal(off.config.api.apiKey, 'keep-me', '迁移不许连累其它段');
+});
+
+test('平台能力：控制台保存过的 15 键配置，迁移不许改写其中任何一项', () => {
+  const saved = loadWholeConfigInNewProcess(JSON.stringify({
+    platform: {
+      reactions: false, reactionsWrite: true,        // 用户手改过：读关、写开（运行时语义就是互不牵连）
+      profileWrites: false, remarkWrites: true,
+      groupTools: false, groupWrites: true,
+      groupFiles: false, groupFileSend: true,
+      albumRead: false, albumWrites: true
+    },
+    api: { apiKey: 'keep-me' }
+  }));
+  const p = saved.config.platform;
+  for (const key of ['reactionsWrite', 'remarkWrites', 'groupWrites', 'groupFileSend', 'albumWrites']) {
+    assert.equal(p[key], true, `${key} 已显式存过 true，迁移不许把它按老伞键改成 false`);
+  }
+});
+
+test('平台能力：换头像额度从老键搬过来时夹到 1~200（0.5 不能变成 0 —— 闸门把 0 当不限量）', () => {
+  const tiny = loadWholeConfigInNewProcess(JSON.stringify({
+    platform: { quotas: { avatarsPerDay: 0.5 } }, api: { apiKey: 'keep-me' }
+  }));
+  assert.equal(tiny.config.platform.quotas.avatarsPerWeek, 1, '0.5 夹到下界 1，不许留 0');
+  const huge = loadWholeConfigInNewProcess(JSON.stringify({
+    platform: { quotas: { avatarsPerDay: 9999 } }, api: { apiKey: 'keep-me' }
+  }));
+  assert.equal(huge.config.platform.quotas.avatarsPerWeek, 200, '上界仍夹到 200');
+});

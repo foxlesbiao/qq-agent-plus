@@ -952,7 +952,11 @@ export function buildToolDefs() {
             throw error;
           }
           // 改昵称后必须刷新登录信息：@我 判定、提示词里的名字、自己贴的表情回应去重都读它
-          if (nickname) await ctx.onebot.refreshSelfInfo?.();
+          // 刷新自己的登录信息是 **best-effort**：昵称已经改成功了，这一步失败只该留痕，
+          // 不该把整次调用报成"改资料失败"（模型会以为没改、再改一次，白烧一次额度）。
+          if (nickname) {
+            try { await ctx.onebot.refreshSelfInfo?.(); } catch { /* 下一轮/重连时会自然刷新 */ }
+          }
           return ok({
             nickname: nickname || undefined, personalNote, sex,
             note: '资料已改。' + (nickname ? '（群里的自称以管理端人设里的"群内展示名"为准；当天还没发布的说说草稿会失效。）' : '')

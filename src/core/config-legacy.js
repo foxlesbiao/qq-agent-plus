@@ -933,6 +933,20 @@ function migrateConfig(parsed) {
     if (out.platform.nicknameWrites === undefined && out.platform.avatarWrites === true) {
       out.platform.nicknameWrites = true;
     }
+    // 拆细后新增的"写侧兄弟键"：老配置里那个伞键**被显式关掉**时，兄弟键也要跟着关 ——
+    // 否则 deepMerge 会替老配置补上默认 true，等于"升级即悄悄扩权"（用户当初关掉
+    // reactions/profileWrites/groupTools/groupFiles/albumRead 的意图被撕掉一半）。
+    // 只在兄弟键**没存过**时回填：控制台保存过一次的 15 键配置永远不被改写
+    // （2026-10-07 独立审计 P1）。
+    for (const [oldKey, newKey] of [
+      ['reactions', 'reactionsWrite'],
+      ['profileWrites', 'remarkWrites'],
+      ['groupTools', 'groupWrites'],
+      ['groupFiles', 'groupFileSend'],
+      ['albumRead', 'albumWrites']
+    ]) {
+      if (out.platform[newKey] === undefined && out.platform[oldKey] === false) out.platform[newKey] = false;
+    }
     // perGroup / quotas 的坏形状先归一化：手改坏一个字符不许把整份配置带崩
     // （这两段是 2026-10-07 新增的嵌套结构，别的字段都没有这一层）。
     if (out.platform.perGroup !== undefined && !isPlainObject(out.platform.perGroup)) out.platform.perGroup = {};
@@ -953,7 +967,7 @@ function migrateConfig(parsed) {
     if (isPlainObject(out.platform.quotas)) {
       const carried = Number(out.platform.quotas.avatarsPerDay);
       if (out.platform.quotas.avatarsPerWeek === undefined && Number.isFinite(carried) && carried > 0) {
-        out.platform.quotas.avatarsPerWeek = Math.min(200, Math.floor(carried));
+        out.platform.quotas.avatarsPerWeek = Math.max(1, Math.min(200, Math.floor(carried)));
       }
       delete out.platform.quotas.avatarsPerDay;
     }

@@ -119,7 +119,12 @@ function keyDefaultOn(key) {
 function renderPlatformSection(c) {
   const p = c.platform || {};
   const quotas = p.quotas || {};
-  const groups = (c.allow?.groups || []).map(String);
+  // 选项 = 白名单 ∪ 已经存过覆盖的群 ∪ 草稿里改过的群：某个群被移出白名单后，
+  // 它的覆盖还在 config 里，不在下拉里就会"看不见也清不掉"（2026-10-07 审计 P3）
+  const savedOverridden = Object.keys(c.platform?.perGroup || {});
+  const draftOverridden = Object.keys(state.platformPerGroupDraft || {});
+  const allowGroups = (c.allow?.groups || []).map(String);
+  const groups = [...new Set([...allowGroups, ...savedOverridden, ...draftOverridden])];
   const gateCard = ([title, note, rows]) => `
     <section class="plat-card">
       <div class="plat-card-head">
@@ -168,7 +173,7 @@ ${QUOTA_ROWS.map(([key, label, dflt]) => `          <tr>
       <div class="plat-panel">
         <div class="plat-panel-head">
           <label for="pergroup-group">选择群</label>
-          <select class="plat-select" id="pergroup-group" style="min-width:200px">${groups.map((g) => `<option value="${esc(g)}">${esc(g)}</option>`).join('')}</select>
+          <select class="plat-select" id="pergroup-group" style="min-width:200px">${groups.map((g) => `<option value="${esc(g)}">${esc(g)}${allowGroups.includes(g) ? '' : '（已不在白名单）'}</option>`).join('')}</select>
           <button type="button" class="btn btn-small" id="pergroup-clear">清除本群覆盖</button>
           <span class="hint muted" id="pergroup-note" style="margin:0"></span>
         </div>
@@ -220,13 +225,7 @@ function renderPerGroupRows() {
           </div>`;
   };
   box.innerHTML = GATE_SECTIONS.map(([, , rows]) => rows.map(rowOf)).flat().join('\n');
-  const n = Object.keys(overrides).length;
-  const note = document.getElementById('pergroup-note');
-  if (note) {
-    // 用中文标签而不是配置键：这行文案是给人看的，"albumWrites=关" 还得回去对页面
-    const list = Object.entries(overrides).map(([k, v]) => `${GATE_LABELS.get(k) || k} → ${v ? '开' : '关'}`);
-    note.textContent = n ? `本群已覆盖 ${n} 项：${list.join('、')}` : '本群还没覆盖任何项（全部跟随全局）';
-  }
+  updatePerGroupNote();
   for (const el of box.querySelectorAll('[data-pergroup-key]')) {
     el.addEventListener('change', () => {
       const key = el.dataset.pergroupKey;
@@ -237,9 +236,23 @@ function renderPerGroupRows() {
       else next[key] = el.value === 'on';
       if (Object.keys(next).length) draft[g] = next;
       else delete draft[g];
-      renderPerGroupRows();
+      // 只刷新提示行：这里整块重建会让刚操作的下拉失去焦点，键盘连续改很不顺手
+      // （2026-10-07 审计 P3）。下拉自己的值本来就是对的，不需要重画。
+      updatePerGroupNote();
     });
   }
+}
+
+/** 只刷新"本群已覆盖 N 项"那行提示（改一项时用，避免整块重建丢焦点）。 */
+function updatePerGroupNote() {
+  const gid = currentPerGroupId();
+  const overrides = (gid && perGroupDraft()[gid]) || {};
+  const n = Object.keys(overrides).length;
+  const note = document.getElementById('pergroup-note');
+  if (!note) return;
+  // 用中文标签而不是配置键：这行文案是给人看的，"albumWrites=关" 还得回去对页面
+  const list = Object.entries(overrides).map(([k, v]) => `${GATE_LABELS.get(k) || k} → ${v ? '开' : '关'}`);
+  note.textContent = n ? `本群已覆盖 ${n} 项：${list.join('、')}` : '本群还没覆盖任何项（全部跟随全局）';
 }
 
 function bindPerGroup() {
@@ -305,12 +318,14 @@ async function hydratePlatformGates() {
   if (slots.length) {
     api('/api/platform/gates').then((data) => {
       const byKey = new Map((data?.gates || []).map((g) => [g.key, g]));
+      // 200 但没数据 ≠ 这项没有工具：区分两种文案，别把"没拉到"说成"确无工具"
+      const loaded = Array.isArray(data?.gates) && data.gates.length > 0;
       for (const el of slots) {
         const info = byKey.get(el.dataset.gateTools);
         const tools = info?.tools || [];
         el.innerHTML = tools.length
           ? tools.map((name) => `<span class="plat-tool">${esc(name)}</span>`).join('')
-          : '<span class="plat-tools-empty">这项没有对应工具</span>';
+          : `<span class="plat-tools-empty">${loaded ? '这项没有对应工具' : '工具清单没拉到（刷新重试）'}</span>`;
       }
     }).catch(() => {
       for (const el of slots) el.innerHTML = '<span class="plat-tools-empty">工具清单没拉到（刷新重试）</span>';

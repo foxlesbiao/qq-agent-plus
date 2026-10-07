@@ -544,11 +544,60 @@ it('提示词门控：平台开关关掉后不再教用法（工具已被摘除�
   assert.ok(!noFileSend.includes('send_group_file'));
   assert.ok(noFileSend.includes('list_group_files'));
 
+  // ── 2026-10-07 独立审计：提示词与工具表要同判（教了但工具不在 = 白烧一轮）──
+  // 只看平台自己写的规则段（角色卡正文是管理员内容，里面也会出现工具名）
+  const rulesOf = (s = '') => s.slice(s.indexOf('【QQ 场景规则】'));
+  // TTS：enabled=true 但没填地址（ttsConfigured=false）时，orchestrator 会摘掉 send_voice，
+  // 提示词就不该再教 —— 之前只看 enabled，会教一个不存在的工具。
+  const ttsUnconfigured = (() => {
+    const cfg = structuredClone(base);
+    cfg.tts = { ...cfg.tts, enabled: true, baseUrl: '' };
+    setRuntimeConfig(cfg);
+    return buildSystemPrompt({ persona: cfg.persona, selfNickname: '犊子', platform: cfg.platform, chatKey: '' });
+  })();
+  assert.ok(!rulesOf(ttsUnconfigured).includes('send_voice'), 'TTS 没配齐（缺地址）时不该教 send_voice');
+  assert.ok(!rulesOf(ttsUnconfigured).includes('两条语音别同一轮都用'), '择一规则也不该出现');
+  // 提醒：reminders.enabled=false 时 orchestrator 摘掉 remind，提示词同样不许教
+  const noRemind = (() => {
+    const cfg = structuredClone(base);
+    cfg.reminders = { ...cfg.reminders, enabled: false };
+    setRuntimeConfig(cfg);
+    return buildSystemPrompt({ persona: cfg.persona, selfNickname: '犊子', platform: cfg.platform, chatKey: '' });
+  })();
+  assert.ok(!rulesOf(noRemind).includes('remind'), '提醒关掉后不该教 remind（工具已被摘）');
+  assert.ok(rulesOf(noRemind).includes('【玩法与工具箱】'), '工具箱段本身要留着（还有 dice 那半句）');
+  // 小游戏：groupGame.enabled=false 时别教它主持（后端会直接报"群游戏未启用"）
+  const noGame = (() => {
+    const cfg = structuredClone(base);
+    cfg.groupGame = { ...cfg.groupGame, enabled: false };
+    setRuntimeConfig(cfg);
+    return buildSystemPrompt({ persona: cfg.persona, selfNickname: '犊子', platform: cfg.platform, chatKey: '' });
+  })();
+  assert.ok(!rulesOf(noGame).includes('你会主持小游戏'), '小游戏后端没开时不教它主持');
+  assert.ok(rulesOf(noGame).includes('掷骰子'), 'dice 那半句不受小游戏开关影响');
+  // 昵称/个性说明的额度口径：它吃 profilePerDay（与签名共享），不是头像那份每周额度
+  const nickOnly = withPlatform({ avatarWrites: false, nicknameWrites: true });
+  assert.ok(nickOnly.includes('set_my_profile'));
+  assert.ok(!nickOnly.includes('头像每周最多'), '只开昵称时不该提头像的额度');
+  assert.ok(nickOnly.includes('共享每天'), '要说清它和签名共享每天的次数');
+  // 表情包关掉：orchestrator 摘掉 5 个表情工具，提示词不该再教 send_sticker / collect_sticker
+  const noSticker = (() => {
+    const cfg = structuredClone(base);
+    cfg.sticker = { ...cfg.sticker, enabled: false };
+    setRuntimeConfig(cfg);
+    return buildSystemPrompt({ persona: cfg.persona, selfNickname: '犊子', platform: cfg.platform, chatKey: '' });
+  })();
+  assert.ok(!rulesOf(noSticker).includes('collect_sticker'), '表情包关掉后不该教收藏');
+  assert.ok(!rulesOf(noSticker).includes('send_sticker'), '表情包关掉后连发图表情都不该教');
+  setRuntimeConfig(base);
+
   // 两条语音路都在时，必须有择一规则（2026-10-07 审计：分开教、没规则，模型只能自己猜）
   const withTts = (platform, ttsEnabled) => {
     const cfg = structuredClone(base);
     cfg.platform = { ...base.platform, ...platform };
-    cfg.tts = { ...cfg.tts, enabled: ttsEnabled };
+    // 光 enabled=true 不算"能用"：ttsConfigured 还要求填了地址（与 orchestrator 摘
+    // send_voice 的条件同一个函数），所以这里连 baseUrl 一起给上
+    cfg.tts = { ...cfg.tts, enabled: ttsEnabled, baseUrl: ttsEnabled ? 'https://tts.example/v1' : '' };
     setRuntimeConfig(cfg);
     return buildSystemPrompt({ persona: cfg.persona, selfNickname: '犊子', platform: cfg.platform, chatKey: '' });
   };

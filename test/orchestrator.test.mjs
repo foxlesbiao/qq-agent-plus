@@ -765,9 +765,13 @@ describe('Orchestrator', () => {
     const names = tools.map((tool) => tool.function?.name);
     assert.equal(names.includes('send_voice'), false, '语音回复关掉 → send_voice 不该在工具表里（调了必然失败）');
     assert.equal(names.includes('remind'), false, '提醒关掉 → remind 不该在工具表里（不会被派发）');
-    // 提示词侧不许再教这两个（只看平台自己写的工具引导段，角色卡正文是管理员内容）
-    const rules = system.slice(system.indexOf('【群游戏规则】'));
+    // 提示词侧不许再教这两个（只看平台自己写的工具引导段，角色卡正文是管理员内容）。
+    // 注意标题名要跟 prompt.js 一致：'【群游戏规则】' 早就改名成 '【玩法与工具箱】'，
+    // indexOf 返回 -1 时 slice(-1) 只取最后一个字符 —— 断言会**空转**（2026-10-07 审计发现）。
+    const rules = system.slice(system.indexOf('【玩法与工具箱】'));
+    assert.ok(rules.length > 0 && rules.startsWith('【玩法与工具箱】'), `提示词里应有玩法工具箱段，实际片段：${rules.slice(0, 40)}`);
     assert.equal(rules.includes('send_voice'), false, '提示词不该再教 send_voice');
+    assert.equal(rules.includes('remind'), false, '提示词不该再教 remind（工具已被摘）');
   });
 
   it('图片输入关掉时，表情清单不能再教模型"先看一眼"（提示词不能自相矛盾）', async (t) => {

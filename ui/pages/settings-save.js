@@ -765,12 +765,21 @@ async function saveConfig({ quiet = false } = {}) {
     }
     // 音色（下拉；列表由 platform.js 异步补全）：缺控件时按已保存值回退
     platform.qqVoiceCharacter = String(val('#cfg-platform-voicechar', c.platform?.qqVoiceCharacter || '')).trim();
-    // 写入闸门上限：留空/非法 = 内置默认（与 platformQuotaLimit 同口径）；1~200 夹紧
-    platform.quotas = {};
-    for (const [key, , dflt] of QUOTA_ROWS) {
-      const n = Number(String(val(`#cfg-platform-quota-${key}`, '')).trim());
-      platform.quotas[key] = Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(200, Math.round(n))) : dflt;
+    // 写入闸门上限：**留空/非法 = 不写这一项**，让服务端的内置默认真正生效。
+    // （原来写的是 ui 里那份 dflt —— 那是第二份真源：服务端以后收紧默认值，
+    //   点过一次保存的实例就会把旧数字固化进 config，永远不跟着变。2026-10-07 审计 P2）
+    // 用 __replace__ 整表替换：这样"清空输入框"能把 config 里那一项**真删掉**（回落默认），
+    // 而不是留在那里让旧值继续生效。
+    // 取整与服务端 platformQuotaLimit 同口径：夹到 1~200、向下取整（0<n<1 也不许变成 0 ——
+    // 闸门内部把 0 当"不限量"）。
+    const quotas = {};
+    for (const [key] of QUOTA_ROWS) {
+      const raw = String(val(`#cfg-platform-quota-${key}`, '')).trim();
+      const n = Number(raw);
+      if (!raw || !Number.isFinite(n) || n <= 0) continue;
+      quotas[key] = Math.max(1, Math.min(200, Math.floor(n)));
     }
+    platform.quotas = { __replace__: quotas };
     // 按群覆盖：草稿（platform.js 维护，切群不丢）里所有群的改动一次提交。
     // __replace__ 是必须的 —— 普通深合并删不掉"被清空的群"。
     // 草稿只在编辑器真渲染过之后才存在（白名单为空 / 渲染失败时它没有）：
@@ -827,6 +836,9 @@ async function saveConfig({ quiet = false } = {}) {
 
   const data = await api('/api/config', { method: 'POST', body: JSON.stringify(patch) });
   state.config = data.config;
+  // 按群覆盖草稿作废：下次渲染从刚保存的配置重新克隆。不清的话，若别的标签页/直连 API
+  // 改过 perGroup，本页再用陈旧草稿提交就会整体覆盖回去（__replace__ 是整表替换，2026-10-07 审计 P3）。
+  state.platformPerGroupDraft = undefined;
   state.thinkingTouched = false;
   state.thinkingTouchedHost = '';
   // 思考区（摘要/提示/段位）跟着新配置立即刷新——否则"改了但摘要还是旧值"（2026-09-27 实测）。

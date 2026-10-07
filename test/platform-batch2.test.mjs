@@ -131,6 +131,9 @@ it('配额上限读配置：改小立刻生效，非法值回落默认', () => {
   assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: -5 } } }, 'reactionsPerHour'), 10);
   assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: 'abc' } } }, 'reactionsPerHour'), 10);
   assert.equal(platformQuotaLimit({}, 'albumWritesPerHour'), 5, '审计后补的相册互动闸门：缺配置 = 默认 5');
+  // 0<n<1 必须夹到 1：floor 成 0 的话，quota.js 的 normMax(0)=Infinity = 这道刹车被静默解除
+  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: 0.5 } } }, 'reactionsPerHour'), 1,
+    '0.5 要夹成 1（不是 0 —— 0 在闸门内部等于"不限量"）');
   assert.equal(platformQuotaLimit({ platform: { quotas: { avatarsPerWeek: 999 } } }, 'avatarsPerWeek'), 200, '硬顶 200');
   assert.equal(platformQuotaLimit({ platform: { quotas: { avatarsPerWeek: 2.7 } } }, 'avatarsPerWeek'), 2, '取整向下');
 });

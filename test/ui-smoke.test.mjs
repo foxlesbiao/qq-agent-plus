@@ -164,7 +164,8 @@ test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能�
   const { window } = loadPage();
   await settle();
   try {
-    const { PLATFORM_GATE_KEYS, PLATFORM_QUOTA_KEYS } = await import('../src/core/platform-gates.js');
+    const { PLATFORM_GATE_KEYS, PLATFORM_QUOTA_KEYS, PLATFORM_QUOTA_DEFAULTS, PLATFORM_DEFAULT_OFF } =
+      await import('../src/core/platform-gates.js');
     window.switchTab('settings');
     await settle(50);
     const menuItem = window.document.querySelector('.settings-menu-item[data-section="platform"]');
@@ -188,6 +189,15 @@ test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能�
       .map((el) => el.id).filter((id) => id.startsWith('cfg-platform-quota-')).sort();
     assert.deepEqual(quotaIds, PLATFORM_QUOTA_KEYS.map((k) => `cfg-platform-quota-${k}`).sort(),
       '四个闸门配额都要有输入框');
+    // UI 里那两份"硬编码副本"必须与服务端表一致（否则渲染的默认值/默认关取向会漂）
+    const platSrc = fs.readFileSync(path.join(UI, 'pages', 'platform.js'), 'utf8');
+    const quotaRows = [...platSrc.matchAll(/\['([a-zA-Z]+)', '[^']*', (\d+)\]/g)].map((m) => [m[1], Number(m[2])]);
+    assert.deepEqual(Object.fromEntries(quotaRows), { ...PLATFORM_QUOTA_DEFAULTS },
+      'ui/pages/platform.js 的 QUOTA_ROWS 默认值要与服务端 PLATFORM_QUOTA_DEFAULTS 一致（第二份真源，必须锚住）');
+    const offBlock = /const DEFAULT_OFF_KEYS = new Set\(\[([^\]]*)\]\)/.exec(platSrc);
+    const offKeys = [...(offBlock?.[1] || '').matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1]).sort();
+    assert.deepEqual(offKeys, [...PLATFORM_DEFAULT_OFF].sort(), 'UI 的"默认关"集合要与服务端 PLATFORM_DEFAULT_OFF 一致');
+
     // 按群覆盖编辑器：白名单的群可切换，且每个门控键都有三态下拉
     assert.ok(window.document.querySelector('#pergroup-group'), '按群覆盖要有"选择群"下拉');
     const perIds = [...window.document.querySelectorAll('[data-pergroup-key]')].map((el) => el.dataset.pergroupKey).sort();
@@ -207,6 +217,8 @@ test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能�
     const quota = window.document.querySelector('#cfg-platform-quota-avatarsPerWeek');
     assert.ok(quota, '换头像配额输入框应渲染');
     quota.value = '5';
+    // 另一项留空：应**不写进 patch**（让服务端默认生效），而不是把界面上的数字写死进配置
+    window.document.querySelector('#cfg-platform-quota-remarksPerDay').value = '';
     const perSel = window.document.querySelector('#pergroup-albumWrites');
     assert.ok(perSel, '按群覆盖：相册点赞/评论该有三态下拉');
     perSel.value = 'on';
@@ -237,7 +249,9 @@ test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能�
     assert.equal(patch.platform?.readReceipts, false, '默认关的项没勾 = false');
     assert.equal(patch.platform?.avatarWrites, false, '换头像默认关（没勾就是 false）');
     assert.equal(patch.platform?.qqVoiceCharacter, 'lucy-voice-daji', '选中的音色要跟着保存');
-    assert.equal(patch.platform?.quotas?.avatarsPerWeek, 5, '改过的配额要存下去');
+    assert.deepEqual(patch.platform?.quotas?.__replace__, { reactionsPerHour: 10, albumWritesPerHour: 5, profilePerDay: 1, avatarsPerWeek: 5 },
+      '配额用 __replace__ 整表替换：留空的那项不写（回落服务端默认），改过的按界面值写');
+    assert.equal(patch.platform?.quotas?.__replace__?.remarksPerDay, undefined, '留空的配额不许把界面上的默认数字固化进配置');
     assert.deepEqual(patch.platform?.perGroup, { __replace__: { '10001': { albumWrites: true } } },
       '按群覆盖要带 __replace__ 存下去（普通深合并删不掉旧覆盖）');
     assert.deepEqual(Object.keys(patch.platform || {}).sort(),

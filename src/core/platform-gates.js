@@ -125,5 +125,7 @@ export function platformQuotaLimit(config, key) {
   const fallback = PLATFORM_QUOTA_DEFAULTS[key];
   if (!fallback) return Infinity;
   const n = Number(config?.platform?.quotas?.[key]);
-  return Number.isFinite(n) && n > 0 ? Math.min(200, Math.floor(n)) : fallback;
+  // 下界必须夹到 1：`0 < n < 1`（手改 config 或直连 API 能写进 0.5）floor 会得到 0，
+  // 而 core/quota.js 的 normMax 把 ≤0 当"不设限" —— 闸门会被静默解除（2026-10-07 审计）。
+  return Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(200, Math.floor(n))) : fallback;
 }
