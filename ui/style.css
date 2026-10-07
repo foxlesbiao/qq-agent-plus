@@ -3188,3 +3188,116 @@ dialog { margin: auto; max-height: 88vh; }
   font-weight: 600;
   box-shadow: 0 1px 3px rgba(0, 0, 0, .22);
 }
+
+/* ══════════════════════════════════════════════════════════════
+   「平台能力」页（2026-10-07 重塑）
+   ══════════════════════════════════════════════════════════════
+   结构：能力卡片（分组）→ 卡片内逐项（checkbox + 标签 + 工具 chip）→ 配额表 → 按群覆盖面板。
+   要解决的问题（用户："这个平台能力控制台做的好丑"）：
+     - 工具名原来塞在标签行括号里，一长串把标签挤没了 → 改成单独一行 mono chip，标签行只留一句话；
+     - 配额/按群覆盖原来用内联样式排的行，列对不齐 → 改成表格 / 网格，标签列左对齐；
+     - 整页没有分组边界，十五行开关连成一片 → 每组一张卡片（.plat-card）。
+   用色与圆角沿用全局 token，不再新增颜色；"默认关"复用 .chip.warn。
+*/
+.plat-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-2);
+  padding: 2px 14px 6px;
+  margin: 0 0 14px;
+}
+.plat-card-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding: 10px 0 2px;
+}
+.plat-card-title { font-size: 13px; font-weight: 600; margin: 0; color: var(--text); }
+.plat-card-note { font-size: 11.5px; color: var(--faint); }
+
+.plat-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 2px 8px;
+  align-items: start;
+  padding: 8px 0;
+  border-top: 1px dashed var(--border);
+}
+/* 卡片里第一行紧跟在标题后面：去掉它顶上那条虚线（nth-of-type 数的是元素类型，会数到标题上） */
+.plat-card-head + .plat-row { border-top: 0; }
+.plat-row input[type="checkbox"] { margin: 2px 0 0; }
+.plat-row-main { min-width: 0; }
+.plat-label { font-size: 13px; color: var(--text); cursor: pointer; }
+.plat-tools { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; min-height: 18px; }
+.plat-tool {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.75;
+  padding: 0 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.plat-tools-empty { font-size: 11.5px; color: var(--faint); }
+.plat-sub { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 7px; }
+.plat-sub > label { font-size: 12.5px; color: var(--muted); }
+.plat-select {
+  padding: 4px 8px;
+  font-size: 12.5px;
+  color: var(--text);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  outline: none;
+}
+.plat-select:focus { border-color: var(--accent); }
+
+.plat-quota-table { width: 100%; border-collapse: collapse; margin: 4px 0 2px; }
+.plat-quota-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--faint);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.plat-quota-table td {
+  padding: 6px 8px;
+  border-bottom: 1px dashed var(--border);
+  font-size: 12.5px;
+  vertical-align: middle;
+}
+.plat-quota-table tr:last-child td { border-bottom: 0; }
+.plat-quota-table input[type="number"] { width: 84px; padding: 4px 8px; font-size: 12.5px; }
+.plat-quota-used { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+
+.plat-panel { border: 1px solid var(--border); border-radius: 10px; background: var(--bg); padding: 10px 12px 6px; }
+.plat-panel-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.plat-panel-head > label { font-size: 12.5px; color: var(--muted); }
+.plat-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 22px; margin-top: 6px; }
+.plat-grid-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 0;
+  border-top: 1px dashed var(--border);
+  min-width: 0;
+}
+.plat-grid-row:nth-child(1), .plat-grid-row:nth-child(2) { border-top: 0; }
+.plat-grid-row > label {
+  font-size: 12.5px;
+  color: var(--text);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 窄屏：网格塌成一列，第一行的虚线也要回来 */
+@media (max-width: 760px) {
+  .plat-grid { grid-template-columns: minmax(0, 1fr); }
+  .plat-grid-row:nth-child(2) { border-top: 1px dashed var(--border); }
+}
