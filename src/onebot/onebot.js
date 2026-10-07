@@ -34,6 +34,12 @@ const HEARTBEAT_MODES = new Set(['auto', 'on', 'off']);
 // 给媒体段留足余量，宁可等久一点也不要"发没发出去说不清"。
 const TEXT_TIMEOUT_MS = 15000;
 const MEDIA_TIMEOUT_MS = 60000;
+// HTTP 请求体的安全上限。实测 SnowLuma 1.14.15 的 OneBot HTTP 端点对 body 有 ≈2MiB 的
+// 硬上限：超过后服务端在 100-Continue 之后直接掐断连接（bot 侧表现为 undici
+// "fetch failed"，真因 cause 是连接被重置）—— 生成贴纸发送是整张图的 base64，很容易
+// 压线，这就是 Issue #21 "图发不出去、时好时坏" 的根因。超过阈值的请求自动改走
+// WebSocket 通道（同版本实测 3MB 无恙），其余流量保持原 HTTP 路线不动。
+const HTTP_BODY_SAFE_MAX = 1536 * 1024;
 
 export class OneBotActionError extends Error {
   constructor(message, {
@@ -72,6 +78,10 @@ export class OneBotClient {
     this.everConnected = false;
     this.lastConnectError = '';
     this.selfInfo = null;      // { user_id, nickname }
+    // WS 调用通道：echo 序号 + 在途请求表（见 callViaWs）。只挂"当前 socket"的请求；
+    // 断线/重连时由 #failAllWsPending 统一按 unknown 结清，不会挂着等超时。
+    this.wsEchoSeq = 0;
+    this.wsPending = new Map();
     this.#closedByUs = false;
     this.statusListeners = new Set();
     this.reconnectTimer = null;
@@ -109,6 +119,7 @@ export class OneBotClient {
     clearInterval(this.heartbeatTimer);
     this.#closedByUs = false;
     try { old?.terminate(); } catch { /* ignore */ }
+    this.#failAllWsPending('OneBot WebSocket 正在重连');
     this.#connectLoop();
   }
 
@@ -161,14 +172,27 @@ export class OneBotClient {
     });
     socket.on('message', (data) => {
       if (!isCurrent(socket)) return;
-      let event = null;
-      try { event = JSON.parse(String(data)); } catch { return; }
-      if (!event || typeof event !== 'object') return;
-      try { this.onEvent(event); } catch (error) { console.error('[onebot] 事件处理出错:', error); }
+      let frame = null;
+      try { frame = JSON.parse(String(data)); } catch { return; }
+      if (!frame || typeof frame !== 'object') return;
+      // 带 echo 且命中在途表的帧是 WS 调用的响应，先于事件分发结清（callViaWs）。
+      // echo 由本进程生成（ws_<序号>），事件帧不会带，不存在误吞。
+      if (frame.echo !== undefined && this.wsPending.has(frame.echo)) {
+        const pending = this.wsPending.get(frame.echo);
+        this.wsPending.delete(frame.echo);
+        clearTimeout(pending.timer);
+        if (pending.cleanupAbort) pending.cleanupAbort();
+        pending.resolve(frame);
+        return;
+      }
+      try { this.onEvent(frame); } catch (error) { console.error('[onebot] 事件处理出错:', error); }
     });
     socket.on('close', (code, reasonBuffer) => {
       if (!isCurrent(socket)) return; // 旧连接的迟到 close：新连接已在处理
       clearInterval(this.heartbeatTimer);
+      // 在途 WS 调用立即按 unknown 结清：连接都没了，等超时是白等（挂起方可能正拿着
+      // 租约等这个结果）。
+      this.#failAllWsPending('OneBot WebSocket 连接已断开');
       const wasConnected = this.connected;
       const reason = String(reasonBuffer || '').trim();
       const killedByPing = this.lastPingAt > 0
@@ -231,6 +255,7 @@ export class OneBotClient {
     const old = this.socket;
     this.socket = null;
     try { old?.terminate(); } catch { /* ignore */ }
+    this.#failAllWsPending('OneBot WebSocket 已关闭');
     this.#setStatus(false);
   }
 
@@ -246,13 +271,20 @@ export class OneBotClient {
 
   /** OneBot HTTP API（发送与查询都走这里）。 */
   async call(action, params = {}, timeoutMs = TEXT_TIMEOUT_MS, signal) {
+    // 超大请求体改走 WS（见 HTTP_BODY_SAFE_MAX 处的注释）。WS 未连接时回落 HTTP：
+    // 新版协议端可能已放宽上限，保持今天的网络行为，比直接拒绝好。
+    const bodyJson = JSON.stringify(params);
+    if (Buffer.byteLength(bodyJson) > HTTP_BODY_SAFE_MAX) {
+      if (this.connected && this.socket) return this.callViaWs(action, params, timeoutMs, signal);
+      console.warn(`[onebot] ${action} 请求体 ${Math.round(Buffer.byteLength(bodyJson) / 10485.76) / 100}MB 超过 HTTP 安全阈值且 WS 未连接，仍走 HTTP（可能被协议端掐断）`);
+    }
     const res = await fetch(`${this.httpUrl}/${action}`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         ...(this.httpToken ? { authorization: `Bearer ${this.httpToken}` } : {})
       },
-      body: JSON.stringify(params),
+      body: bodyJson,
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs)
     });
     if (!res.ok) {
@@ -339,6 +371,89 @@ export class OneBotClient {
     }
     segments.push({ type: 'text', data: { text: escapeCqText(String(text ?? '')) } });
     return this.sendSegments(kind, id, segments, signal);
+  }
+
+  /**
+   * 与 call() 同语义的 WebSocket 调用通道。专门给超大请求体用：HTTP 端点有 body 上限
+   * （SnowLuma 1.14.15 实测 ≈2MiB，超限直接掐连接，见 HTTP_BODY_SAFE_MAX），而贴纸发送
+   * 是整张图 base64，很容易压线（Issue #21）。WS 是事件常驻连接，实测 3MB 无恙。
+   * echo 结清、超时、abort、断线结清的口径与 call() 完全一致：4xx 类明确失败，
+   * 其余（断线/超时）一律 unknown —— "不知道对方收没收到"。
+   */
+  callViaWs(action, params = {}, timeoutMs = TEXT_TIMEOUT_MS, signal) {
+    const socket = this.socket;
+    if (!socket || !this.connected) {
+      return Promise.reject(new OneBotActionError(`OneBot WebSocket 未连接，无法经 WS 发送 ${action}`, {
+        action,
+        outcome: 'unknown'
+      }));
+    }
+    const echo = `ws_${++this.wsEchoSeq}`;
+    return new Promise((resolve, reject) => {
+      const pending = { action, resolve, reject, timer: null, cleanupAbort: null };
+      pending.timer = setTimeout(() => {
+        this.wsPending.delete(echo);
+        if (pending.cleanupAbort) pending.cleanupAbort();
+        reject(new OneBotActionError(`OneBot ${action} WS 响应超时（${timeoutMs}ms）`, {
+          action,
+          outcome: 'unknown'
+        }));
+      }, timeoutMs);
+      if (pending.timer.unref) pending.timer.unref();
+      if (signal) {
+        const onAbort = () => {
+          clearTimeout(pending.timer);
+          this.wsPending.delete(echo);
+          reject(signal.reason ?? new Error('Run cancelled'));
+        };
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        pending.cleanupAbort = () => signal.removeEventListener('abort', onAbort);
+      }
+      this.wsPending.set(echo, pending);
+      socket.send(JSON.stringify({ action, params, echo }), (err) => {
+        if (err) {
+          // send 回调报错 = 帧确定没写进 socket（readyState 非 OPEN）—— 这是"确定未投递"，
+          // 按 failed 结清走自动重试，与 sender.classifyTransportFailure 对 ECONNREFUSED 的
+          // 口径一致；不能压成 unknown（那会升级成 critical 人工核对 + 消息 held）。
+          // 超时与断线才是"结果未知"，维持 unknown。
+          clearTimeout(pending.timer);
+          this.wsPending.delete(echo);
+          if (pending.cleanupAbort) pending.cleanupAbort();
+          reject(new OneBotActionError(`OneBot ${action} WS 发送失败: ${err?.message ?? err}`, {
+            action,
+            outcome: 'failed'
+          }));
+        }
+      });
+    }).then((frame) => {
+      // fail-closed 口径与 call() 逐字一致：给了 status 就按 status 判，没有 status 才看 retcode。
+      const statusFailed = frame.status != null && frame.status !== 'ok' && frame.status !== 'async';
+      const retcodeFailed = frame.status == null && frame.retcode != null && Number(frame.retcode) !== 0;
+      if (statusFailed || retcodeFailed) {
+        throw new OneBotActionError(
+          `OneBot ${action} 失败: retcode=${frame.retcode ?? frame.status} ${frame.wording ?? ''}`,
+          { action, outcome: 'failed', retcode: frame.retcode ?? frame.status }
+        );
+      }
+      return frame.data;
+    });
+  }
+
+  /** 断线/重连/主动关闭时把所有在途 WS 调用按 unknown 结清（ 与 HTTP 的"不知道收没收到"同口径）。 */
+  #failAllWsPending(reason) {
+    for (const pending of this.wsPending.values()) {
+      clearTimeout(pending.timer);
+      if (pending.cleanupAbort) pending.cleanupAbort();
+      pending.reject(new OneBotActionError(`${reason}，${pending.action} 投递状态未知`, {
+        action: pending.action,
+        outcome: 'unknown'
+      }));
+    }
+    this.wsPending.clear();
   }
 
   async sendSticker(kind, id, imageUrl, { replyToMessageId = null, atUserId = null, signal } = {}) {
