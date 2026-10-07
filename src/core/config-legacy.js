@@ -516,6 +516,9 @@ export const DEFAULT_CONFIG = {
   platform: {
     reactions: true,        // 表情回应：贴/看（群聊限定）
     qqVoice: true,          // QQ 原生 AI 语音（send_qq_voice）
+    // QQ 语音音色（协议端 character_id，如 lucy-voice-laibixiaoxin=小新）。
+    // 空 = 不固定：模型每次自己从协议端返回的角色目录里挑一个。
+    qqVoiceCharacter: '',
     profileWrites: true,    // 改签名/在线状态/备注（账号侧可见，带 24h 闸门）
     groupTools: true,       // 群资料/公告/荣誉、签到、群待办
     ocr: true,              // 服务端 OCR（读图上的文字）

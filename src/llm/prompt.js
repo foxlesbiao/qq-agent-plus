@@ -252,7 +252,13 @@ function qqSceneRules(grounded = false) {
   {
     const bits = [];
     if (platform.ocr !== false) bits.push('图上的文字（截图、通知、表格）用 read_image_text 读，比看图省算力');
-    if (platform.qqVoice !== false) bits.push('想玩语音时群里可以 send_qq_voice（QQ 内置语音角色，先不传 character 拿角色列表）');
+    if (platform.qqVoice !== false) {
+      // 音色被控制台固定时不再教"先拿角色列表"那一步（模型只需要给 text；
+      // 教了反而会多一次没必要的列表调用、还可能自作主张换音色）
+      bits.push(String(platform.qqVoiceCharacter || '').trim()
+        ? '想玩语音时群里可以 send_qq_voice（音色已由管理员固定，直接给 text 就行）'
+        : '想玩语音时群里可以 send_qq_voice（QQ 内置语音角色，先不传 character 拿角色列表）');
+    }
     if (bits.length) lines.push(`- ${bits.join('；')}。`);
   }
   if (platform.profileWrites !== false) {

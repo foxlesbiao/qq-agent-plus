@@ -25,7 +25,7 @@ import {
   renderDailyMomentsSection, renderGroupGameSection, renderQzoneInteractionSection, renderRemindersSection
 } from './moments.js';
 import { renderPersonaSection } from './persona.js';
-import { renderPlatformSection } from './platform.js';
+import { hydratePlatformVoiceSelect, renderPlatformSection } from './platform.js';
 import { loadSessions } from './sessions.js';
 import { bindCrossSectionControls, bindSettingsEvents, isSplitThinking } from './settings-bind.js';
 import { renderAsrSection } from './settings-voice.js';
@@ -105,6 +105,8 @@ function renderSettingsImpl() {
     ${renderSettingsSection(c)}`;
   bindSettingsEvents(c);
   bindCrossSectionControls();
+  // 「平台能力」页的「语音音色」下拉要异步补目录（不在这一页时它自己 no-op）
+  hydratePlatformVoiceSelect();
 }
 
 function renderSettingsSection(c) {

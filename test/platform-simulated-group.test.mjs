@@ -153,6 +153,20 @@ it('模拟群：表情回应 / 查回应 / 群资料 / 签到 / 待办 / QQ语�
     assert.ok(store.recent('group:1', { limit: 20 }).some((m) => m.self && m.text.includes('[QQ语音]')),
       '语音要经发送队列留档（绕过队列 = 无限频、无 outbox）');
 
+    // 控制台固定音色 → 不再拉目录，直接按固定音色发（同样真发到模拟协议端）
+    const pinned = structuredClone(base);
+    pinned.platform = { ...base.platform, qqVoiceCharacter: 'lucy-voice-daji' };
+    setRuntimeConfig(pinned);
+    try {
+      const beforeLists = sim.byAction('get_ai_characters').length;
+      await tool('send_qq_voice').execute(ctx, { text: '俺也一样' });
+      assert.equal(sim.byAction('get_ai_characters').length, beforeLists, '固定音色后不该再拉角色目录');
+      assert.deepEqual(sim.last('send_group_ai_record').params,
+        { group_id: 1, character: 'lucy-voice-daji', text: '俺也一样' });
+    } finally {
+      setRuntimeConfig(base);
+    }
+
     // ⑥ OCR：用消息里的新鲜直链
     const ocr = parse(await tool('read_image_text').execute(
       groupCtx(client, {
@@ -442,6 +456,12 @@ it('提示词门控：平台开关关掉后不再教用法（工具已被摘除�
   assert.ok(!noOcrVoice.includes('read_image_text'));
   assert.ok(!noOcrVoice.includes('send_qq_voice'));
   assert.ok(noOcrVoice.includes('react_to_message'), '互不影响');
+
+  // 固定了音色就不再教"先拿角色列表"那一步（音色由控制台说了算）
+  assert.ok(all.includes('先不传 character 拿角色列表'), '没固定时维持原口径');
+  const pinnedVoice = withPlatform({ qqVoiceCharacter: 'lucy-voice-houge' });
+  assert.ok(pinnedVoice.includes('音色已由管理员固定'), '固定音色后要换口径');
+  assert.ok(!pinnedVoice.includes('先不传 character 拿角色列表'), '固定后不该再教拉列表');
 
   const noProfile = withPlatform({ profileWrites: false });
   assert.ok(!noProfile.includes('set_my_signature'));

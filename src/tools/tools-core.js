@@ -964,12 +964,12 @@ export function buildToolDefs() {
     },
     {
       name: 'send_qq_voice',
-      description: '用 QQ 内置的 AI 语音角色给群里发一条语音（群聊限定）。第一次先不传 character：返回可选角色列表，挑一个再带 character 调一次。text 是让它说的那句话（≤60 字，短句最自然）。玩梗、撒娇、念台词时用，别频繁。',
+      description: '用 QQ 内置的 AI 语音角色给群里发一条语音（群聊限定）。音色由控制台「平台能力」页固定时直接用那个音色（不用传 character）；没固定时第一次先不传 character：返回可选角色列表，挑一个再带 character 调一次。text 是让它说的那句话（≤60 字，短句最自然）。玩梗、撒娇、念台词时用，别频繁。',
       parameters: {
         type: 'object',
         properties: {
           text: { type: 'string', description: '要说的内容（≤60 字）' },
-          character: { type: 'string', description: '语音角色 id（省略则返回可用角色列表）' }
+          character: { type: 'string', description: '语音角色 id（省略则返回可用角色列表；控制台已固定音色时忽略此项）' }
         },
         required: ['text']
       },
@@ -981,16 +981,15 @@ export function buildToolDefs() {
           // （2026-10-07 复审 P3：原来代码 80、说明 60）。
           const text = safeSlice(String(args.text ?? '').trim(), 60);
           if (!text) return err('text 不能为空');
-          const character = String(args.character ?? '').trim();
+          // 控制台固定了音色就以它为准（用户定的"这个机器人说话是什么声音"；模型传的忽略）。
+          const pinned = String(getConfig().platform?.qqVoiceCharacter || '').trim();
+          const character = pinned || String(args.character ?? '').trim();
           if (!character) {
-            const list = await ctx.onebot.call('get_ai_characters', { group_id: groupId }, 20000, ctx.signal);
-            const flat = [];
-            for (const group of (Array.isArray(list) ? list : [])) {
-              for (const ch of (group?.characters ?? [])) {
-                flat.push({ characterId: ch?.character_id ?? '', name: ch?.character_name ?? '', category: group?.type ?? '' });
-              }
-            }
-            return ok({ characters: flat.slice(0, 40), note: flat.length ? '挑一个 characterId，再带 text 调一次就能发。' : '这个群暂时没有可用的 QQ 语音角色。' });
+            const flat = await ctx.onebot.getAiCharacters(groupId, { signal: ctx.signal });
+            // 同一个音色会出现在多个分类里（协议端就是这么分的）：给模型看的列表按 id 去重
+            const seen = new Set();
+            const unique = flat.filter((c) => (seen.has(c.characterId) ? false : (seen.add(c.characterId), true)));
+            return ok({ characters: unique.slice(0, 40), note: unique.length ? '挑一个 characterId，再带 text 调一次就能发。' : '这个群暂时没有可用的 QQ 语音角色。' });
           }
           // 走发送队列（限频 / 禁言预检 / outbox）：与 send_message / send_voice 同款。
           // 2026-10-07 复审 P2：原先直接 onebot.call —— 模型抽风时这条没有任何限频，
@@ -1000,7 +999,7 @@ export function buildToolDefs() {
             ctx.session.sent.push({ type: 'voice', text: `[QQ语音]${text}`, at: new Date().toLocaleTimeString('zh-CN', { hour12: false }) });
             ctx.emit('session-update', ctx.session.id);
           });
-          return ok({ sent: true, note: '语音已发送。' });
+          return ok({ sent: true, character, note: pinned ? '语音已发送（音色按控制台固定的）。' : '语音已发送。' });
         } catch (error) {
           return sendErr(error, {}, `发 QQ 语音失败：${error?.message ?? error}`);
         }

@@ -176,11 +176,17 @@ test('真实 DOM 冒烟：「平台能力」页的开关能真的存下去（保
     const saveSrc = fs.readFileSync(path.join(UI, 'pages', 'settings-save.js'), 'utf8');
     const readIds = [...new Set([...saveSrc.matchAll(/chk\('#(cfg-(?:platform-[a-z]+|typing))'/g)].map((m) => m[1]))].sort();
     assert.deepEqual(readIds, renderedIds, '保存映射读取的 id 与页面渲染的控件不是同一组');
+    assert.ok(saveSrc.includes("val('#cfg-platform-voicechar'"), '「语音音色」下拉也要进保存映射');
 
-    // ③ 行为侧：取消勾选「表情回应」再保存，POST 体里要真的带着这个开关
+    // ③ 行为侧：取消勾选「表情回应」+ 选一个音色，保存后 POST 体里都要带着
     const reactions = window.document.querySelector('#cfg-platform-reactions');
     assert.equal(reactions.checked, true, '未配置时默认开（与 DEFAULT_CONFIG 一致）');
     reactions.checked = false;
+    const voiceSel = window.document.querySelector('#cfg-platform-voicechar');
+    assert.ok(voiceSel, '「语音音色」下拉应渲染');
+    // 目录是异步拉的（这条桩返回空目录），手动补一个选项模拟"选了一个音色"
+    voiceSel.insertAdjacentHTML('beforeend', '<option value="lucy-voice-daji">妲己</option>');
+    voiceSel.value = 'lucy-voice-daji';
 
     const posts = [];
     window.fetch = async (url, options = {}) => {
@@ -196,10 +202,11 @@ test('真实 DOM 冒烟：「平台能力」页的开关能真的存下去（保
     assert.equal(patch.platform?.reactions, false, '改过的开关要按界面状态存下去（挂了错误分区时这里是 undefined）');
     assert.equal(patch.platform?.qqVoice, true, '没动过的开关按当前值存');
     assert.equal(patch.platform?.readReceipts, false, '默认关的项没勾 = false');
+    assert.equal(patch.platform?.qqVoiceCharacter, 'lucy-voice-daji', '选中的音色要跟着保存');
     assert.deepEqual(Object.keys(patch.platform || {}).sort(), [
       'albumRead', 'albumUpload', 'forwardCards', 'groupFiles', 'groupTools', 'ocr',
-      'profileWrites', 'qqVoice', 'reactions', 'readReceipts'
-    ], '这一页的每个开关都要进 patch（漏一个 = 下次的"配了不生效"）');
+      'profileWrites', 'qqVoice', 'qqVoiceCharacter', 'reactions', 'readReceipts'
+    ], '这一页的每个开关/选择都要进 patch（漏一个 = 下次的"配了不生效"）');
     assert.equal(patch.send?.typingIndicator, true, '「正在输入」也归这一页保存');
   } finally { window.happyDOM?.abort?.(); }
 });

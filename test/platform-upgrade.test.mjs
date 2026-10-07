@@ -194,19 +194,17 @@ it('群签到 / 群待办：只进群、参数正确', async () => {
   assert.equal(priv.isError, true);
 });
 
-it('send_qq_voice：先取角色列表，再带 character 发送（发送走队列）', async () => {
+it('send_qq_voice：先取角色列表，再带 character 发送（发送走队列）；控制台固定音色后直接用', async () => {
   const calls = [];
   const voiceCalls = [];
   const ctx = {
     kind: 'group', chatId: '433', chatKey: 'group:433',
     session: { id: 's', sent: [], leaseId: 'l1' },
     onebot: {
-      call: async (action, params) => {
-        calls.push([action, params]);
-        if (action === 'get_ai_characters') {
-          return [{ type: '热门', characters: [{ character_id: 'c1', character_name: '小新' }] }];
-        }
-        return {};
+      // 目录解析（分类展平/去重）在 OneBotClient.getAiCharacters 里，这里只验工具怎么用
+      getAiCharacters: async (groupId) => {
+        calls.push(['get_ai_characters', { group_id: Number(groupId) }]);
+        return [{ characterId: 'c1', name: '小新', category: '热门' }];
       }
     },
     // 发送这一步走发送队列（限频/禁言/outbox，2026-10-07 复审 P2）：工具与队列的
@@ -216,6 +214,7 @@ it('send_qq_voice：先取角色列表，再带 character 发送（发送走队�
   };
   const list = parse(await tool('send_qq_voice').execute(ctx, { text: '大家好呀' }));
   assert.deepEqual(list.characters, [{ characterId: 'c1', name: '小新', category: '热门' }]);
+  assert.deepEqual(calls.at(-1), ['get_ai_characters', { group_id: 433 }]);
   const sent = parse(await tool('send_qq_voice').execute(ctx, { text: '大家好呀', character: 'c1' }));
   assert.equal(sent.sent, true);
   assert.deepEqual(voiceCalls.at(-1), {
@@ -223,6 +222,21 @@ it('send_qq_voice：先取角色列表，再带 character 发送（发送走队�
     payload: { character: 'c1', text: '大家好呀' },
     options: { runId: 'l1', signal: undefined }
   }, '发送要交给 sender.aiVoice，并带上本轮租约');
+
+  // 控制台「平台能力」页固定了音色 → 不再拉目录、也不用模型挑；模型硬传的 character 不算数
+  const pinned = structuredClone(cfg);
+  pinned.platform = { ...pinned.platform, qqVoiceCharacter: 'lucy-voice-houge' };
+  setRuntimeConfig(pinned);
+  try {
+    const before = calls.length;
+    const auto = parse(await tool('send_qq_voice').execute(ctx, { text: '俺老孙来也', character: 'c1' }));
+    assert.equal(auto.sent, true);
+    assert.equal(auto.character, 'lucy-voice-houge', '固定音色要以控制台为准');
+    assert.equal(calls.length, before, '固定音色后不该再拉角色目录');
+    assert.deepEqual(voiceCalls.at(-1).payload, { character: 'lucy-voice-houge', text: '俺老孙来也' });
+  } finally {
+    setRuntimeConfig(cfg);
+  }
 
   const priv = await tool('send_qq_voice').execute({ kind: 'private', chatId: '2', chatKey: 'private:2' }, { text: '喂' });
   assert.equal(priv.isError, true, 'QQ 语音只有群聊');

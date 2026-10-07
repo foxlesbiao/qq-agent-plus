@@ -564,6 +564,28 @@ export class OneBotClient {
     return this.call('mark_msg_as_read', { message_id: Number(messageId) }, 15000, signal);
   }
 
+  /**
+   * QQ 内置语音角色目录（send_qq_voice 与控制台「音色」下拉共用，wire 形状只留一处）。
+   * 协议端按分类返回 [[{type, characters:[{character_id, character_name}]}]]，这里展平为
+   * [{characterId, name, category}]；同一个音色可能出现在多个分类里（协议端就是这么分的）。
+   */
+  async getAiCharacters(groupId, { signal } = {}) {
+    const list = await this.call('get_ai_characters', { group_id: Number(groupId) }, 20000, signal);
+    const flat = [];
+    for (const group of (Array.isArray(list) ? list : [])) {
+      for (const ch of (group?.characters ?? [])) {
+        const characterId = String(ch?.character_id ?? '').trim();
+        if (!characterId) continue;
+        flat.push({
+          characterId,
+          name: String(ch?.character_name ?? '').trim(),
+          category: String(group?.type ?? '').trim()
+        });
+      }
+    }
+    return flat;
+  }
+
   async sendFace(kind, id, faceId, { replyToMessageId = null, atUserId = null, text = null, signal } = {}) {
     const segments = [];
     if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {

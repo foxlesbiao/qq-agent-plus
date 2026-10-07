@@ -49,6 +49,7 @@ it('工具表：第二批工具都在；平台开关默认值正确', () => {
   assert.equal(DEFAULT_CONFIG.platform.albumUpload, false, '相册上传默认关');
   assert.equal(DEFAULT_CONFIG.platform.readReceipts, false, '已读标记默认关');
   assert.equal(DEFAULT_CONFIG.platform.forwardCards, true, '日报卡片默认开');
+  assert.equal(DEFAULT_CONFIG.platform.qqVoiceCharacter, '', 'QQ 语音音色默认不固定');
   assert.equal(DEFAULT_CONFIG.send.typingIndicator, true, '正在输入默认开');
 });
 

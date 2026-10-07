@@ -757,6 +757,8 @@ async function saveConfig({ quiet = false } = {}) {
       ...c.platform,
       reactions: chk('#cfg-platform-reactions', c.platform?.reactions !== false),
       qqVoice: chk('#cfg-platform-qqvoice', c.platform?.qqVoice !== false),
+      // 音色（下拉；列表由 platform.js 异步补全）：缺控件时按已保存值回退
+      qqVoiceCharacter: String(val('#cfg-platform-voicechar', c.platform?.qqVoiceCharacter || '')).trim(),
       profileWrites: chk('#cfg-platform-profile', c.platform?.profileWrites !== false),
       groupTools: chk('#cfg-platform-grouptools', c.platform?.groupTools !== false),
       ocr: chk('#cfg-platform-ocr', c.platform?.ocr !== false),
