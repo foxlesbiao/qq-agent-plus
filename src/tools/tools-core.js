@@ -1080,7 +1080,7 @@ export function buildToolDefs() {
     },
     {
       name: 'read_image_text',
-      description: '读出消息里图片上的文字（QQ 服务端 OCR，只认文字不认画面）。看截图/通知/表格里的字用它，省算力；要理解画面内容（表情、照片）还是用 get_message_images。id 用聊天记录里每条消息前的 #数字。',
+      description: '读出消息里图片上的文字（QQ 服务端 OCR，只认文字不认画面）。看截图/通知/表格里的字用它，省算力；要理解画面内容（表情、照片）就用看图工具（只有「图片输入」开着时才有那个工具）。id 用聊天记录里每条消息前的 #数字。',
       parameters: {
         type: 'object',
         properties: { messageId: { type: ['integer', 'string'], description: 'QQ 消息 id（聊天记录里的 #数字，可能为负数）' } },
