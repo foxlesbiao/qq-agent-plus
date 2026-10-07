@@ -255,9 +255,11 @@ async function hydratePlatformGates() {
   }
   if (quotaSlots.length) {
     api('/api/platform/quota-usage').then((data) => {
-      const q = data?.quotas || {};
+      // 接口分组用的是简称（reactions/profile/...），每一项里带规范 key（reactionsPerHour/…）；
+      // 按 item.key 建索引 —— 直接用对象键会一个都对不上（真机 2026-10-07 验证时踩到）。
+      const byKey = new Map(Object.values(data?.quotas || {}).map((info) => [info?.key, info]));
       for (const el of quotaSlots) {
-        const info = q[el.dataset.quotaUsed];
+        const info = byKey.get(el.dataset.quotaUsed);
         if (!info) { el.textContent = ''; continue; }
         const per = info.windowMs <= 3600_000 ? '本小时' : '今日';
         const detail = (info.chats || []).slice(0, 2)
