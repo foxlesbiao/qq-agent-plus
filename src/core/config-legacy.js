@@ -312,7 +312,8 @@ export const DEFAULT_CONFIG = {
     byLengthMs: 20,         // 按字数附加的间隔（毫秒/字）
     maxPerMinute: 80,
     maxPerHour: 500,
-    hardSplitAt: 4000       // QQ 硬限制切分（0 = 不限制）
+    hardSplitAt: 4000,      // QQ 硬限制切分（0 = 不限制）
+    typingIndicator: true   // 私聊发言前亮「正在输入」（群聊 QQ 没有这个能力）
   },
   // 主动开话题（可选）
   proactive: {
@@ -508,6 +509,21 @@ export const DEFAULT_CONFIG = {
     // 这是在提示词层面引导模型"更愿意用表情回应"，不是强制每次都发 ——
     // 强制会显得机械，引导才能让它在合适的时候自然用上。
     encourage: 1
+  },
+  // QQ 平台能力（协议端 SnowLuma ≥1.14.20 提供）：每个开关关掉后，对应工具会从模型工具表
+  // 里摘除、提示词也不再教用法（与"表情包/搜索/ASR"同一口径，避免模型调用必然失败的工具）。
+  // 默认值取向：读/轻互动默认开；会往群里**发布内容**或改变账号外观的默认关（相册上传、已读标记）。
+  platform: {
+    reactions: true,        // 表情回应：贴/看（群聊限定）
+    qqVoice: true,          // QQ 原生 AI 语音（send_qq_voice）
+    profileWrites: true,    // 改签名/在线状态/备注（账号侧可见，带 24h 闸门）
+    groupTools: true,       // 群资料/公告/荣誉、签到、群待办
+    ocr: true,              // 服务端 OCR（读图上的文字）
+    groupFiles: true,       // 群文件：列表 / 取下载链 / 发文件
+    albumRead: true,        // 群相册：看 / 点赞 / 评论
+    albumUpload: false,     // 群相册：把图传进相册（默认关：会往群里发布内容）
+    readReceipts: false,    // 处理完的消息在 QQ 里标已读（默认关：会改变你自己各端的未读观感）
+    forwardCards: true      // 长内容（群日报）用「合并转发卡片」发送，而不是一大段文本
   },
   // 存储
   store: {

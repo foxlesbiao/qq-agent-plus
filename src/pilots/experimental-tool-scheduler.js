@@ -16,7 +16,12 @@ export const EXPERIMENTAL_READ_ONLY_TOOLS = new Set([
   'web_fetch',
   'dice',         // 纯计算、无 IO 与副作用，可并行
   'get_message_reactions',  // 协议端只读查询（贴了哪些表情、谁贴的）
-  'get_group_profile'       // 协议端只读查询（群详情/公告/荣誉），无本地副作用
+  'get_group_profile',      // 协议端只读查询（群详情/公告/荣誉），无本地副作用
+  'list_group_files',       // 协议端只读查询（群文件目录）
+  'group_file_url',         // 取下载直链（只读）
+  'list_group_album',       // 协议端只读查询（相册/照片列表）
+  'get_user_info',          // 陌生人资料（只读）
+  'translate_text'          // 翻译（只读）
 ]);
 
 // 这些也是“读取/观察”类工具，但当前不做并发预启动：
@@ -64,7 +69,11 @@ export const EXPERIMENTAL_SAME_ROUND_ACTION_TOOLS = new Set([
   'set_group_todo',   // 对外写：把消息设成群待办
   'set_my_signature', // 对外写：改个性签名（有每日闸门）
   'set_my_status',    // 对外写：改在线状态（有每日闸门）
-  'set_remark'        // 对外写：给好友/群设备注（有每日闸门）
+  'set_remark',       // 对外写：给好友/群设备注（有每日闸门）
+  'send_group_file',  // 对外写：发文件到群
+  'like_album_photo', // 对外写：相册点赞
+  'comment_album_photo', // 对外写：相册评论
+  'upload_to_group_album' // 对外写：传图进群相册（默认关，控制台开）
 ]);
 
 export function experimentalToolSchedulerConfig(cfg = {}) {

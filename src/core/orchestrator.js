@@ -114,7 +114,7 @@ import { readOwnerUin } from './notify-owner.js';
 import { ZONE_OFFSET_MS, minuteOfDayInZone, randInt, createEventBus, todayKey } from './util.js';
 import { buildSystemPrompt, buildUserPrompt, resolveContextTier } from '../llm/prompt.js';
 import { chatCompletion, chatCompletionWithRetry, addUsage, emptyUsage, isRetryableError } from '../llm/llm.js';
-import { buildToolDefs, toOpenAiTools, executeTool } from '../tools/tools.js';
+import { buildToolDefs, toOpenAiTools, executeTool, platformToolAllowed } from '../tools/tools.js';
 import { normalizeMid } from '../tools/tools-core.js';
 import { visionEnabled } from '../llm/vision-scan.js';
 import { currentProviders } from './providers.js';
@@ -676,6 +676,22 @@ export class Orchestrator {
       if (selfId && String(m.reply?.senderId || '') === selfId) return true;
       return names.has(String(m.reply?.sender || '').trim());
     });
+  }
+
+  /**
+   * 把这批消息的最后一条标为已读（platform.readReceipts，默认关）。
+   * 只发最后一条：QQ 的已读是"读到某条"的语义，后面的自然覆盖前面的。
+   * best-effort —— 失败只打个日志，绝不影响运行收尾。
+   */
+  #markBatchRead(chatKey, entries) {
+    const mids = (Array.isArray(entries) ? entries : [])
+      .map((m) => m?.mid)
+      .filter((v) => v !== null && v !== undefined && String(v) !== '');
+    const last = mids[mids.length - 1];
+    if (last === undefined) return;
+    Promise.resolve()
+      .then(() => this.onebot.markMessageRead?.(last))
+      .catch((error) => log.warn(`[orchestrator] ${chatKey} 标已读失败（不影响本轮）：${error?.message ?? error}`));
   }
 
   #continuationTier(chatKey, entries, fallback, conversation) {
@@ -1257,6 +1273,9 @@ export class Orchestrator {
           chatKey, triggerEntries, handoff, conversation, runResult
         });
       }
+      // 已读回执（platform.readReceipts，默认关）：这批处理完就在 QQ 里标已读，
+      // 各端未读数不再堆积；默认关是因为它会改变"你自己打开机器人 QQ 时的未读观感"。
+      if (getConfig().platform?.readReceipts === true) this.#markBatchRead(chatKey, triggerEntries);
       const status = session.sent.length > 0 ? 'done' : 'noreply';
       this.sessions.finish(session.id, status);
       this.emit('session-end', { sessionId: session.id, chatKey, status,
@@ -1583,6 +1602,10 @@ export class Orchestrator {
       // ASR 按量计费：开关关掉或没配 key 就不注入，避免模型调用必失败；也防误配置导致意外计费
       if (!asrEnabled && d.name === 'get_message_audio') return false;
       if (!imageGenEnabled && d.name === 'generate_image') return false;
+      // 平台能力开关（2026-10-07 协议端 1.14.22 能力接入，控制台「平台能力」页）：
+      // 关掉就连工具带提示词一起撤 —— 与"表情包/搜索/ASR"同一口径，
+      // 留着只会让模型去调一个必然不可用的工具。映射表在 tools-core 里（与测试共用一份）。
+      if (!platformToolAllowed(d.name, cfg.platform)) return false;
       if (d.feature === 'identityPilot' && !identityAvailable) return false;
       if (d.feature === 'friendProposal' && !friendProposalAvailable) return false;
       return true;

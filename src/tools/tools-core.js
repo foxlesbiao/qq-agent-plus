@@ -34,6 +34,33 @@ export function resetPlatformQuotasForTest() {
   remarkQuota.reset();
 }
 
+// 平台能力开关（控制台「平台能力」页）→ 工具名的映射：orchestrator 的工具过滤与测试共用一份，
+// 两边各写一遍迟早会漂（2026-10-07 协议端 1.14.22 能力接入）。
+export const PLATFORM_TOOL_GATES = {
+  reactions: ['react_to_message', 'get_message_reactions'],
+  qqVoice: ['send_qq_voice'],
+  profileWrites: ['set_my_signature', 'set_my_status', 'set_remark'],
+  groupTools: ['get_group_profile', 'group_sign', 'set_group_todo'],
+  ocr: ['read_image_text'],
+  groupFiles: ['list_group_files', 'group_file_url', 'send_group_file'],
+  albumRead: ['list_group_album', 'like_album_photo', 'comment_album_photo'],
+  albumUpload: ['upload_to_group_album']
+};
+
+/**
+ * 某个工具在当前平台配置下是否可用。默认值语义与 config.js 的 platform 段一致：
+ * 只有 albumUpload 是"默认关"（未显式 true 就不放行），其余都是"默认开"（显式 false 才关）。
+ */
+export function platformToolAllowed(name, platform = {}) {
+  const tool = String(name || '');
+  for (const [key, tools] of Object.entries(PLATFORM_TOOL_GATES)) {
+    if (!tools.includes(tool)) continue;
+    const raw = platform?.[key];
+    return key === 'albumUpload' ? raw === true : raw !== false;
+  }
+  return true;
+}
+
 // 消息 id 归一化：模型常把聊天记录里的 "#123" 连 # 一起传进来，而 OneBot 只认纯数字 id。
 // store.js 里有一份同名函数但没导出，所以这里保留 tools 层自用的一份。
 // **导出**：orchestrator 记录"续接线索参与者"时读的是工具调用的原始参数，
@@ -1006,6 +1033,253 @@ export function buildToolDefs() {
           return ok({ remark, target: userId || ctx.chatId, note: '备注已设置。' });
         } catch (error) {
           return err(`设备注失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'list_group_files',
+      description: '看本群群文件的根目录（文件与文件夹）。群聊限定。要下载/读里面某个文件时，用它的 fileId 调 group_file_url 拿直链（文本类可以再用 web_fetch 读内容）。',
+      parameters: { type: 'object', properties: {} },
+      async execute(ctx) {
+        try {
+          if (ctx.kind !== 'group') return err('群文件只能在群聊里看');
+          const res = await ctx.onebot.call('get_group_root_files', { group_id: Number(ctx.chatId) }, 20000, ctx.signal) || {};
+          const files = (Array.isArray(res.files) ? res.files : []).slice(0, 30).map((f) => ({
+            name: f.file_name ?? f.name ?? '',
+            sizeKB: Math.round(Number(f.file_size ?? f.size ?? 0) / 1024),
+            fileId: f.file_id ?? f.id ?? '',
+            uploader: f.uploader_name ?? f.uploader ?? ''
+          })).filter((f) => f.name || f.fileId);
+          const folders = (Array.isArray(res.folders) ? res.folders : [])
+            .map((f) => f.folder_name ?? f.name ?? '').filter(Boolean);
+          return ok({ files, folders, note: files.length ? '取某个文件的下载直链用 group_file_url（fileId 填上面的）。' : '群文件根目录是空的。' });
+        } catch (error) {
+          return err(`看群文件失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'group_file_url',
+      description: '拿群里某个文件的下载直链（fileId 来自 list_group_files，或消息里的 [文件…] 段）。文本类文件拿到直链后可以用 web_fetch 读内容；其它类型只给链接。',
+      parameters: {
+        type: 'object',
+        properties: { fileId: { type: 'string', description: '群文件 id（来自 list_group_files）' } },
+        required: ['fileId']
+      },
+      async execute(ctx, args) {
+        try {
+          if (ctx.kind !== 'group') return err('群文件只能在群聊里取');
+          const fileId = String(args.fileId ?? '').trim();
+          if (!fileId) return err('fileId 不能为空（用 list_group_files 查）');
+          const res = await ctx.onebot.call('get_group_file_url', { group_id: Number(ctx.chatId), file_id: fileId }, 20000, ctx.signal);
+          const url = String(res?.url ?? '').trim();
+          if (!url) return err('协议端没有返回下载链接（文件可能已过期或被清理）');
+          return ok({ url, note: '文本类文件可以直接用 web_fetch 读这个链接。' });
+        } catch (error) {
+          return err(`取群文件直链失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'send_group_file',
+      description: '往群里发一个文件（群聊限定）。text＝把一段文字生成 .txt 发出去（导出长清单/日报用）；url＝转发一个直链文件（协议端去下载）。name 是文件名（带扩展名）。发文件很显眼，别频繁、别当消息用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          text: { type: 'string', description: '要写成文件的文字（与 url 二选一）' },
+          url: { type: 'string', description: '要转发的文件直链（与 text 二选一）' },
+          name: { type: 'string', description: '文件名（带扩展名，如 名单.txt；缺省按内容生成）' }
+        }
+      },
+      async execute(ctx, args) {
+        try {
+          if (ctx.kind !== 'group') return err('发群文件只能在群聊里');
+          const text = String(args.text ?? '');
+          const url = String(args.url ?? '').trim();
+          if (!text && !url) return err('text 和 url 至少给一个');
+          if (text && url) return err('text 和 url 只能给一个');
+          const stamp = new Date().toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }).replace(/\//g, '');
+          const name = safeSlice(String(args.name ?? '').trim(), 60) || `文本${stamp}.txt`;
+          const file = url || `base64://${Buffer.from(text, 'utf8').toString('base64')}`;
+          const res = await ctx.onebot.call('upload_group_file', { group_id: Number(ctx.chatId), file, name }, 120000, ctx.signal);
+          return ok({ sent: true, name, fileId: res?.file_id ?? null, note: '文件已发到群文件。' });
+        } catch (error) {
+          return err(`发群文件失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'list_group_album',
+      description: '看本群的相册（群聊限定）：不带参数列相册（id/名字/照片数）；带 albumId 时列该相册最近的照片（含 lloc/batchId，可用于点赞评论）。别人把你拉进相册回忆、或问"相册里那张照片"时用它。',
+      parameters: {
+        type: 'object',
+        properties: { albumId: { type: 'string', description: '可选：相册 id（来自上一次调用）' } }
+      },
+      async execute(ctx, args) {
+        try {
+          if (ctx.kind !== 'group') return err('群相册只能在群聊里看');
+          const groupId = Number(ctx.chatId);
+          const albumId = String(args.albumId ?? '').trim();
+          if (!albumId) {
+            const list = await ctx.onebot.call('get_group_album_list', { group_id: groupId }, 20000, ctx.signal);
+            const albums = (Array.isArray(list) ? list : []).slice(0, 20).map((a) => ({
+              id: String(a?.id ?? a?.album_id ?? ''), name: a?.name ?? a?.album_name ?? '',
+              pics: Number(a?.picNum ?? a?.pic_num ?? 0) || 0, createTime: a?.createTime ?? a?.create_time ?? null
+            })).filter((a) => a.id);
+            return ok({ albums, note: albums.length ? '带 albumId 再调一次能看照片列表。' : '这个群还没有相册。' });
+          }
+          const res = await ctx.onebot.call('get_group_album_media_list', { group_id: groupId, album_id: albumId }, 20000, ctx.signal);
+          const raw = Array.isArray(res) ? res : (Array.isArray(res?.media_list) ? res.media_list : (Array.isArray(res?.photos) ? res.photos : []));
+          const photos = raw.slice(0, 20).map((p) => ({
+            lloc: String(p?.lloc ?? p?.photo_id ?? ''), batchId: String(p?.batch_id ?? p?.batchId ?? ''),
+            uploader: p?.uploader_name ?? p?.uploader ?? '', time: p?.upload_time ?? p?.time ?? null,
+            desc: safeSlice(String(p?.desc ?? p?.title ?? ''), 60)
+          })).filter((p) => p.lloc || p.batchId);
+          return ok({ albumId, photos, note: photos.length ? '点赞用 batchId(+lloc)，评论用 lloc。' : '这个相册没有取到照片（可能没权限或为空）。' });
+        } catch (error) {
+          return err(`看群相册失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'like_album_photo',
+      description: '给群相册里的一张照片点赞（群聊限定）。albumId/batchId/lloc 用 list_group_album 查到的值。轻互动，别刷。',
+      parameters: {
+        type: 'object',
+        properties: {
+          albumId: { type: 'string', description: '相册 id' },
+          batchId: { type: 'string', description: '照片批次 id' },
+          lloc: { type: 'string', description: '可选：照片定位（没有就不传）' }
+        },
+        required: ['albumId', 'batchId']
+      },
+      async execute(ctx, args) {
+        try {
+          if (ctx.kind !== 'group') return err('群相册只能在群聊里操作');
+          const albumId = String(args.albumId ?? '').trim();
+          const batchId = String(args.batchId ?? '').trim();
+          if (!albumId || !batchId) return err('albumId 和 batchId 都要给（用 list_group_album 查）');
+          const lloc = String(args.lloc ?? '').trim();
+          await ctx.onebot.call('set_group_album_media_like', {
+            group_id: Number(ctx.chatId), album_id: albumId, batch_id: batchId, ...(lloc ? { lloc } : {})
+          }, 20000, ctx.signal);
+          return ok({ liked: true, note: '点赞成功。' });
+        } catch (error) {
+          return err(`相册点赞失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'comment_album_photo',
+      description: '给群相册里的一张照片留一条评论（群聊限定，所有能看到相册的人都看得见）。albumId/lloc 用 list_group_album 查到的值；评论要短、像群友说话。别乱评、别刷。',
+      parameters: {
+        type: 'object',
+        properties: {
+          albumId: { type: 'string', description: '相册 id' },
+          lloc: { type: 'string', description: '照片定位 id' },
+          content: { type: 'string', description: '评论内容（≤40 字）' }
+        },
+        required: ['albumId', 'lloc', 'content']
+      },
+      async execute(ctx, args) {
+        try {
+          if (ctx.kind !== 'group') return err('群相册只能在群聊里操作');
+          const albumId = String(args.albumId ?? '').trim();
+          const lloc = String(args.lloc ?? '').trim();
+          const content = safeSlice(String(args.content ?? '').trim(), 40);
+          if (!albumId || !lloc || !content) return err('albumId、lloc、content 都要给（lloc 用 list_group_album 查）');
+          await ctx.onebot.call('do_group_album_comment', {
+            group_id: Number(ctx.chatId), album_id: albumId, lloc, content
+          }, 20000, ctx.signal);
+          return ok({ commented: true, content, note: '评论已发。' });
+        } catch (error) {
+          return err(`相册评论失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'upload_to_group_album',
+      description: '把某条消息里的图传进本群相册（群聊限定；**所有人都能看到这张照片**，只在真的是群活动/纪念图时才用）。messageId 是要传的那条消息的 #数字；albumId/albumName 不传就用第一个相册。别传别人的生活照。',
+      parameters: {
+        type: 'object',
+        properties: {
+          messageId: { type: ['integer', 'string'], description: '图所在消息的 id（聊天记录里的 #数字）' },
+          albumId: { type: 'string', description: '可选：目标相册 id' },
+          albumName: { type: 'string', description: '可选：目标相册名（与 albumId 配套）' }
+        },
+        required: ['messageId']
+      },
+      async execute(ctx, args) {
+        try {
+          if (ctx.kind !== 'group') return err('群相册只能在群聊里操作');
+          const groupId = Number(ctx.chatId);
+          const entry = ctx.store.findByMid(ctx.chatKey, args.messageId);
+          if (!modelVisible(entry)) return err(`当前会话找不到消息 ${args.messageId}。${midHint(ctx)}`);
+          const media = (Array.isArray(entry.media) ? entry.media : []).filter((m) => m && m.kind === 'image');
+          const target = media.find((m) => /^https?:\/\//i.test(String(m.url || ''))) || media[0];
+          if (!target) return ok(`消息 ${args.messageId} 里没有可上传的图片。`);
+          const file = /^https?:\/\//i.test(String(target.url || '')) ? String(target.url) : String(target.file || '');
+          if (!file) return err('这张图拿不到可上传的地址');
+          let albumId = String(args.albumId ?? '').trim();
+          let albumName = String(args.albumName ?? '').trim();
+          if (!albumId) {
+            const list = await ctx.onebot.call('get_group_album_list', { group_id: groupId }, 20000, ctx.signal);
+            const first = (Array.isArray(list) ? list : []).find((a) => (a?.id ?? a?.album_id));
+            if (!first) return err('这个群还没有相册，先让别人在 QQ 里建一个');
+            albumId = String(first.id ?? first.album_id);
+            albumName = String(first.name ?? first.album_name ?? '');
+          }
+          await ctx.onebot.call('upload_image_to_qun_album', {
+            group_id: groupId, album_id: albumId, album_name: albumName || albumId, file
+          }, 120000, ctx.signal);
+          return ok({ uploaded: true, albumId, note: '已传进群相册（所有人都能看到）。' });
+        } catch (error) {
+          return err(`传相册失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'get_user_info',
+      description: '查一个 QQ 号的公开资料（昵称/性别/年龄等）。适合弄清"这个人是谁"——只在用得着时查，别人资料别到处报。',
+      parameters: {
+        type: 'object',
+        properties: { userId: { type: ['integer', 'string'], description: 'QQ 号' } },
+        required: ['userId']
+      },
+      async execute(ctx, args) {
+        try {
+          const userId = normalizeMid(args.userId);
+          if (!/^\d+$/.test(String(userId || ''))) return err(`userId 要是数字 QQ 号。${memberHint(ctx)}`);
+          const info = await ctx.onebot.call('get_stranger_info', { user_id: Number(userId) }, 15000, ctx.signal) || {};
+          return ok({
+            userId,
+            nickname: info.nickname ?? info.nick ?? '',
+            sex: info.sex ?? '', age: info.age ?? null,
+            level: info.level ?? info.qqLevel ?? null
+          });
+        } catch (error) {
+          return err(`查资料失败：${error?.message ?? error}`);
+        }
+      }
+    },
+    {
+      name: 'translate_text',
+      description: '英文翻译成中文（QQ 自带翻译）。你自己就能翻译，只在想省 token、或想看看 QQ 的译法时用；一次最多几句。',
+      parameters: {
+        type: 'object',
+        properties: { text: { type: 'string', description: '要翻译的英文（≤500 字）' } },
+        required: ['text']
+      },
+      async execute(ctx, args) {
+        try {
+          const text = safeSlice(String(args.text ?? '').trim(), 500);
+          if (!text) return err('text 不能为空');
+          const res = await ctx.onebot.call('translate_en2zh', { words: [text] }, 20000, ctx.signal);
+          const out = Array.isArray(res?.words) ? res.words.join('\n') : '';
+          if (!out) return err('翻译没有返回内容');
+          return ok({ translation: out });
+        } catch (error) {
+          return err(`翻译失败：${error?.message ?? error}`);
         }
       }
     },

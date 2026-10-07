@@ -243,14 +243,34 @@ function qqSceneRules(grounded = false) {
       '- 你无法查看图片内容：消息里的 [图片] [表情包] 只是占位提示，如实表示"看不到图"即可，绝对不要编造图片内容。'
     );
   }
-  // 平台互动（表情回应 / 资料 / 群资料 / 语音 / OCR）：不依赖 vision / 搜索 / ASR 开关，
-  // 工具都在工具表里，用法统一在这里交代（2026-10-07 协议端能力升级）。
-  lines.push(
-    '- 群友给消息贴了表情时，聊天记录里会出现 [贴表情] 行；想回敬就 react_to_message 贴同一个编号（群聊限定，QQ 私聊没有表情回应；get_message_reactions 能看这条被贴了什么、都是谁贴的）。你自己想表示"看到/笑到/赞同"又不想开口时，也可以给群里别人的话贴一个，别每条都贴。',
-    '- 图上的文字（截图、通知、表格）用 read_image_text 读，比看图省算力；想玩语音时群里可以 send_qq_voice（QQ 内置语音角色，先不传 character 拿角色列表）。',
-    '- 想改自己的 QQ 资料时：set_my_signature（个性签名）、set_my_status（"摸鱼中"这类在线状态）、set_remark（给好友/本群设备注）—— 偶尔一次就好（每天最多几次），别当习惯动作。',
-    '- 群公告、群简介、群荣誉（龙王/群聊之火）用 get_group_profile 看；每天进群可以 group_sign 签到一次；要让所有人记住的安排（先用 send_message 发出来）可用 set_group_todo 设成群待办。'
-  );
+  // 平台能力（2026-10-07 协议端 1.14.22 接入，控制台「平台能力」页）：与 vision/搜索/ASR
+  // 同一口径 —— 开关关掉后工具会被 orchestrator 摘掉，提示词也不能再教用法（教了白烧一轮）。
+  const platform = getConfig().platform || {};
+  if (platform.reactions !== false) {
+    lines.push('- 群友给消息贴了表情时，聊天记录里会出现 [贴表情] 行；想回敬就 react_to_message 贴同一个编号（群聊限定，QQ 私聊没有表情回应；get_message_reactions 能看这条被贴了什么、都是谁贴的）。你自己想表示"看到/笑到/赞同"又不想开口时，也可以给群里别人的话贴一个，别每条都贴。');
+  }
+  {
+    const bits = [];
+    if (platform.ocr !== false) bits.push('图上的文字（截图、通知、表格）用 read_image_text 读，比看图省算力');
+    if (platform.qqVoice !== false) bits.push('想玩语音时群里可以 send_qq_voice（QQ 内置语音角色，先不传 character 拿角色列表）');
+    if (bits.length) lines.push(`- ${bits.join('；')}。`);
+  }
+  if (platform.profileWrites !== false) {
+    lines.push('- 想改自己的 QQ 资料时：set_my_signature（个性签名）、set_my_status（"摸鱼中"这类在线状态）、set_remark（给好友/本群设备注）—— 偶尔一次就好（每天最多几次），别当习惯动作。');
+  }
+  if (platform.groupTools !== false) {
+    lines.push('- 群公告、群简介、群荣誉（龙王/群聊之火）用 get_group_profile 看；每天进群可以 group_sign 签到一次；要让所有人记住的安排（先用 send_message 发出来）可用 set_group_todo 设成群待办。');
+  }
+  if (platform.groupFiles !== false) {
+    lines.push('- 群文件：list_group_files 看目录、group_file_url 拿某个文件的下载直链（文本可以再用 web_fetch 读）、send_group_file 把一段文字或直链文件发进群（发文件很显眼，别当消息用）。');
+  }
+  {
+    const albumBits = [];
+    if (platform.albumRead !== false) albumBits.push('list_group_album 看相册与照片、like_album_photo / comment_album_photo 点赞评论（lloc/batchId 从列表里拿）');
+    if (platform.albumUpload === true) albumBits.push('upload_to_group_album 把某条消息里的图传进相册（所有人都看得到，只传群活动/纪念图，别传别人的生活照）');
+    if (albumBits.length) lines.push(`- 群相册（群聊限定）：${albumBits.join('；')}。`);
+  }
+  lines.push('- 查一个 QQ 号的公开资料（昵称/性别等）用 get_user_info；英译中可用 translate_text（你自己就会翻，只在省 token 或想看 QQ 译法时用）。');
   // 自安排唤醒只看 proactive.selfWakeEnabled（工具摘除也用它）——不能裹在 vision 分支里，
   // 否则"文本模型 + 开着自安排唤醒"会变成"工具在、用法没了"（2026-09-26 审查 P2）
   if (getConfig().proactive?.selfWakeEnabled !== false) {

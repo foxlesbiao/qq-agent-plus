@@ -153,7 +153,19 @@ export class GroupDigestManager {
     } catch { /* 记账失败不影响发布 */ }
     const text = String(r.message?.content || '').trim().slice(0, cfg.maxChars);
     if (!text) return { ok: false, error: '模型没有产出内容' };
-    await this.sender.sendTextBatch(chatKey, [text], {});
-    return { ok: true, chars: text.length, messages: rows.length, text };
+    // 发送形态：默认走「聊天记录」卡片（platform.forwardCards，2026-10-07 协议端能力升级）。
+    // 卡片把一段较长的汇总收在一个可展开的气泡里，比一长串文字更清爽；
+    // 关掉开关（控制台「平台能力」）就回到原来的纯文本发送。
+    const appCfg = getConfig();
+    if (appCfg.platform?.forwardCards !== false && typeof this.sender.sendForwardCard === 'function') {
+      const nickname = String(appCfg.persona?.selfNickname || '').trim() || '群日报';
+      await this.sender.sendForwardCard(chatKey, [{
+        type: 'node',
+        data: { nickname, content: [{ type: 'text', data: { text } }] }
+      }], {});
+    } else {
+      await this.sender.sendTextBatch(chatKey, [text], {});
+    }
+    return { ok: true, chars: text.length, messages: rows.length, text, asCard: appCfg.platform?.forwardCards !== false };
   }
 }

@@ -382,6 +382,33 @@ export class SendQueue {
     return { sent, failed };
   }
 
+  /** 发一张「聊天记录」卡片（合并转发）。nodes 格式见 onebot.sendForwardMsg。 */
+  sendForwardCard(chatKey, nodes, options = {}) {
+    const [kind, id] = String(chatKey).split(':');
+    const chain = this.#chain(chatKey);
+    return chain(async () => {
+      if (options.runId && this.store.hasUncertainEffects(options.runId)) throw new Error('Previous send delivery is uncertain');
+      this.#checkRate(chatKey);
+      const data = await this.#deliver(chatKey, options, { type: 'forward', nodes: nodes.length }, () => this.onebot.sendForwardMsg(kind, id, nodes, {
+        signal: options.signal
+      }));
+      const ts = Date.now();
+      let targetUserId = this.#replyTarget(chatKey, options);
+      if (!targetUserId && kind === 'private') targetUserId = String(id);
+      this.#afterSent(() => {
+        this.store.appendSelf(chatKey, {
+          text: `[聊天记录卡片]${nodes.length}条`,
+          ts,
+          mid: data?.message_id ?? null,
+          targetUserId,
+          eventKind: 'message'
+        });
+        this.onSent?.({ chatKey, text: '[聊天记录卡片]', messageId: data?.message_id ?? null });
+      });
+      return { message_id: data?.message_id ?? null };
+    });
+  }
+
   /** 发送一个收藏表情（独立气泡）。 */
   sendSticker(chatKey, sticker, options = {}) {
     const [kind, id] = String(chatKey).split(':');

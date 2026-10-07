@@ -25,6 +25,7 @@ import {
   renderDailyMomentsSection, renderGroupGameSection, renderQzoneInteractionSection, renderRemindersSection
 } from './moments.js';
 import { renderPersonaSection } from './persona.js';
+import { renderPlatformSection } from './platform.js';
 import { loadSessions } from './sessions.js';
 import { bindCrossSectionControls, bindSettingsEvents, isSplitThinking } from './settings-bind.js';
 import { renderAsrSection } from './settings-voice.js';
@@ -74,6 +75,7 @@ function renderSettingsSidebar() {
     ['persona', '人设'],
     ['allow', '聊天白名单'],
     ['chat', '聊天设置'],
+    ['platform', '平台能力'],
     ['desktop', '系统'],
     ['onebot', 'OneBot']
   ];
@@ -122,6 +124,7 @@ function renderSettingsSection(c) {
     persona: () => renderPersonaSection(c),
     allow: () => renderAllowSection(c),
     chat: () => renderChatSection(c),
+    platform: () => renderPlatformSection(c),
     desktop: () => renderDesktopSection(c),
     onebot: () => renderOnebotSection(c)
   };

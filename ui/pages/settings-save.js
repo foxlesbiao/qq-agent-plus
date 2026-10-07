@@ -661,7 +661,25 @@ async function saveConfig({ quiet = false } = {}) {
       maxPerMinute: Number(val('#cfg-maxpermin', c.send?.maxPerMinute)) || 80,
       maxPerHour: Number(val('#cfg-maxperhour', c.send?.maxPerHour)) || 500,
       byLengthMs: Number(val('#cfg-bylength', c.send?.byLengthMs)) || 20,
-      hardSplitAt: Number(val('#cfg-hardsplit', c.send?.hardSplitAt)) || 0
+      hardSplitAt: Number(val('#cfg-hardsplit', c.send?.hardSplitAt)) || 0,
+      // 私聊「正在输入」（控件在「平台能力」页；缺控件时按已保存值回退，默认开）
+      typingIndicator: chk('#cfg-typing', c.send?.typingIndicator !== false)
+    };
+    // 平台能力开关（2026-10-07，控件在「平台能力」页）：与 DEFAULT_CONFIG.platform 一一对应，
+    // 缺控件时按已保存值回退（旧页面/旧存档不会把开关误抹）。
+    patch.platform = {
+      ...c.platform,
+      reactions: chk('#cfg-platform-reactions', c.platform?.reactions !== false),
+      qqVoice: chk('#cfg-platform-qqvoice', c.platform?.qqVoice !== false),
+      profileWrites: chk('#cfg-platform-profile', c.platform?.profileWrites !== false),
+      groupTools: chk('#cfg-platform-grouptools', c.platform?.groupTools !== false),
+      ocr: chk('#cfg-platform-ocr', c.platform?.ocr !== false),
+      groupFiles: chk('#cfg-platform-groupfiles', c.platform?.groupFiles !== false),
+      albumRead: chk('#cfg-platform-albumread', c.platform?.albumRead !== false),
+      // 两个"默认关"的项（相册上传、已读标记）：缺控件时同样按已保存值回退
+      albumUpload: chk('#cfg-platform-albumupload', c.platform?.albumUpload === true),
+      readReceipts: chk('#cfg-platform-readreceipts', c.platform?.readReceipts === true),
+      forwardCards: chk('#cfg-platform-forwardcards', c.platform?.forwardCards !== false)
     };
     patch.proactive = {
       ...c.proactive,

@@ -547,6 +547,23 @@ export class OneBotClient {
     }, 15000, signal);
   }
 
+  /**
+   * 发送合并转发（「聊天记录」卡片）。nodes 是 OneBot 的 node 段数组：
+   *   [{ type: 'node', data: { user_id?, nickname, content: [{ type: 'text', data: { text } }] } }]
+   * user_id 省略时协议端按机器人自己的账号兜底（SnowLuma 对伪造节点的宽松约定）。
+   */
+  async sendForwardMsg(kind, id, nodes, { signal } = {}) {
+    const params = kind === 'private'
+      ? { message_type: 'private', user_id: Number(id), messages: nodes }
+      : { message_type: 'group', group_id: Number(id), messages: nodes };
+    return this.call('send_forward_msg', params, MEDIA_TIMEOUT_MS, signal);
+  }
+
+  /** 把一条消息标为已读（协议端按消息自行判定群/私聊）。 */
+  async markMessageRead(messageId, { signal } = {}) {
+    return this.call('mark_msg_as_read', { message_id: Number(messageId) }, 15000, signal);
+  }
+
   async sendFace(kind, id, faceId, { replyToMessageId = null, atUserId = null, text = null, signal } = {}) {
     const segments = [];
     if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
