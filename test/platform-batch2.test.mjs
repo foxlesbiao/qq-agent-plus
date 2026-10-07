@@ -62,8 +62,8 @@ it('工具表：第二批工具都在；平台开关默认值正确', () => {
   }
   assert.deepEqual(DEFAULT_CONFIG.platform.perGroup, {}, '按群覆盖默认空');
   assert.deepEqual(DEFAULT_CONFIG.platform.quotas,
-    { reactionsPerHour: 30, profilePerDay: 3, remarksPerDay: 5, avatarsPerDay: 2 },
-    '四个写入闸门的默认上限（拆细前的硬编码值）');
+    { reactionsPerHour: 15, profilePerDay: 2, remarksPerDay: 3, avatarsPerDay: 1 },
+    '四个写入闸门的默认上限（2026-10-07 按"像个真人"收紧过）');
 });
 
 it('platformToolAllowed：默认全开（账号级外观三项除外），显式关生效，读写互不牵连', () => {
@@ -125,11 +125,11 @@ it('按群覆盖：本群显式布尔值优先于全局，别的群不受影响'
 });
 
 it('配额上限读配置：改小立刻生效，非法值回落默认', () => {
-  assert.equal(platformQuotaLimit({}, 'reactionsPerHour'), 30, '缺配置 = 内置默认');
+  assert.equal(platformQuotaLimit({}, 'reactionsPerHour'), 15, '缺配置 = 内置默认（2026-10-07 收紧后）');
   assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: 7 } } }, 'reactionsPerHour'), 7);
-  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: 0 } } }, 'reactionsPerHour'), 30, '0 = 默认（刹车不是不限量开关）');
-  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: -5 } } }, 'reactionsPerHour'), 30);
-  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: 'abc' } } }, 'reactionsPerHour'), 30);
+  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: 0 } } }, 'reactionsPerHour'), 15, '0 = 默认（刹车不是不限量开关）');
+  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: -5 } } }, 'reactionsPerHour'), 15);
+  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: 'abc' } } }, 'reactionsPerHour'), 15);
   assert.equal(platformQuotaLimit({ platform: { quotas: { avatarsPerDay: 999 } } }, 'avatarsPerDay'), 200, '硬顶 200');
   assert.equal(platformQuotaLimit({ platform: { quotas: { avatarsPerDay: 2.7 } } }, 'avatarsPerDay'), 2, '取整向下');
 });

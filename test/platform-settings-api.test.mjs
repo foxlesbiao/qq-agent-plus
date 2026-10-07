@@ -107,7 +107,7 @@ test('GET /api/platform/quota-usage：默认空、消费后可见、上限改小
   assert.equal(before.status, 200, before.text);
   assert.equal(before.body?.quotas?.reactions?.used, 0, '还没用过');
   assert.equal(before.body?.quotas?.reactions?.limit, 2, '上限要读配置（不是写死的 30）');
-  assert.equal(before.body?.quotas?.avatars?.limit, 2, '没改的项按内置默认');
+  assert.equal(before.body?.quotas?.avatars?.limit, 1, '没改的项按内置默认');
 
   const first = JSON.parse((await def.execute(ctx, { messageId: '1', emojiId: '14' })).content);
   assert.equal(first.reacted, true);

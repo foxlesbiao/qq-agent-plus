@@ -507,7 +507,7 @@ it('提示词门控：平台开关关掉后不再教用法（工具已被摘除�
   const withAvatar = withPlatform({ avatarWrites: true });
   assert.ok(withAvatar.includes('set_my_avatar'), '开了头像开关才教');
   assert.ok(!withAvatar.includes('set_my_profile'), '头像开关不该把改昵称也放开');
-  assert.ok(withAvatar.includes('头像每天最多 2 次'), '额度（默认值）要写进提示词');
+  assert.ok(withAvatar.includes('头像每天最多 1 次'), '额度（默认值）要写进提示词');
   const withNickname = withPlatform({ nicknameWrites: true });
   assert.ok(withNickname.includes('set_my_profile'), '昵称开关单独生效');
   assert.ok(!withNickname.includes('set_my_avatar'));

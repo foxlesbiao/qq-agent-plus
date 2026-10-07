@@ -108,10 +108,13 @@ export function platformToolAllowed(name, platform = {}, chatKeyOrGroup = '') {
 // 语义：0/非法值 = 用默认（**不是**"不设限"——这是防模型抽风的刹车，不该被一个 0 悄悄拆掉）；
 // 上限硬顶 200，防手滑把刹车调到没意义。
 export const PLATFORM_QUOTA_DEFAULTS = Object.freeze({
-  reactionsPerHour: 30,   // 贴表情：每小时
-  profilePerDay: 3,       // 签名 + 在线状态（共享一个额度）
-  remarksPerDay: 5,       // 备注
-  avatarsPerDay: 2        // 换头像（最显眼，默认卡最紧）
+  // 2026-10-07 收紧过一次（用户："不用这么频繁吧"）：这些是**刹车**不是目标，
+  // 原来的 30/3/5/2 是按"技术上别刷爆"定的，而不是按"像个真人"定的 ——
+  // 一小时内贴 15 个表情、一天改两次资料，已经比任何真人活跃了。
+  reactionsPerHour: 15,   // 贴表情：每小时（平均 4 分钟一个）
+  profilePerDay: 2,       // 签名 + 在线状态（共享一个额度；一天改两次够）
+  remarksPerDay: 3,       // 备注（与"每次整理最多发现 3 个新人"对齐）
+  avatarsPerDay: 1        // 换头像（一天换一次都算多）
 });
 
 export const PLATFORM_QUOTA_KEYS = Object.freeze(Object.keys(PLATFORM_QUOTA_DEFAULTS));

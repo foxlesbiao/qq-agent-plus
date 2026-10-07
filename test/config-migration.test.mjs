@@ -192,7 +192,7 @@ test('平台能力：perGroup / quotas 坏形状被归一化，不牵连整份�
   }));
   assert.deepEqual(bad.config.platform.perGroup, {}, '整段写坏 → 空表');
   assert.deepEqual(bad.config.platform.quotas,
-    { reactionsPerHour: 30, profilePerDay: 3, remarksPerDay: 5, avatarsPerDay: 2 }, '整段写坏 → 默认值');
+    { reactionsPerHour: 15, profilePerDay: 2, remarksPerDay: 3, avatarsPerDay: 1 }, '整段写坏 → 默认值');
   assert.equal(bad.config.api.apiKey, 'keep-me', '坏字段不许把整份配置冲掉');
 
   const dirty = loadWholeConfigInNewProcess(JSON.stringify({

@@ -50,10 +50,10 @@ const BEHAVIOR_ROWS = [
 // 写入闸门：与 src/core/platform-gates.js 的 PLATFORM_QUOTA_DEFAULTS 一一对应
 // （默认值只在这里做"输入框留空时的提示"，真正的默认值在服务端）。
 const QUOTA_ROWS = [
-  ['reactionsPerHour', '贴表情（每小时）', 30],
-  ['profilePerDay', '签名 / 在线状态（每天）', 3],
-  ['remarksPerDay', '备注（每天）', 5],
-  ['avatarsPerDay', '换头像（每天）', 2]
+  ['reactionsPerHour', '贴表情（每小时）', 15],
+  ['profilePerDay', '签名 / 在线状态（每天）', 2],
+  ['remarksPerDay', '备注（每天）', 3],
+  ['avatarsPerDay', '换头像（每天）', 1]
 ];
 
 const gateCheckboxId = (key) => `cfg-platform-${key.toLowerCase()}`;
@@ -144,7 +144,7 @@ ${BEHAVIOR_ROWS.map(([id, label, note]) => behaviorRowHtml(id, label, note,
     <section class="plat-card">
       <div class="plat-card-head">
         <h3 class="plat-card-title">写入次数上限</h3>
-        <span class="plat-card-note">防模型抽风的刹车：默认 30/小时、3/天、5/天、2/天，这里可以改</span>
+        <span class="plat-card-note">防模型抽风的刹车：默认 15/小时、2/天、3/天、1/天，这里可以改</span>
       </div>
       <table class="plat-quota-table">
         <thead><tr><th>项目</th><th>上限</th><th>当前用量（滑动窗口）</th></tr></thead>

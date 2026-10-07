@@ -33,6 +33,12 @@ const tool = (name) => {
   return def;
 };
 const parse = (r) => JSON.parse(r.content);
+// 额度用例验的是"闸门机制"，不验具体数字：把额度显式写进配置再跑（默认值以后还会调 ——
+// 2026-10-07 就从 30/3/5/2 收紧成了 15/2/3/1，写死默认值的断言会跟着红）。
+const withQuotas = (quotas) => {
+  setRuntimeConfig({ ...cfg, platform: { ...cfg.platform, quotas: { ...cfg.platform.quotas, ...quotas } } });
+};
+const restoreConfig = () => setRuntimeConfig(cfg);
 
 it('工具表：平台能力工具都在（防改名/误删）', () => {
   const names = new Set(buildToolDefs().map((d) => d.name));
@@ -132,8 +138,10 @@ it('get_message_reactions：表情取名 + 贴的人解析成群昵称', async (
   assert.equal(res.reactions[0].users[1].name, '3003', '查不到名字就用号码');
 });
 
-it('资料类：签名/状态/备注每天封顶，参数形状正确', async () => {
+it('资料类：签名/状态/备注按配置的上限封顶，参数形状正确', async (t) => {
   resetPlatformQuotasForTest();
+  withQuotas({ profilePerDay: 3, remarksPerDay: 5 });   // 这条用例要连发三次资料 + 两次备注
+  t.after(restoreConfig);
   const calls = [];
   const ctx = {
     kind: 'group', chatId: '433', chatKey: 'group:433',
@@ -156,8 +164,10 @@ it('资料类：签名/状态/备注每天封顶，参数形状正确', async ()
   resetPlatformQuotasForTest();
 });
 
-it('set_my_avatar：消息图 / 表情库图两种图源，每天封顶 2 次', async () => {
+it('set_my_avatar：消息图 / 表情库图两种图源，按配置的上限封顶', async (t) => {
   resetPlatformQuotasForTest();
+  withQuotas({ avatarsPerDay: 2 });   // 这条用例要连发两次，额度显式给 2
+  t.after(restoreConfig);
   const avatars = [];
   const ctx = {
     kind: 'group', chatId: '433', chatKey: 'group:433',
@@ -176,7 +186,8 @@ it('set_my_avatar：消息图 / 表情库图两种图源，每天封顶 2 次', 
 
   assert.equal((await tool('set_my_avatar').execute(ctx, {})).isError, true, '不给图源要报错');
   const third = await tool('set_my_avatar').execute(ctx, { messageId: '9' });
-  assert.match(third.content, /用完了/, '换头像每天最多 2 次');
+  assert.match(third.content, /用完了/, '换头像按当日上限封顶');
+  assert.match(third.content, /每天最多 2 次/, '报错里带的是配置里的上限，不是写死的数字');
   resetPlatformQuotasForTest();
 });
 
