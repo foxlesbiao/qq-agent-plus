@@ -525,7 +525,11 @@ export class OneBotClient {
       }
       segments.push({ type: 'at', data: { qq: at } });
     }
-    segments.push({ type: 'image', data: { file: String(imageUrl) } });
+    // sub_type/summary 是「按表情样式发出」的呈现元数据：QQ 只有拿到它们才把这张图渲染成
+    // 表情（否则就是普通图片，用户 2026-10-07 反馈的"发表情包变图片"）；SnowLuma ≥1.14.20 的上传
+    // 管线才把它们真正带上线（群里 extData、私聊 bytesPbReserveC2c），旧版忽略、不报错。
+    // 本函数是全仓唯一的图片段出口（贴纸库是机器人唯一的出图渠道），所以只加在这一处。
+    segments.push({ type: 'image', data: { file: String(imageUrl), sub_type: 1, summary: '[动画表情]' } });
     return this.sendSegments(kind, id, segments, signal, { timeoutMs: MEDIA_TIMEOUT_MS });
   }
 

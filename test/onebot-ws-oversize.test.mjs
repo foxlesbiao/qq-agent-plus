@@ -342,6 +342,8 @@ test('sendSticker 端到端：整图 base64 超阈值时整条链路自动落到
   assert.equal(String(frame.params.group_id), '12345');
   const segment = frame.params.message.find((s) => s.type === 'image');
   assert.equal(segment.data.file, image, 'image 段必须带完整 base64（不是被截断或漏带）');
+  assert.equal(segment.data.sub_type, 1, '贴纸要带 sub_type=1（表情呈现，2026-10-07）');
+  assert.equal(segment.data.summary, '[动画表情]', '贴纸要带 [动画表情] 摘要（表情呈现）');
 });
 
 // ── incident 落库补 cause 链 ──

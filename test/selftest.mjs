@@ -461,6 +461,8 @@ async function main() {
   const stickerSend = onebotHttp.state.sends.at(-1);
   assert.strictEqual(stickerSend.body.message.at(-1).type, 'image', '表情以 image 段发送');
   assert.ok(stickerSend.body.message.at(-1).data.file.includes('/img.png'), '表情 URL 正确');
+  assert.strictEqual(stickerSend.body.message.at(-1).data.sub_type, 1, '表情段要带 sub_type=1（表情呈现）');
+  assert.strictEqual(stickerSend.body.message.at(-1).data.summary, '[动画表情]', '表情段要带 [动画表情] 摘要');
   pass('表情包发送：image 段 + 存档记录');
 
   // ── 场景 7：限频保护 ──

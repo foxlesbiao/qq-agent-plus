@@ -40,4 +40,8 @@ test('文本与表情用 15 秒超时，语音与图片（表情包）用 60 秒
   // 段类型没被改坏：record 仍是 record，图片仍是 image
   assert.equal(seen[2].segments[0].type, 'record');
   assert.equal(seen[3].segments[0].type, 'image');
+  // 贴纸要带表情呈现字段（用户 2026-10-07 反馈"发表情包变图片"），其它媒体段不带
+  assert.equal(seen[3].segments[0].data.sub_type, 1, '贴纸图片段要带 sub_type=1');
+  assert.equal(seen[3].segments[0].data.summary, '[动画表情]', '贴纸图片段要带 [动画表情]');
+  assert.equal(seen[2].segments[0].data.sub_type, undefined, '语音段不能被带上表情字段');
 });
