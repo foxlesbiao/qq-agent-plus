@@ -51,6 +51,7 @@ const BEHAVIOR_ROWS = [
 // （默认值只在这里做"输入框留空时的提示"，真正的默认值在服务端）。
 const QUOTA_ROWS = [
   ['reactionsPerHour', '贴表情（每小时）', 10],
+  ['albumWritesPerHour', '相册点赞 / 评论（每小时）', 5],
   ['profilePerDay', '签名 / 在线状态（每天）', 1],
   ['remarksPerDay', '备注（每天）', 1],
   ['avatarsPerWeek', '换头像（每周）', 1]
@@ -80,7 +81,7 @@ function gateRowHtml(key, label) {
 
 /** 语音音色：跟在「QQ 原生语音」这一行的工具清单下面（音色是它的参数，不是独立能力）。 */
 function voiceSelectRowHtml() {
-  const voiceChar = String(state.config?.platform?.qqVoiceCharacter || state.config?.platform?.qqVoiceCharacter === '' ? state.config?.platform?.qqVoiceCharacter : '').trim();
+  const voiceChar = String(state.config?.platform?.qqVoiceCharacter ?? '').trim();
   return `<div class="plat-sub">
               <label for="cfg-platform-voicechar">语音音色</label>
               <select class="plat-select" id="cfg-platform-voicechar" style="min-width:200px">
@@ -117,7 +118,6 @@ function keyDefaultOn(key) {
 /** 「平台能力」分区。 */
 function renderPlatformSection(c) {
   const p = c.platform || {};
-  const voiceChar = String(p.qqVoiceCharacter || '').trim();
   const quotas = p.quotas || {};
   const groups = (c.allow?.groups || []).map(String);
   const gateCard = ([title, note, rows]) => `
@@ -126,7 +126,7 @@ function renderPlatformSection(c) {
         <h3 class="plat-card-title">${esc(title)}</h3>
         <span class="plat-card-note">${esc(note)}</span>
       </div>
-${rows.map(([key, label]) => gateRowHtml(key, label, voiceChar)).join('\n')}
+${rows.map(([key, label]) => gateRowHtml(key, label)).join('\n')}
     </section>`;
   return `
     ${GATE_SECTIONS.map(gateCard).join('\n')}
@@ -144,7 +144,7 @@ ${BEHAVIOR_ROWS.map(([id, label, note]) => behaviorRowHtml(id, label, note,
     <section class="plat-card">
       <div class="plat-card-head">
         <h3 class="plat-card-title">写入次数上限</h3>
-        <span class="plat-card-note">防模型抽风的刹车：默认 10/小时、1/天、1/天、1/周，这里可以改</span>
+        <span class="plat-card-note">防模型抽风的刹车：每项的默认值就是输入框里的数，改完保存即可</span>
       </div>
       <table class="plat-quota-table">
         <thead><tr><th>项目</th><th>上限</th><th>当前用量（滑动窗口）</th></tr></thead>

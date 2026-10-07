@@ -263,10 +263,14 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '') {
     if (gate('ocr')) bits.push('图上的文字（截图、通知、表格）用 read_image_text 读，比看图省算力');
     if (gate('qqVoice')) {
       // 音色被控制台固定时不再教"先拿角色列表"那一步（模型只需要给 text；
-      // 教了反而会多一次没必要的列表调用、还可能自作主张换音色）
-      bits.push(String(plat.qqVoiceCharacter || '').trim()
+      // 教了反而会多一次没必要的列表调用、还可能自作主张换音色）。
+      // 两条语音路都在时补一条择一规则：审计发现两处分开教、没有规则，模型只能自己猜
+      // （TTS 的可用性判断与【玩法与工具箱】里教 send_voice 用同一道门，避免指向不存在的工具）。
+      const ttsOn = getConfig().tts?.enabled === true;
+      bits.push((String(plat.qqVoiceCharacter || '').trim()
         ? '想玩语音时群里可以 send_qq_voice（音色已由管理员固定，直接给 text 就行）'
-        : '想玩语音时群里可以 send_qq_voice（QQ 内置语音角色，先不传 character 拿角色列表）');
+        : '想玩语音时群里可以 send_qq_voice（QQ 内置语音角色，先不传 character 拿角色列表）')
+        + (ttsOn ? '；要念台词、要用自己的声线就用 send_voice，两条语音别同一轮都用' : ''));
     }
     if (bits.length) lines.push(`- ${bits.join('；')}。`);
   }

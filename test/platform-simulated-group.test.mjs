@@ -544,6 +544,22 @@ it('提示词门控：平台开关关掉后不再教用法（工具已被摘除�
   assert.ok(!noFileSend.includes('send_group_file'));
   assert.ok(noFileSend.includes('list_group_files'));
 
+  // 两条语音路都在时，必须有择一规则（2026-10-07 审计：分开教、没规则，模型只能自己猜）
+  const withTts = (platform, ttsEnabled) => {
+    const cfg = structuredClone(base);
+    cfg.platform = { ...base.platform, ...platform };
+    cfg.tts = { ...cfg.tts, enabled: ttsEnabled };
+    setRuntimeConfig(cfg);
+    return buildSystemPrompt({ persona: cfg.persona, selfNickname: '犊子', platform: cfg.platform, chatKey: '' });
+  };
+  const bothVoice = withTts({ qqVoice: true }, true);
+  assert.ok(bothVoice.includes('两条语音别同一轮都用'), 'TTS 与 QQ 语音都在时要教它怎么选');
+  const qqOnly = withTts({ qqVoice: true }, false);
+  assert.ok(!qqOnly.includes('两条语音别同一轮都用'), 'TTS 没开时不该提另一条语音（会指向一个不存在的工具）');
+  const ttsOnly = withTts({ qqVoice: false }, true);
+  assert.ok(!ttsOnly.includes('send_qq_voice'), 'QQ 语音关掉后连名字都不该出现');
+  setRuntimeConfig(base);
+
   // 按群覆盖：同一个配置，两个群的提示词不同（工具表与提示词同判的根据就在这里）
   const perGroup = { reactionsWrite: true, perGroup: { '433': { reactionsWrite: false } } };
   const inGroup433 = withPlatform(perGroup, 'group:433');

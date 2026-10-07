@@ -191,6 +191,89 @@ it('set_my_avatar：消息图 / 表情库图两种图源，按配置的上限封
   resetPlatformQuotasForTest();
 });
 
+// ── 2026-10-07 独立审计：四个"既不走队列也没有配额"的写动作补闸 ──
+
+it('group_sign：每个群每天只真签一次（重复调用直接回"今天签过了"，不再打协议端）', async (t) => {
+  resetPlatformQuotasForTest();
+  t.after(() => resetPlatformQuotasForTest());
+  const calls = [];
+  const ctx = {
+    kind: 'group', chatId: '433', chatKey: 'group:433',
+    onebot: { call: async (action, params) => { calls.push([action, params]); return {}; } }
+  };
+  const first = JSON.parse((await tool('group_sign').execute(ctx, {})).content);
+  assert.equal(first.signed, true, '第一次真签');
+  assert.equal(calls.length, 1);
+  const second = JSON.parse((await tool('group_sign').execute(ctx, {})).content);
+  assert.equal(second.signed, false, '同一天第二次不再真签');
+  assert.match(second.note, /已经签过/, '要明确告诉模型"今天签过了"，别让它以为失败');
+  assert.equal(calls.length, 1, '第二次不该再打协议端');
+  // 另一个群互不影响（去重按会话）
+  await tool('group_sign').execute({ ...ctx, chatId: '999', chatKey: 'group:999' }, {});
+  assert.equal(calls.length, 2, '换群照常能签');
+});
+
+it('set_group_todo：同一条消息只设一次；每群每天有上限（防一轮里连设不同消息）', async (t) => {
+  resetPlatformQuotasForTest();
+  t.after(() => resetPlatformQuotasForTest());
+  const calls = [];
+  const ctx = {
+    kind: 'group', chatId: '433', chatKey: 'group:433',
+    onebot: { call: async (action, params) => { calls.push([action, params]); return {}; } }
+  };
+  const one = JSON.parse((await tool('set_group_todo').execute(ctx, { messageId: '#11' })).content);
+  assert.equal(one.todo, true);
+  const again = JSON.parse((await tool('set_group_todo').execute(ctx, { messageId: '11' })).content);
+  assert.equal(again.todo, false, '同一条消息（带不带 # 都算同一条）不再重复设');
+  assert.equal(calls.length, 1, '重复的这次不该打协议端');
+  await tool('set_group_todo').execute(ctx, { messageId: '12' });
+  await tool('set_group_todo').execute(ctx, { messageId: '13' });
+  const fourth = await tool('set_group_todo').execute(ctx, { messageId: '14' });
+  assert.equal(fourth.isError, true, '每群每天第 4 条要被拦');
+  assert.match(fourth.content, /已经设了 3 条/, '要说清上限');
+  assert.equal(calls.length, 3, '被拦的那次不该打协议端');
+  // 别的群有自己的额度
+  await tool('set_group_todo').execute({ ...ctx, chatId: '999', chatKey: 'group:999' }, { messageId: '14' });
+  assert.equal(calls.length, 4, '换群不受另一个群的额度影响');
+});
+
+it('相册点赞/评论：共用每小时闸门（事前消费、失败退还、按配置值封顶）', async (t) => {
+  resetPlatformQuotasForTest();
+  withQuotas({ albumWritesPerHour: 2 });
+  t.after(() => { restoreConfig(); resetPlatformQuotasForTest(); });
+  const calls = [];
+  let failNext = false;
+  const ctx = {
+    kind: 'group', chatId: '433', chatKey: 'group:433',
+    onebot: {
+      call: async (action, params) => {
+        if (failNext) { failNext = false; throw new Error('协议端炸了'); }
+        calls.push([action, params]);
+        return {};
+      }
+    }
+  };
+  const like = (n) => tool('like_album_photo').execute(ctx, { albumId: 'a1', batchId: `b${n}` });
+  assert.equal(JSON.parse((await like(1)).content).liked, true);
+  assert.equal(JSON.parse((await like(2)).content).liked, true, '第 2 次仍在上限内（点赞与评论共享这一份额度）');
+  const third = await like(3);
+  assert.equal(third.isError, true, '到配置的上限就该拦');
+  assert.match(third.content, /上限 2 次/, '报错里要带配置的上限');
+  resetPlatformQuotasForTest();
+  // 失败不扣额度：先让协议端抛一次，额度应退回去，下次还能成功
+  failNext = true;
+  const failed = await like(4);
+  assert.equal(failed.isError, true, '协议端失败要如实报错');
+  const retry = await like(5);
+  assert.equal(JSON.parse(retry.content).liked, true, '失败的那次要把额度退回来（否则模型白白损失一次）');
+  // 评论与点赞共用同一个闸门：把额度用满后评论也进不去
+  const c1 = await tool('comment_album_photo').execute(ctx, { albumId: 'a1', lloc: 'x', content: '好' });
+  assert.equal(c1.isError, undefined, '额度还没满时评论能发（与点赞共享同一份）');
+  const c2 = await tool('comment_album_photo').execute(ctx, { albumId: 'a1', lloc: 'y', content: '再来' });
+  assert.equal(c2.isError, true, '额度被点赞 + 上一条评论用满后，评论也要被拦');
+  resetPlatformQuotasForTest();
+});
+
 it('set_my_profile：至少给一项、性别有校验、改昵称后刷新登录信息、与资料共享每日额度', async (t) => {
   withQuotas({ profilePerDay: 3 });   // 这条用例要连发几次资料改动（默认已收紧到 1/天）
   t.after(restoreConfig);

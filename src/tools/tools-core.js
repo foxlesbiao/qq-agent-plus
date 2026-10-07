@@ -11,6 +11,7 @@ import { synthesizeSpeech, ttsConfigured } from '../llm/tts.js';
 import { generateImage, MAX_PROMPT_CHARS } from '../llm/image-gen.js';
 import { resolveApiKey } from '../llm/llm.js';
 import { safeFetchBinary } from '../llm/safe-fetch.js';
+import { todayKey } from '../core/util.js';   // 上海自然日（"每群每天一次"的去重用同一个口径）
 import { createQuota } from '../core/quota.js';
 
 // 生图闸门（按张计费，全局；#9 那套双闸在这里只用全局侧 —— 一张图的钱与"哪个群要的"无关，
@@ -29,12 +30,25 @@ const profileQuota = createQuota({ windowMs: 24 * 3600_000 });  // 签名/在线
 const remarkQuota = createQuota({ windowMs: 24 * 3600_000 });   // 备注：每天封顶
 const avatarQuota = createQuota({ windowMs: 7 * 24 * 3600_000 }); // 换头像：**每周**封顶（窗口 7 天 —— 真人按周/月换头像，
 // "每天 1 次"一周也能换 7 次，挡不住"太勤"）
-/** 仅供测试：清空平台互动闸门。 */
+// 相册互动（点赞/评论）：与贴表情同档的"轻互动"，但评论是**所有人都看得到的公开内容**，
+// 所以卡得更紧（2026-10-07 独立审计发现：点赞/评论此前既不走发送队列也没有任何闸门 ——
+// 模型一轮里连刷 N 次会全部落到 QQ）。
+const albumWriteQuota = createQuota({ windowMs: 3600_000 });
+// "每群每天一次"类动作的去重表（群签到：重复签没有意义；群待办：同一条消息重复设也没意义）。
+// dayKey 是上海自然日，跨日自然失效，不需要定时器。resetPlatformQuotasForTest 会一起清。
+const signedDayByChat = new Map();     // chatKey -> 'YYYY-MM-DD'
+const todoDayByChat = new Map();       // chatKey -> { day, mids:Set<string>, count }
+const TODO_PER_GROUP_PER_DAY = 3;
+
+/** 仅供测试：清空平台互动闸门与去重表。 */
 export function resetPlatformQuotasForTest() {
   reactionQuota.reset();
   profileQuota.reset();
   remarkQuota.reset();
   avatarQuota.reset();
+  albumWriteQuota.reset();
+  signedDayByChat.clear();
+  todoDayByChat.clear();
 }
 
 // 平台能力开关（控制台「平台能力」页）：映射表、默认取向、按群覆盖、配额上限都在
@@ -70,7 +84,8 @@ export function platformQuotaUsage(now = Date.now()) {
     reactions: pack(reactionQuota, 'reactionsPerHour'),
     profile: pack(profileQuota, 'profilePerDay'),
     remarks: pack(remarkQuota, 'remarksPerDay'),
-    avatars: pack(avatarQuota, 'avatarsPerWeek')
+    avatars: pack(avatarQuota, 'avatarsPerWeek'),
+    albumWrites: pack(albumWriteQuota, 'albumWritesPerHour')
   };
 }
 
@@ -904,7 +919,8 @@ export function buildToolDefs() {
     },
     {
       name: 'set_my_profile',
-      description: '改你自己的 QQ 资料：nickname＝QQ 昵称（好友列表与群里显示的名字，改完"@我"也认新名字）、personalNote＝个性说明（资料页那行小字）、sex＝性别（0 未知 / 1 男 / 2 女）。至少给一项；偶尔一次就好（与签名/在线状态共享每日额度）。',
+      description: '改你自己的 QQ 资料：nickname＝QQ 昵称、personalNote＝个性说明（资料页那行小字）、sex＝性别（0 未知 / 1 男 / 2 女）。至少给一项；偶尔一次就好（与签名/在线状态共享每日额度）。'
+        + '**两个副作用要知道**：① 群里显示的自称由管理端的人设设置决定，改 QQ 昵称不会改那边（人设里没设置过群内展示名时，才会跟着 QQ 昵称走）；② 改了昵称会让当天还没发布的「说说」草稿失效，需要重新生成。',
       parameters: {
         type: 'object',
         properties: {
@@ -937,7 +953,10 @@ export function buildToolDefs() {
           }
           // 改昵称后必须刷新登录信息：@我 判定、提示词里的名字、自己贴的表情回应去重都读它
           if (nickname) await ctx.onebot.refreshSelfInfo?.();
-          return ok({ nickname: nickname || undefined, personalNote, sex, note: '资料已改。' });
+          return ok({
+            nickname: nickname || undefined, personalNote, sex,
+            note: '资料已改。' + (nickname ? '（群里的自称以管理端人设里的"群内展示名"为准；当天还没发布的说说草稿会失效。）' : '')
+          });
         } catch (error) {
           return sendErr(error, {}, `改资料失败：${error?.message ?? error}`);
         }
@@ -999,12 +1018,19 @@ export function buildToolDefs() {
     },
     {
       name: 'group_sign',
-      description: '在群里签到打卡（一天一次就够；签到结果群里可见）。适合每天头一回进群时顺手点一下。',
+      description: '在群里签到打卡（**每个群每天只会真签一次**，重复调用会直接告诉你今天签过了；签到结果群里可见）。适合每天头一回进群时顺手点一下。',
       parameters: { type: 'object', properties: {} },
       async execute(ctx) {
         try {
           if (ctx.kind !== 'group') return err('签到只能在群聊里做');
+          // 每个群每天一次：重复签没有意义，而且这是对外写（2026-10-07 审计：此前既不走队列
+          // 也没有任何闸门）。跨日自然失效（上海自然日，与存档/日报同一口径）。
+          const day = todayKey();
+          if (signedDayByChat.get(ctx.chatKey) === day) {
+            return ok({ signed: false, note: '今天这个群已经签过了，不用再签。' });
+          }
           await ctx.onebot.call('set_group_sign', { group_id: Number(ctx.chatId) }, 15000, ctx.signal);
+          signedDayByChat.set(ctx.chatKey, day);
           return ok({ signed: true, note: '已签到。' });
         } catch (error) {
           return err(`签到失败：${error?.message ?? error}`);
@@ -1013,7 +1039,7 @@ export function buildToolDefs() {
     },
     {
       name: 'set_group_todo',
-      description: '把群里某条消息设成群待办（会显示在群聊输入框上方，所有人可见）。适合"今晚八点狼人杀"这类要让所有人记住的安排 —— 先 send_message 发出来，再把它设成待办。别滥用。',
+      description: '把群里某条消息设成群待办（会显示在群聊输入框上方，所有人可见）。适合"今晚八点狼人杀"这类要让所有人记住的安排 —— 先 send_message 发出来，再把它设成待办。**同一条消息只会设一次，每个群每天最多设几条**；别滥用。',
       parameters: {
         type: 'object',
         properties: { messageId: { type: ['integer', 'string'], description: '要设成待办的消息 id（聊天记录里的 #数字）' } },
@@ -1026,7 +1052,22 @@ export function buildToolDefs() {
           // 非数字 mid 会以 NaN 上wire（JSON 序列化成 null）：与 react_to_message 同口径先拦下
           // （2026-10-07 复审 P3）。
           if (!/^\d+$/.test(mid)) return err('messageId 要是消息 id（聊天记录里那条消息前的 #数字）');
+          // 两层兜底（2026-10-07 审计：此前既不走队列也没有任何闸门）：
+          // ① 同一条消息今天设过就不再调（重复设没有任何效果）；
+          // ② 每个群每天最多 TODO_PER_GROUP_PER_DAY 条，防一轮里连设不同消息刷屏。
+          const day = todayKey();
+          const rec = todoDayByChat.get(ctx.chatKey);
+          const today = rec && rec.day === day ? rec : { day, mids: new Set(), count: 0 };
+          if (today.mids.has(mid)) {
+            return ok({ todo: false, messageId: mid, note: '这条消息今天已经设过群待办了。' });
+          }
+          if (today.count >= TODO_PER_GROUP_PER_DAY) {
+            return err(`今天这个群的群待办已经设了 ${TODO_PER_GROUP_PER_DAY} 条，够多了，明天再说。`);
+          }
           await ctx.onebot.call('set_group_todo', { group_id: Number(ctx.chatId), message_id: Number(mid) }, 15000, ctx.signal);
+          today.mids.add(mid);
+          today.count += 1;
+          todoDayByChat.set(ctx.chatKey, today);
           return ok({ todo: true, messageId: mid, note: '已设成群待办。' });
         } catch (error) {
           return err(`设群待办失败：${error?.message ?? error}`);
@@ -1119,7 +1160,8 @@ export function buildToolDefs() {
     },
     {
       name: 'set_remark',
-      description: '给你 QQ 里的好友/群设备注（只有你自己看得到的那种，客户端里可见）。userId 填某人 QQ 号＝给这个人备注；不填＝给当前群备注。写短、有辨识度的称呼或梗（≤16 字），别乱改、别写奇怪东西（每天最多几次）。',
+      description: '给你 QQ 里的好友/群设备注（只有你自己看得到的那种，客户端里可见）。userId 填某人 QQ 号＝给这个人备注；不填＝给当前群备注。写短、有辨识度的称呼或梗（≤16 字），别乱改、别写奇怪东西（每天最多几次）。'
+        + '**注意：这不会改变你在聊天记录里看到的称呼** —— 那边显示的名字由管理端的成员备注维护（另一个系统），设完看不到变化是正常的，别为此重复设。',
       parameters: {
         type: 'object',
         properties: {
@@ -1151,7 +1193,11 @@ export function buildToolDefs() {
             remarkQuota.refund(ctx.chatKey, reservedAt);
             throw error;
           }
-          return ok({ remark, target: userId || ctx.chatId, note: '备注已设置。' });
+          return ok({
+            remark,
+            target: userId || ctx.chatId,
+            note: '备注已设置（改的是你 QQ 客户端里的备注；聊天记录里显示的称呼不会因此改变，别重复设）。'
+          });
         } catch (error) {
           return err(`设备注失败：${error?.message ?? error}`);
         }
@@ -1283,9 +1329,22 @@ export function buildToolDefs() {
           const batchId = String(args.batchId ?? '').trim();
           if (!albumId || !batchId) return err('albumId 和 batchId 都要给（用 list_group_album 查）');
           const lloc = String(args.lloc ?? '').trim();
-          await ctx.onebot.call('set_group_album_media_like', {
-            group_id: Number(ctx.chatId), album_id: albumId, batch_id: batchId, ...(lloc ? { lloc } : {})
-          }, 20000, ctx.signal);
+          // 与贴表情同档的轻互动闸门（事前原子消费 + 失败退还）：2026-10-07 审计发现
+          // 点赞/评论此前既不走发送队列也没有配额，模型一轮里连刷会全部落到 QQ。
+          const albumLimit = platformQuotaLimit(getConfig(), 'albumWritesPerHour');
+          albumWriteQuota.configure({ globalMax: albumLimit, perChatMax: Infinity });
+          const reservedAt = Date.now();
+          if (!albumWriteQuota.tryConsume(ctx.chatKey, reservedAt).ok) {
+            return err(`这一小时的相册互动够多了（上限 ${albumLimit} 次），过一会儿再点。`);
+          }
+          try {
+            await ctx.onebot.call('set_group_album_media_like', {
+              group_id: Number(ctx.chatId), album_id: albumId, batch_id: batchId, ...(lloc ? { lloc } : {})
+            }, 20000, ctx.signal);
+          } catch (error) {
+            albumWriteQuota.refund(ctx.chatKey, reservedAt);
+            throw error;
+          }
           return ok({ liked: true, note: '点赞成功。' });
         } catch (error) {
           return err(`相册点赞失败：${error?.message ?? error}`);
@@ -1311,9 +1370,21 @@ export function buildToolDefs() {
           const lloc = String(args.lloc ?? '').trim();
           const content = safeSlice(String(args.content ?? '').trim(), 40);
           if (!albumId || !lloc || !content) return err('albumId、lloc、content 都要给（lloc 用 list_group_album 查）');
-          await ctx.onebot.call('do_group_album_comment', {
-            group_id: Number(ctx.chatId), album_id: albumId, lloc, content
-          }, 20000, ctx.signal);
+          // 与点赞共用同一个闸门：评论是公开内容，比点赞更容易变成噪音（2026-10-07 审计）
+          const albumLimit = platformQuotaLimit(getConfig(), 'albumWritesPerHour');
+          albumWriteQuota.configure({ globalMax: albumLimit, perChatMax: Infinity });
+          const reservedAt = Date.now();
+          if (!albumWriteQuota.tryConsume(ctx.chatKey, reservedAt).ok) {
+            return err(`这一小时的相册互动够多了（上限 ${albumLimit} 次），过一会儿再评。`);
+          }
+          try {
+            await ctx.onebot.call('do_group_album_comment', {
+              group_id: Number(ctx.chatId), album_id: albumId, lloc, content
+            }, 20000, ctx.signal);
+          } catch (error) {
+            albumWriteQuota.refund(ctx.chatKey, reservedAt);
+            throw error;
+          }
           return ok({ commented: true, content, note: '评论已发。' });
         } catch (error) {
           return err(`相册评论失败：${error?.message ?? error}`);
@@ -1720,7 +1791,7 @@ export function buildToolDefs() {
     },
     {
       name: 'send_voice',
-      description: '把一段文字合成语音发到当前会话（想"说"而不是"打"时用）。只适合短句 1~3 句、≤120 字；**必须写成口语**：带语气词和标点（「哎——」「不是吧？」「……行吧行吧」），破折号/省略号/问号能带出停顿与起伏，书面句会念得很平、像播报。别整段朗读、别频繁用（平时打字更像真人）。',
+      description: '把一段文字合成语音发到当前会话（想"说"而不是"打"时用）。只适合短句 1~3 句（120 字以内最自然，硬上限 200 字）；**必须写成口语**：带语气词和标点（「哎——」「不是吧？」「……行吧行吧」），破折号/省略号/问号能带出停顿与起伏，书面句会念得很平、像播报。别整段朗读、别频繁用（平时打字更像真人）。',
       parameters: {
         type: 'object',
         properties: { text: { type: 'string', description: '要说的内容（≤200 字，口语短句）' } },
