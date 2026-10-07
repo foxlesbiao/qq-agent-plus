@@ -147,6 +147,8 @@ function renderPerGroupRows() {
   const gid = currentPerGroupId();
   const draft = perGroupDraft();
   const overrides = (gid && draft[gid]) || {};
+  // 注意：外层 map 返回的是数组 —— 必须 flat() 再 join，否则内层数组会被
+  // Array#join 用逗号连接，页面上每行之间多出一个孤零零的 ","（真机 2026-10-07 截图发现）。
   box.innerHTML = GATE_SECTIONS.map(([, rows]) => rows.map(([key, label]) => {
     // 三态：'' 跟随全局 / 'on' 本群开 / 'off' 本群关（草稿里存的是布尔值，这里换算成下拉值）
     const cur = overrides[key] === undefined ? '' : (overrides[key] ? 'on' : 'off');
@@ -158,7 +160,7 @@ function renderPerGroupRows() {
         ${sel('', '跟随全局')}${sel('on', '本群：开')}${sel('off', '本群：关')}
       </select>
     </div>`;
-  })).join('');
+  })).flat().join('');
   const n = Object.keys(overrides).length;
   const note = document.getElementById('pergroup-note');
   if (note) {

@@ -192,6 +192,9 @@ test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能�
     assert.ok(window.document.querySelector('#pergroup-group'), '按群覆盖要有"选择群"下拉');
     const perIds = [...window.document.querySelectorAll('[data-pergroup-key]')].map((el) => el.dataset.pergroupKey).sort();
     assert.deepEqual(perIds, [...PLATFORM_GATE_KEYS].sort(), '按群覆盖要覆盖全部门控键');
+    // 行之间不许有游离字符：外层 map 返回数组、忘了 flat() 的话 join 会塞进逗号（真机踩过）
+    const perText = window.document.querySelector('#pergroup-rows')?.textContent || '';
+    assert.ok(!perText.includes(','), `按群覆盖区出现了游离的逗号：${perText.slice(0, 60)}`);
 
     // ② 行为侧：改四个控件（门控复选框 / 音色 / 配额 / 按群覆盖），保存后都要在 POST 体里
     const writeBox = window.document.querySelector('#cfg-platform-reactionswrite');
