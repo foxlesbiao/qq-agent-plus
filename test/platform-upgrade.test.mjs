@@ -102,6 +102,11 @@ it('react_to_message：参数归一化、非数字编号被拒、每小时封顶
   const bad = await def.execute(ctx, { messageId: '123', emojiId: '微笑' });
   assert.equal(bad.isError, true, '编号必须是数字');
 
+  // 实测（SnowLuma 1.14.22）：QQ 私聊消息不支持表情回应 → 工具层直接说清楚
+  const priv = await def.execute({ kind: 'private', chatId: '2', chatKey: 'private:2' }, { messageId: '123', emojiId: '14' });
+  assert.equal(priv.isError, true);
+  assert.match(priv.content, /群聊/, '私聊要给出可执行的说明');
+
   for (let i = 0; i < 40; i += 1) await def.execute(ctx, { messageId: '123', emojiId: '14' });
   const rejected = await def.execute(ctx, { messageId: '123', emojiId: '14' });
   assert.match(rejected.content, /够多了/, '每小时封顶');

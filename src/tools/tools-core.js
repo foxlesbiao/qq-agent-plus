@@ -227,6 +227,20 @@ function midHint(ctx) {
     : '聊天记录里还没有带 #id 的消息';
 }
 
+// 群公告/群简介里带的是 HTML 片段（实测 &nbsp; 一堆）：换行/空白还原成可读文本。
+function cleanHtmlText(value) {
+  return String(value ?? '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&amp;/gi, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 // 从聊天记录里反查一个 QQ 号的最近昵称（表情回应用户列表等场景；查不到就回号码本身）。
 function recentNameOf(ctx, userId) {
   try {
@@ -661,7 +675,7 @@ export function buildToolDefs() {
     },
     {
       name: 'react_to_message',
-      description: '给一条消息贴 QQ「表情回应」（消息下方多一个表情，比回一句话更轻）。messageId 用聊天记录里那条消息前的 #数字；emojiId 用 QQ 系统表情编号（和 send_face 同一套：经典小黄脸 14=微笑、13=呲牙、179=抠鼻，新表情如 128077=👍、128514=😂、128064=👀）。'
+      description: '给**群聊**里一条消息贴 QQ「表情回应」（消息下方多一个表情，比回一句话更轻；私聊消息 QQ 不支持表情回应）。messageId 用聊天记录里那条消息前的 #数字；emojiId 用 QQ 系统表情编号（和 send_face 同一套：经典小黄脸 14=微笑、13=呲牙、179=抠鼻，新表情如 128077=👍、128514=😂、128064=👀）。'
         + '适合"看到/赞同/笑死/无语但不想开口"的时候；别人给你贴了表情可以回敬一个（聊天记录里会出现 [贴表情] 行）。set=false 撤回自己贴的。别每条都贴。',
       parameters: {
         type: 'object',
@@ -674,6 +688,9 @@ export function buildToolDefs() {
       },
       async execute(ctx, args) {
         try {
+          // QQ 实测：私聊消息不支持表情回应（协议端会回 retcode=100
+          // "emoji reactions are not supported on private messages"）——在工具层先说清楚。
+          if (ctx.kind !== 'group') return err('表情回应只能贴在群聊消息上（QQ 私聊不支持）。私聊里想表达态度就回一句话或发个表情。');
           const mid = normalizeMid(args.messageId);
           if (!mid) return err('messageId 不能为空，用聊天记录里那条消息前的 #数字');
           const emojiId = String(args.emojiId ?? '').trim();
@@ -706,7 +723,7 @@ export function buildToolDefs() {
     },
     {
       name: 'get_message_reactions',
-      description: '看一条消息被贴了哪些表情回应、都是谁贴的。适合确认"刚才那个表情是对我发的吗"、或想知道自己哪句话被点了什么。',
+      description: '看一条群聊消息被贴了哪些表情回应、都是谁贴的（私聊消息没有表情回应）。适合确认"刚才那个表情是对我发的吗"、或想知道自己哪句话被点了什么。',
       parameters: {
         type: 'object',
         properties: { messageId: { type: ['integer', 'string'], description: '消息 id（聊天记录里的 #数字）' } },
@@ -811,7 +828,8 @@ export function buildToolDefs() {
               out.detail = {
                 name: d.group_name ?? d.groupName ?? '',
                 remark: d.group_remark ?? '',
-                intro: d.group_desc ?? d.groupDesc ?? d.description ?? d.intro ?? d.memo ?? '',
+                // 实测（SnowLuma 1.14.22）：简介在 group_memo，描述在 group_description
+                intro: safeSlice(cleanHtmlText(d.group_memo ?? d.group_desc ?? d.group_description ?? d.description ?? d.intro ?? ''), 300),
                 memberCount: d.member_count ?? d.memberCount ?? null,
                 maxMembers: d.max_member_count ?? null
               };
@@ -823,7 +841,7 @@ export function buildToolDefs() {
               out.notices = (Array.isArray(notices) ? notices : []).slice(0, 3).map((n) => ({
                 time: n?.publish_time ?? n?.time ?? null,
                 forNewMembers: n?.send_to_new_members === true,
-                text: safeSlice(String(n?.message?.text ?? n?.text ?? n?.content ?? '').trim(), 500)
+                text: safeSlice(cleanHtmlText(n?.message?.text ?? n?.text ?? n?.content ?? ''), 500)
               })).filter((n) => n.text);
               if (!out.notices.length) out.notices = [];
             } catch (error) { failures.push(`群公告：${error?.message ?? error}`); }
