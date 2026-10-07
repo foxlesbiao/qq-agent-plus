@@ -456,7 +456,7 @@ export class QzoneInteractionManager {
     this.nextRunAt = this.now() + Math.max(1000, Number(delay) || 1000);
     this.timer = setTimeout(() => {
       withTrace(newTraceId(), () => this.#tick()).catch((error) => {
-        this.log('[qzone-interactions] scheduler error:', error?.message ?? error);
+        this.log('[qzone-interactions] scheduler error:', error);
         // 这一轮炸了也要把下一次排上：否则 enabled:true 但永远不再跑，只有重启能恢复
         try { this.#schedule(60000); } catch { /* 已停用 */ }
       });
@@ -526,7 +526,8 @@ export class QzoneInteractionManager {
     const streak = Math.min(6, (Number(this.state.failStreak) || 0) + 1);
     this.state.failStreak = streak;
     this.#save();
-    if (streak === FAILURE_NOTIFY_STREAK) this.log('[qzone-interactions] run failed:', message);
+    // 传 Error 实例而不是字符串：moduleLog 只对带 Error 的调用进异常面板（2026-10-07 复审）
+    if (streak === FAILURE_NOTIFY_STREAK) this.log('[qzone-interactions] run failed:', new Error(String(message)));
     else console.log(`[qzone-interactions] run failed（连续 ${streak} 次，退避重试中）:`, message);
   }
 

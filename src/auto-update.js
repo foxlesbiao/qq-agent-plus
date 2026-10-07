@@ -333,6 +333,9 @@ export class AutoUpdateManager {
       },
       ...(adminPatch ? { admin: adminPatch } : {})
     });
+    // 显式恢复更新：清掉失败自停标记，否则更新器仍按 autoDisabled 跳过
+    //（2026-10-07 复审：与 scripts/auto-update.mjs 的 autoDisabled 判定配套）。
+    try { writeAutoUpdateState(this.dataDir, { autoDisabled: false }); } catch { /* 状态文件写不进去不影响恢复 */ }
     // 更新正在跑时不要把它写成 idle：那会清掉"已提交未跑完"的抑制与 busy 判据，
     // 让控制台一边显示在跑、一边又能再点一次（直接调接口才会遇到，2026-09-22 审查发现）
     if (!this.serviceActive() && !autoUpdatePending(this.dataDir)) {

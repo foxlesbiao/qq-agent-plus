@@ -17,6 +17,11 @@
 
 ### 控制台 `?token=` 在所有已认证路由被接受（已知搁置项，2026-09-24 评估）
 
+**已修复（2026-10-06，见 v0.7.8 后的复审批次）**：`authorize()` 已把查询串令牌收窄到
+`/api/events`（EventSource 不能自定义请求头，是唯一有正当理由的消费方）；其余路由只认
+cookie 与 `x-console-token` 头，`src/ops.js` 的两处调用方也已改为传请求头。
+下面保留当初的评估记录备查。
+
 `docs/LINUX.md` 写的是"`?token=` 只有自动登录捷径接受"，实际 `authorize()` 对**所有** /api/*
 路由都接受查询串令牌（与 cookie、`x-console-token` 并列的第三条通道）。要收窄就得改
 `authorize()` 本身——它同时服务 SSH 隧道、免密登录与 cookie 三条路径，回归风险高，单独排期。

@@ -735,9 +735,12 @@ async function run() {
   cfg = readObject(configFile);
   const settings = cfg.autoUpdate || {};
   networkSettings = normalizeUpdateNetworkSettings(settings);
-  if (mode === 'scheduled' && settings.enabled !== true) return;
-
   const previous = readAutoUpdateState(dataDir);
+  // disableOnFailure 落下 enabled:false 后，控制台的任何一次保存都可能把主进程内存里的旧配置
+  // （enabled:true）写回文件、把自停悄悄抹掉 —— 升级自停还得认数据目录里的 autoDisabled，
+  // 它只由更新器自己与被显式 resume 的控制台接口读写（2026-10-07 复审 P2）。
+  if (mode === 'scheduled' && (settings.enabled !== true || previous.autoDisabled === true)) return;
+
   const now = Date.now();
   const intervalMs = Math.max(1, Number(settings.intervalHours) || 6) * 60 * 60 * 1000;
   if (
@@ -979,27 +982,42 @@ async function run() {
     targetVersion,
     transport
   });
-  command('/bin/bash', [
-    path.join(workDir, 'deploy.sh'),
-    '--install-dir', appDir,
-    '--data-dir', dataDir,
-    '--host', String(cfg.server?.host || '127.0.0.1'),
-    '--port', String(Number(cfg.server?.port) || 3210),
-    '--service', service,
-    '--node', process.execPath,
-    // 期望的来源仓库/分支透传给部署侧：与安装记录比对，堵"在错误源码树里跑 deploy.sh"
-    '--repository', repository,
-    '--branch', branch
-  ], {
-    cwd: workDir,
-    timeout: 20 * 60 * 1000,
-    env: {
-      ...runtimeEnv,
-      QQ_AGENT_SOURCE_REVISION: targetRevision,
-      QQ_AGENT_REPOSITORY: repository,
-      QQ_AGENT_BRANCH: branch
+  try {
+    command('/bin/bash', [
+      path.join(workDir, 'deploy.sh'),
+      '--install-dir', appDir,
+      '--data-dir', dataDir,
+      '--host', String(cfg.server?.host || '127.0.0.1'),
+      '--port', String(Number(cfg.server?.port) || 3210),
+      '--service', service,
+      '--node', process.execPath,
+      // 期望的来源仓库/分支透传给部署侧：与安装记录比对，堵"在错误源码树里跑 deploy.sh"。
+      // 自动更新发起的部署里，控制台设置就是真相源 —— 校验侧对"更新器驱动"的不一致按警告
+      // 处理（见 verify-deployment-target.mjs），否则改过分支的实例会永久卡死在拒绝部署上。
+      '--repository', repository,
+      '--branch', branch
+    ], {
+      cwd: workDir,
+      timeout: 20 * 60 * 1000,
+      env: {
+        ...runtimeEnv,
+        QQ_AGENT_SOURCE_REVISION: targetRevision,
+        QQ_AGENT_REPOSITORY: repository,
+        QQ_AGENT_BRANCH: branch
+      }
+    });
+  } catch (error) {
+    const output = `${error?.stdout || ''}${error?.stderr || ''}`;
+    if (/Another deployment is running|Another deployment is taking over a stale lock/.test(output)) {
+      // 有人（多为手动部署）正持锁：这是正常碰撞，不是失败 —— 按 busy 结清
+      //（不自停、不发告警，等下个周期再来）。此前会误判成部署失败并触发 disableOnFailure
+      // + 给管理员发告警（2026-10-07 复审 P3）。
+      const busy = new Error('另一个部署正在进行，本轮更新跳过（不算失败）');
+      busy.code = 'UPDATE_BUSY';
+      throw busy;
     }
-  });
+    throw error;
+  }
 
   writeAutoUpdateState(dataDir, {
     status: 'succeeded',

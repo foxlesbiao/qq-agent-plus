@@ -326,33 +326,62 @@ export class SessionRegistry {
     if (!(Number(s.usage?.totalTokens) > 0) && !(s.sent?.length > 0)) return;
     // 按"结束时刻"归属。用 startedAt 的话，跨零点的会话会把它的数字按开始那天算，发现文件
     // 是另一天就把新一天已累计的量重置成 0；之后当天的会话又因 dayKey 不匹配一直少算。
+    this.#mergeTodayUsage({
+      promptTokens: Number(s.usage?.promptTokens) || 0,
+      completionTokens: Number(s.usage?.completionTokens) || 0,
+      totalTokens: Number(s.usage?.totalTokens) || 0,
+      cachedTokens: Number(s.usage?.cachedTokens) || 0,
+      runs: 1,
+      webSearchCount: Number(s.webSearchCount) || 0
+    }, { model: s.model, vendor: s.vendor });
+  }
+
+  /**
+   * 非会话类模型调用（记忆整理、群日报等）计入今日台账：这些调用照样花钱，此前完全没有账
+   * —— 控制台"今日花费"与预算判定都偏乐观（2026-10-07 复审 P3）。
+   * 与 #bumpTodayUsage 共用同一份文件与估价口径，但不计 runs（不是一次会话运行）。
+   */
+  recordExternalUsage(usage, { model = '', vendor = '' } = {}) {
+    const totalTokens = Number(usage?.totalTokens) || 0;
+    if (!(totalTokens > 0)) return;
+    this.#mergeTodayUsage({
+      promptTokens: Number(usage.promptTokens) || 0,
+      completionTokens: Number(usage.completionTokens) || 0,
+      totalTokens,
+      cachedTokens: Number(usage.cachedTokens) || 0,
+      runs: 0,
+      webSearchCount: 0
+    }, { model, vendor });
+  }
+
+  /** 把一份用量增量并进 usage-today.json（读盘合并 → 估算金额 → 原子落盘）。 */
+  #mergeTodayUsage(delta, { model = '', vendor = '' } = {}) {
     const dayKey = todayKey(Date.now());
     let data = { dayKey, promptTokens: 0, completionTokens: 0, totalTokens: 0, cachedTokens: 0, runs: 0, webSearchCount: 0 };
     try {
       const parsed = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'usage-today.json'), 'utf8'));
       if (parsed?.dayKey === dayKey) data = parsed;
     } catch { /* 新的一天 */ }
-    data.promptTokens += s.usage.promptTokens;
-    data.completionTokens += s.usage.completionTokens;
-    data.totalTokens += s.usage.totalTokens;
-    data.cachedTokens = (data.cachedTokens || 0) + (Number(s.usage.cachedTokens) || 0);
-    data.runs += 1;
-    data.webSearchCount = (data.webSearchCount || 0) + (Number(s.webSearchCount) || 0);
-    // 估算金额（改进方案 #8/J.3）：按会话实际模型估价；价格缺失记 0 并计 unpricedRuns
+    data.promptTokens += delta.promptTokens;
+    data.completionTokens += delta.completionTokens;
+    data.totalTokens += delta.totalTokens;
+    data.cachedTokens = (data.cachedTokens || 0) + delta.cachedTokens;
+    data.runs += delta.runs;
+    data.webSearchCount = (data.webSearchCount || 0) + delta.webSearchCount;
+    // 估算金额（改进方案 #8/J.3）：按实际模型估价；价格缺失记 0 并计 unpricedRuns
     // —— budgetStatus 会把它暴露给控制台，防"没价＝永远不超限"的静默失效。
     try {
       const cfgNow = getConfig();
-      const est = estimateCost({ ...s.usage }, {
-        model: s.model || cfgNow.api?.model,
+      const est = estimateCost({ ...delta }, {
+        model: model || cfgNow.api?.model,
         at: Date.now(),
-        // 会话自己记录过 vendor（兜底模型接管后记实际渠道）就优先用它；
+        // 调用方记录过 vendor（兜底模型接管后记实际渠道）就优先用它；
         // 拿当前配置倒推历史是错的（vendorOfConfig 注释同款约定）。
-        vendor: s.vendor || vendorOfConfig(cfgNow)
+        vendor: vendor || vendorOfConfig(cfgNow)
       });
       const cost = Number(est?.cost) || 0;
       data.estimatedYuan = (Number(data.estimatedYuan) || 0) + cost;
-      const hadUsage = (Number(s.usage.totalTokens) || 0) > 0;
-      if (hadUsage && !(cost > 0)) data.unpricedRuns = (Number(data.unpricedRuns) || 0) + 1;
+      if (delta.totalTokens > 0 && !(cost > 0)) data.unpricedRuns = (Number(data.unpricedRuns) || 0) + 1;
     } catch { /* 估价失败不影响用量累加（最坏情况＝这项当天少算） */ }
     const tmp = path.join(DATA_DIR, 'usage-today.json.tmp');
     try { fs.rmSync(tmp, { force: true }); } catch { /* 不存在就算了 */ }

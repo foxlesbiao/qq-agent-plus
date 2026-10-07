@@ -168,9 +168,13 @@ test('P2-8（行为）：缺 id 的原生 tool_calls 会被补齐，下一轮 as
   store.appendIncoming('group:1', { mid: 51, text: '麻烦看下', senderId: '42', senderName: 'm42' });
   await runner.wake('group:1');
   assert.ok(bodies.length >= 2, `前提：第二轮请求发生了（实际 ${bodies.length} 轮）`);
-  const assistant = (bodies[1].messages || [])
+  // 按"哪一轮带着 tool 结果"定位，不写死 bodies[1]：上游多出一次合法请求轮次（如多一轮
+  // 规划）时下标会假红（2026-10-07 复核）。
+  const roundWithTools = bodies.find((b) => (b.messages || []).some((m) => m.role === 'tool'));
+  assert.ok(roundWithTools, '前提：存在带 tool 结果消息的请求轮次');
+  const assistant = (roundWithTools.messages || [])
     .filter((m) => m.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length).pop();
-  const toolMsg = (bodies[1].messages || []).filter((m) => m.role === 'tool').pop();
+  const toolMsg = (roundWithTools.messages || []).filter((m) => m.role === 'tool').pop();
   assert.ok(assistant, '第二轮请求要带上 assistant.tool_calls');
   assert.ok(assistant.tool_calls[0].id, 'tool_calls[0].id 必须已归一化补齐（缺 id 时多数端点整请求 400）');
   assert.ok(toolMsg, '第二轮请求要带上 tool 结果消息');

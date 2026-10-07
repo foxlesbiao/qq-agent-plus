@@ -71,7 +71,7 @@ WorkingDirectory=${root}
 Environment=${quote(`QQ_AGENT_DATA_DIR=${data}`)}
 Environment=NODE_ENV=production
 ExecStart=${quote(node)} ${quote(path.join(root, 'scripts/auto-update.mjs'))} --app-dir ${quote(root)} --data-dir ${quote(data)} --service ${quote(service)}
-TimeoutStartSec=75min
+TimeoutStartSec=240min
 TimeoutStopSec=10min
 UMask=0077
 NoNewPrivileges=true

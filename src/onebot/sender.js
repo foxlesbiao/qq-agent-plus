@@ -27,7 +27,13 @@ export function classifyTransportFailure(error) {
   const message = String(error?.message ?? error);
   const causeText = String(error?.cause?.code || error?.cause?.message || '');
   const evidence = causeText || message;
-  const definite = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH/i.test(evidence);
+  // WS 帧级证据也是"确定未投递"：ws 的 send 回调报错（readyState 非 OPEN → 帧没写进 socket，
+  // 文案 "WebSocket is not open: readyState …"）与发送途中连接被关（帧没写完/压缩中被打断 ——
+  // 接收端只拿到残帧会被整帧丢弃；ws 8.x 的真实文案是 "The socket was closed while data was
+  // being compressed" / "…blob was being read"）都意味着对方不可能收到完整帧。加进来之前
+  // 这些错误既不匹配 definite 也不匹配 uncertain，结果"确定没送达"的消息既不重试、
+  // 还落 unknown 挂人工核对（2026-10-07 复审）。
+  const definite = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EHOSTUNREACH|ENETUNREACH|WebSocket is not open|WS 发送失败|socket was closed while data was being (compressed|read)/i.test(evidence);
   const uncertain = !definite
     && /timeout|timed out|ETIMEDOUT|ECONNRESET|EPIPE|socket hang up|fetch failed|network|HTTP 5\d\d|Unexpected status code: 5\d\d/i.test(evidence);
   return { evidence, definite, uncertain };

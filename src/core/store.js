@@ -96,6 +96,9 @@ export class ChatStore {
         expires_at INTEGER NOT NULL, error TEXT
       );
       CREATE UNIQUE INDEX IF NOT EXISTS one_lease_per_chat ON runs(chat_key) WHERE state='leased';
+      -- 5 秒一次的 recoverExpired 全表扫（state='leased' AND expires_at<=?）：没有这个索引
+      -- 时随 runs 行数线性变慢，而 runs 是全仓唯一没有回收纪律的账本（2026-10-07 复审）。
+      CREATE INDEX IF NOT EXISTS runs_leased_expiry ON runs(state, expires_at);
       CREATE TABLE IF NOT EXISTS outbox (
         id TEXT PRIMARY KEY, run_id TEXT, chat_key TEXT NOT NULL,
         state TEXT NOT NULL, payload TEXT NOT NULL, message_id TEXT, error TEXT
@@ -146,6 +149,13 @@ export class ChatStore {
     ensureColumn(this.db, 'messages', 'mentions_self', 'INTEGER NOT NULL DEFAULT 0');
     ensureColumn(this.db, 'messages', 'target_user_id', "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, 'messages', 'event_kind', "TEXT NOT NULL DEFAULT 'message'");
+    // runs 是全仓唯一没有回收纪律的账本（每次带租约的运行 +1，常驻不删，5 秒全表扫）：
+    // 进程启动时清掉终态且早已过期的行。expires_at 记的是"租约到期时刻"，用它当近似创建时间，
+    // 90 天前的终态行已无诊断价值（2026-10-07 复审 P3）。
+    try {
+      this.db.prepare("DELETE FROM runs WHERE state != 'leased' AND expires_at <= ?")
+        .run(Date.now() - 90 * 24 * 3600 * 1000);
+    } catch { /* 清理失败不影响启动 */ }
     this.#importJson(dataDir);
   }
 

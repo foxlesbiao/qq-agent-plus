@@ -511,10 +511,13 @@ export function createApp({
   let autoUpdate = null;
   const moduleLog = (source) => (...args) => {
     log(...args);
+    // 只有调用方显式传了 Error 实例才进异常面板。此前对纯文本日志合成 Error 并记成
+    // severity:'error' —— "已排程/报名/满员/跳过"这类信息性日志全部变成管理员告警，
+    // 群日报/群游戏一开就是持续告警风暴（2026-10-07 复审 P2）。各模块记录真实异常时
+    // 必须把 catch 到的 Error 传进来，别只拼 message。
     const supplied = args.find((value) => value instanceof Error);
-    const error = supplied || new Error(args.map((value) =>
-      typeof value === 'string' ? value : JSON.stringify(value)).join(' '));
-    incidentPilot?.capture(error, {
+    if (!supplied) return;
+    incidentPilot?.capture(supplied, {
       source,
       category: 'module',
       severity: 'error'
@@ -599,6 +602,7 @@ export function createApp({
   const groupDigest = new GroupDigestManager({
     store,
     sender,
+    sessions,
     log: moduleLog('group-digest')
   });
   function createIncidentPilot() {
@@ -1396,6 +1400,10 @@ export function createApp({
   function isLoopbackRemote(req) {
     let remote = String(req.socket?.remoteAddress || '');
     if (!remote) return false;
+    // 同机反向代理（如 BT 面板的 nginx 部署形态）对端也是 127.0.0.1，"仅本机"前提不成立。
+    // 只要出现转发头就说明请求不是从本机直连来的，无令牌模式一律 fail-closed（要求令牌）。
+    // SSH 隧道（console-tunnel / ops console）不注入这些头，免密体验不受影响（2026-10-07 复审）。
+    if (req.headers?.['x-forwarded-for'] || req.headers?.['x-real-ip'] || req.headers?.forwarded) return false;
     if (remote.startsWith('::ffff:')) remote = remote.slice('::ffff:'.length);   // IPv4-mapped
     return remote === '::1' || remote.startsWith('127.');
   }
@@ -2444,6 +2452,10 @@ export function createApp({
   });
   router.add('POST', '/api/asr/uninstall', async (req, res) => {
     if (!keyEndpointAllowed(req)) return json(res, 403, { error: '请求来源不被信任，已拒绝。' });
+    // 与全站其它破坏性端点同一口径：必须显式 confirm —— 这是不可逆删除（约 500MB 模型与构建产物），
+    // 之前唯一的防线是前端对话框，body 可为空的直接请求会把它们全删掉（2026-10-07 复审 P3）。
+    const body = await readBody(req);
+    if (body?.confirm !== true) return json(res, 409, { error: '删除本机转写需要显式确认' });
     if (asrInstall.running) return json(res, 409, { error: '安装还在进行中，等它跑完再删' });
     try {
       const removed = removeLocalAsrFiles();
@@ -4266,6 +4278,10 @@ export function createApp({
     dailyMoments.stop();
     dailyMoments.abort();
     qzoneInteractions.stop();
+    // 群游戏/群日报的定时器也要停：store.close() 之后它们还在 tick 会撞已关闭的 sqlite，
+    // 且群游戏 tick 会把 games.json 再写一遍（2026-10-07 复审 P3）。
+    groupGame.stopLoop();
+    groupDigest.stop();
     await qzoneInteractions.abort();
     autoUpdate.stop();
     identityPilot?.stop();

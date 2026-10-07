@@ -184,8 +184,8 @@ function afterSent(run) {
   }
 }
 
-function sendErr(error, metadata = {}) {
-  return err(error?.message ?? error, {
+function sendErr(error, metadata = {}, messageOverride) {
+  return err(messageOverride ?? (error?.message ?? error), {
     incidentCaptured: error?.incidentCaptured === true,
     ...(error?.code === 'GROUP_MUTED' ? { reportIncident: false } : {}),
     ...metadata
@@ -359,7 +359,12 @@ export function buildToolDefs() {
             ctx.emit('session-update', ctx.session.id);
           });
           const note = ['已发送。不要输出"已发送"类汇报，继续思考下一步或直接结束。'];
-          if (result.failed.length) note.push(`（另有 ${result.failed.length} 条发送失败：${result.failed.map((f) => f.error).join('；')}——成功的不需要重发，失败的请稍后再试或减少条数）`);
+          if (result.failed.length) {
+            // 带上序号和原文（sender 已提供）：否则模型只知道"有几条失败"，
+            // 最省事的做法就是整批重发，群里就多出重复的成功段（2026-10-07 复审）。
+            const detail = result.failed.map((f) => `第${Number(f.index) + 1}条「${String(f.text ?? '').slice(0, 15)}」：${f.error}`).join('；');
+            note.push(`（另有 ${result.failed.length} 条发送失败：${detail}——已成功的不需要重发，只补发失败的那几条或减少条数）`);
+          }
           return ok({ sent: result.sent.length, messageIds: result.sent.map((s) => s.messageId), note: note.join('') });
         } catch (error) {
           return sendErr(error);
@@ -527,7 +532,11 @@ export function buildToolDefs() {
           // collected_#123，而刷新逻辑只认 collected_123，收藏的表情链接就永远不刷新。
           const saved = await ctx.stickers.collect(normalizeMid(args.messageId), {
             url: imageMedia.url,
-            note: String(verdict?.note || args.note || '')
+            note: String(verdict?.note || args.note || ''),
+            // chatKey 必传：collect 的每会话限频桶以它做键，漏传会全部落进 '' 桶 ——
+            // 单会话额度变成跨会话共享，且与上面 collectPeek(chatKey) 的预检读的不是同一个计数器
+            //（2026-10-07 复审 P2）。
+            chatKey: ctx.chatKey
           });
           return ok({
             collected: true,
@@ -694,7 +703,9 @@ export function buildToolDefs() {
           }
           return ok({ card, note: '群名片已修改。' });
         } catch (error) {
-          return err(`改群名片失败：${error?.message ?? error}`);
+          // 与 send_message/send_sticker 同一收口：禁言（GROUP_MUTED）不记异常、
+          // sender 已捕获过的事故不记两遍（2026-10-07 复审）。
+          return sendErr(error, {}, `改群名片失败：${error?.message ?? error}`);
         }
       }
     },
@@ -985,7 +996,7 @@ export function buildToolDefs() {
           }, { runId: ctx.session?.leaseId, signal: ctx.signal });
           return ok({ sent: true, seconds, note: '语音已发出；不需要再回复这条结果。' });
         } catch (error) {
-          return err(`语音发送失败：${String(error?.message ?? error).slice(0, 120)}（若协议端不支持 record 段，请改用 send_message）`);
+          return sendErr(error, {}, `${String(error?.message ?? error).slice(0, 120)}（若协议端不支持 record 段，请改用 send_message）`);
         }
       }
     },

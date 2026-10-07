@@ -87,8 +87,28 @@ export class StickerManager {
     if (!force && this.syncedAt && now - this.syncedAt < ttl) {
       return { entries: this.entries, fromCache: true };
     }
-    if (this.syncing) return this.syncing;
-    this.syncing = (async () => {
+    if (this.syncing) {
+      if (!force) return this.syncing;
+      // 强同步不能被在途的普通同步吞掉：调用方（QQ 收藏自动收藏路径）刚加完收藏就
+      // force 同步，要的是"这份结果包含刚加的那条"；复用加收藏之前发起的在途请求，
+      // 新 emoji 不在 entries 里 → 随后的 peek 落空、备注永久丢失（2026-10-07 复审）。
+      // 等它 settle（成败都算）再实实在在地拉一次，并接管 this.syncing 的所有权，
+      // 免得旧请求收尾时把链尾清掉。
+      const inflight = this.syncing;
+      const chained = inflight.catch(() => {}).then(() => this.#runSync());
+      this.syncing = chained;
+      chained.then(() => { if (this.syncing === chained) this.syncing = null; }, () => { if (this.syncing === chained) this.syncing = null; });
+      return chained;
+    }
+    const run = this.#runSync();
+    this.syncing = run;
+    // 只有还归自己所有时才清：链式强同步会把 this.syncing 换成新链尾。
+    run.then(() => { if (this.syncing === run) this.syncing = null; }, () => { if (this.syncing === run) this.syncing = null; });
+    return run;
+  }
+
+  #runSync() {
+    return (async () => {
       try {
         // 同步窗口固定按上限拉，**不能**挂在 sticker.promptMaxStickers 上 ——
         // 那个设置只决定"系统提示里常驻几条"，改小它会让同步只拉到一小截，
@@ -105,11 +125,8 @@ export class StickerManager {
       } catch (error) {
         // 同步失败不致命：本地缓存继续用
         return { entries: this.entries, fromCache: true, error: String(error?.message ?? error) };
-      } finally {
-        this.syncing = null;
       }
     })();
-    return this.syncing;
   }
 
   async list(query = '', limit = 48, force = false) {

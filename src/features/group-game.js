@@ -648,7 +648,7 @@ export class GroupGameManager {
           this.#save();
         }
       } catch (error) {
-        this.log(`[group-game] ${chatKey} 推进出错（跳过这一轮）:`, error?.message ?? error);
+        this.log(`[group-game] ${chatKey} 推进出错（跳过这一轮）:`, error);
       }
     }
   }
@@ -711,7 +711,7 @@ export class GroupGameManager {
         }
       } catch (error) {
         if (effect.type === 'private') privateFailed += 1;
-        this.log('[group-game] 效果发送失败:', error?.message ?? error);
+        this.log('[group-game] 效果发送失败:', error);
       }
     }
     return { privateFailed, privateOk, privatePeople: privateUsers.size };

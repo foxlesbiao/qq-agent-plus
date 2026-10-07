@@ -679,7 +679,7 @@ function bindSettingsSaveAndSections() {
       uninstallBtn.disabled = true;
       if (box) { box.style.display = ''; box.textContent = '正在删除…'; }
       try {
-        const res = await api('/api/asr/uninstall', { method: 'POST' });
+        const res = await api('/api/asr/uninstall', { method: 'POST', body: JSON.stringify({ confirm: true }) });
         const mb = res?.freedBytes ? `，释放 ${(res.freedBytes / 1048576).toFixed(0)}MB` : '';
         const kept = (res?.keptOutside || []).length
           ? `<br><span class="muted">这些不在托管目录里，没有删除：${esc((res.keptOutside || []).join(' / '))}</span>`

@@ -38,7 +38,8 @@ const MEDIA_TIMEOUT_MS = 60000;
 // 硬上限：超过后服务端在 100-Continue 之后直接掐断连接（bot 侧表现为 undici
 // "fetch failed"，真因 cause 是连接被重置）—— 生成贴纸发送是整张图的 base64，很容易
 // 压线，这就是 Issue #21 "图发不出去、时好时坏" 的根因。超过阈值的请求自动改走
-// WebSocket 通道（同版本实测 3MB 无恙），其余流量保持原 HTTP 路线不动。
+// WebSocket 通道（生产实测 1–14MB 帧全部正常应答，而贴纸链路的理论最大值
+// ≈10.7MiB = 8MiB 原始图 × 4/3，在实测范围内且留有余量），其余流量保持原 HTTP 路线不动。
 const HTTP_BODY_SAFE_MAX = 1536 * 1024;
 
 export class OneBotActionError extends Error {
@@ -106,6 +107,15 @@ export class OneBotClient {
 
   async connect() {
     this.#closedByUs = false;
+    // 重入不许留下孤儿连接：第二次 connect（或 close 后重连定时器尚在时手动 connect）
+    // 会把 this.socket 换成新 socket，旧 socket 的迟到事件全被 isCurrent 拦掉 ——
+    // 它没有心跳、不会重连、也永远不会被 terminate，一直连着协议端静默丢事件。
+    const old = this.socket;
+    if (old) {
+      this.socket = null;
+      try { old.terminate(); } catch { /* ignore */ }
+    }
+    clearTimeout(this.reconnectTimer);
     this.#connectLoop();
   }
 
@@ -118,9 +128,23 @@ export class OneBotClient {
     clearTimeout(this.reconnectTimer);
     clearInterval(this.heartbeatTimer);
     this.#closedByUs = false;
+    // 连接态必须同步作废：新 socket 还在 CONNECTING 的握手窗口里 this.connected 若仍为 true，
+    // callViaWs 会把大请求交给一个非 OPEN 的 socket —— ws 对 CONNECTING 是同步 throw，
+    // 抛出去的是无 outcome 的裸 Error，会被记账成 unknown/critical 人工核对，
+    // 而这一帧其实确定没发出去。顺手清掉上一轮的 ping 归因残留，避免误标"对端不吃 ping"。
+    this.#setStatus(false);
+    this.lastPingAt = 0;
+    this.pongsSeen = 0;
+    this.selfPingKill = false;
     try { old?.terminate(); } catch { /* ignore */ }
     this.#failAllWsPending('OneBot WebSocket 正在重连');
     this.#connectLoop();
+  }
+
+  /** lastConnectError 出口（控制台状态页/ops 巡检）不许携带 accessToken（退化 URL 报错会把原样 URL 带出来）。 */
+  #redactToken(text) {
+    const raw = String(text ?? '');
+    return this.accessToken ? raw.split(this.accessToken).join('***') : raw;
   }
 
   #connectLoop() {
@@ -134,7 +158,7 @@ export class OneBotClient {
         handshakeTimeout: 15000
       });
     } catch (error) {
-      this.lastConnectError = String(error?.message ?? error);
+      this.lastConnectError = this.#redactToken(error?.message ?? error);
       this.#setStatus(false);
       this.#scheduleReconnect();
       return;
@@ -148,6 +172,9 @@ export class OneBotClient {
       if (!isCurrent(socket)) return;
       this.lastConnectError = '';
       this.reconnectAttempt = 0;
+      // 已排的重连定时器必须作废：否则它稍后触发会再建一个连接并把它设为当前，
+      // 把这条刚连上、带着心跳的 socket 变成没人认领的孤儿。
+      clearTimeout(this.reconnectTimer);
       this.#startHeartbeat(socket);
       this.#setStatus(true);
       // 2026-10-06 复审 P2：selfInfo 全仓库只有这一处赋值，首连恰好失败一次（NapCat 重启
@@ -195,9 +222,14 @@ export class OneBotClient {
       this.#failAllWsPending('OneBot WebSocket 连接已断开');
       const wasConnected = this.connected;
       const reason = String(reasonBuffer || '').trim();
-      const killedByPing = this.lastPingAt > 0
-        && Date.now() - this.lastPingAt <= PING_KILL_WINDOW_MS
-        && this.pongsSeen === 0;
+      // selfPingKill：上一拍 ping 后 30 秒没等到 pong，我们自己掐的（见 #startHeartbeat）。
+      // 它同样要计入"对端不吃 ping"的归因 —— 否则"从不回 pong 也不主动断"的实现
+      // 会被我们每 60 秒自杀一次、日志里却看不出任何原因。
+      const killedByPing = this.selfPingKill === true
+        || (this.lastPingAt > 0
+          && Date.now() - this.lastPingAt <= PING_KILL_WINDOW_MS
+          && this.pongsSeen === 0);
+      this.selfPingKill = false;
       if (killedByPing && this.heartbeatMode === 'auto' && !this.pingUnsupported) {
         this.pingUnsupported = true;
         console.warn('[onebot] 对端在收到 WebSocket PING 后立即断开（NapCat 已知行为，见 Issue #22）：'
@@ -213,7 +245,7 @@ export class OneBotClient {
     });
     socket.on('error', (error) => {
       if (!isCurrent(socket)) return;
-      this.lastConnectError = String(error?.message ?? error);
+      this.lastConnectError = this.#redactToken(error?.message ?? error);
       if (!this.everConnected) {
         // 首连失败退避得久一点，避免刷屏
         this.#setStatus(false);
@@ -240,7 +272,15 @@ export class OneBotClient {
     clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = setInterval(() => {
       if (!isCurrent(socket)) return;
-      if (!alive) { socket.terminate(); return; }
+      if (!alive) {
+        // 30 秒没等到 pong：半开连接，或对端从不回 pong。留一行日志再掐 ——
+        // 归因（pingUnsupported）交给 close 处理器用 selfPingKill 判定，
+        // 否则这条路径既没日志也学不到"不吃 ping"，只会每 60 秒无声地自掐重连。
+        console.warn('[onebot] 心跳 30 秒未收到 PONG，掐掉连接重连（对端可能不响应 ping）');
+        this.selfPingKill = true;
+        socket.terminate();
+        return;
+      }
       alive = false;
       this.lastPingAt = Date.now();
       socket.ping();
@@ -275,7 +315,11 @@ export class OneBotClient {
     // 新版协议端可能已放宽上限，保持今天的网络行为，比直接拒绝好。
     const bodyJson = JSON.stringify(params);
     if (Buffer.byteLength(bodyJson) > HTTP_BODY_SAFE_MAX) {
-      if (this.connected && this.socket) return this.callViaWs(action, params, timeoutMs, signal);
+      // readyState 门禁：只有真正 OPEN 的 socket 才配接大请求 —— CONNECTING 时 ws 的
+      // send() 是同步 throw（裸 Error、无 outcome），CLOSING/CLOSED 才走回调报错。
+      if (this.connected && this.socket?.readyState === WebSocket.OPEN) {
+        return this.callViaWs(action, params, timeoutMs, signal);
+      }
       console.warn(`[onebot] ${action} 请求体 ${Math.round(Buffer.byteLength(bodyJson) / 10485.76) / 100}MB 超过 HTTP 安全阈值且 WS 未连接，仍走 HTTP（可能被协议端掐断）`);
     }
     const res = await fetch(`${this.httpUrl}/${action}`, {
@@ -376,16 +420,19 @@ export class OneBotClient {
   /**
    * 与 call() 同语义的 WebSocket 调用通道。专门给超大请求体用：HTTP 端点有 body 上限
    * （SnowLuma 1.14.15 实测 ≈2MiB，超限直接掐连接，见 HTTP_BODY_SAFE_MAX），而贴纸发送
-   * 是整张图 base64，很容易压线（Issue #21）。WS 是事件常驻连接，实测 3MB 无恙。
+   * 是整张图 base64，很容易压线（Issue #21）。WS 是事件常驻连接，生产实测 1–14MB 帧全部
+   * 正常应答（覆盖贴纸链路的理论最大值 ≈10.7MiB 并留有余量）。
    * echo 结清、超时、abort、断线结清的口径与 call() 完全一致：4xx 类明确失败，
    * 其余（断线/超时）一律 unknown —— "不知道对方收没收到"。
    */
   callViaWs(action, params = {}, timeoutMs = TEXT_TIMEOUT_MS, signal) {
     const socket = this.socket;
-    if (!socket || !this.connected) {
+    if (!socket || !this.connected || socket.readyState !== WebSocket.OPEN) {
+      // WS 通道不可用 = 这一帧确定没有写进任何连接，按 failed 结清（可重试）；
+      // 不能标 unknown —— 那会升级成 critical 人工核对，而这里根本没有"可能已投递"。
       return Promise.reject(new OneBotActionError(`OneBot WebSocket 未连接，无法经 WS 发送 ${action}`, {
         action,
-        outcome: 'unknown'
+        outcome: 'failed'
       }));
     }
     const echo = `ws_${++this.wsEchoSeq}`;

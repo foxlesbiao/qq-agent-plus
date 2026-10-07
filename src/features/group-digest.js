@@ -2,7 +2,7 @@
 // 白名单制（groupDigest.chats 列表），默认关；发送走 sender 的正常通道（限频/留档与普通发言一致）。
 import { getConfig } from '../core/config.js';
 import { canRun } from '../core/access.js';
-import { chatCompletion } from '../llm/llm.js';
+import { chatCompletion, addUsage, emptyUsage } from '../llm/llm.js';
 import { nextAtFromHHMM } from '../core/reminders.js';
 import { sanitizeUserText } from '../core/util.js';
 import { newTraceId, withTrace } from '../core/logger.js';
@@ -12,9 +12,10 @@ const WINDOW_MS = 24 * 60 * 60 * 1000;
 const SAMPLE_CHARS = 2200;       // 喂给模型的聊天样本上限（省 token）
 
 export class GroupDigestManager {
-  constructor({ store, sender, log = console.log, now = () => Date.now() } = {}) {
+  constructor({ store, sender, sessions = null, log = console.log, now = () => Date.now() } = {}) {
     this.store = store;
     this.sender = sender;
+    this.sessions = sessions;
     this.log = log;
     this.now = now;
     this.timer = null;
@@ -52,7 +53,7 @@ export class GroupDigestManager {
     }
     const wait = Math.max(1000, at - this.now());
     this.timer = setTimeout(() => {
-      withTrace(newTraceId(), () => this.runOnce()).catch((error) => this.log('[group-digest] 运行出错:', error?.message ?? error));
+      withTrace(newTraceId(), () => this.runOnce()).catch((error) => this.log('[group-digest] 运行出错:', error));
       this.reconfigure();   // 排下一天
     }, wait);
     if (this.timer.unref) this.timer.unref();
@@ -85,7 +86,7 @@ export class GroupDigestManager {
         } catch (error) {
           const msg = String(error?.message ?? error).slice(0, 200);
           results.push({ chatKey, ok: false, error: msg });
-          this.log(`[group-digest] ${chatKey} 失败：${msg}`);
+          this.log(`[group-digest] ${chatKey} 失败：${msg}`, error);
         }
       }
       this.lastRun = { at: this.now(), results };
@@ -143,6 +144,13 @@ export class GroupDigestManager {
       // 不设 maxTokens：思考模型（如 Command Code 上的 deepseek）的思考 token 也吃这个预算，
       // 压太小会出现"思考完预算没了 → content 为空"（2026-09-28 服务器实测）。输出长度用 maxChars 截。
     });
+    // 群日报的模型调用也花钱：计入今日台账（此前完全没账，2026-10-07 复审 P3）。
+    try {
+      const usage = emptyUsage();
+      addUsage(usage, r?.usage);
+      usage.calls = 1;
+      this.sessions?.recordExternalUsage?.(usage, { model: r?.model || '' });
+    } catch { /* 记账失败不影响发布 */ }
     const text = String(r.message?.content || '').trim().slice(0, cfg.maxChars);
     if (!text) return { ok: false, error: '模型没有产出内容' };
     await this.sender.sendTextBatch(chatKey, [text], {});

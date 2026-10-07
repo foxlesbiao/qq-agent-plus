@@ -110,9 +110,11 @@ test('console：运行中绑非回环时拒绝 server 整节替换，令牌不�
       });
       assert.ok([401, 403].includes(keySpoof.status), `伪造 Host + 任意 x-console-token 不许读到明文密钥，实际 ${keySpoof.status}（401=authorize 先拦，403=key 守卫拦，都算挡住）`);
     } else {
+      t.diagnostic('本机局域网地址不可达：远程伪造 Host / 非回环暴露面的安全回归今天没有被验证');
       t.skip('本机局域网地址不可达，跳过远程伪造用例');
     }
   } else {
+    t.diagnostic('本机没有非回环 IPv4：远程伪造 Host / 非回环暴露面的安全回归今天没有被验证');
     t.skip('本机没有非回环 IPv4，跳过远程伪造用例');
   }
 });
@@ -121,26 +123,63 @@ test('console：运行中绑非回环时拒绝 server 整节替换，令牌不�
 test('vision-scan：config.json 写不进去时扫描照常完成、进程不崩', async (t) => {
   const { scanModelsVision } = await import('../src/llm/vision-scan.js');
   const cfgFile = path.join(root, 'config.json');
-  // 上一条用例把内存配置的令牌剥了（0.0.0.0 + 无令牌过不了 updateConfig 校验）——
-  // 这里恢复一个令牌，让失败点准确落在"盘写不进去"而不是配置校验
+  // 用例自足：自己落一份 config.json，不依赖前面用例写过（单跑/过滤跑也必须能过）。
   setRuntimeConfig({ ...structuredClone(getConfig()), server: { ...getConfig().server, token: 'vision-tok-12345678' } });
-  assert.ok(fs.existsSync(cfgFile), '前提：config.json 存在');
-  fs.chmodSync(cfgFile, 0o444);   // Windows 只读位 → writeFileSync/renameSync EPERM
+  fs.writeFileSync(cfgFile, JSON.stringify(getConfig()), { mode: 0o600 });
+  // 造"盘写不进去"必须跨平台确定：POSIX 下 rename 覆盖只读文件照样成功 —— chmod 造法在 Linux/CI
+  // 上写盘其实完全成功，删掉 flushPending 的兜底也不会红（2026-10-07 复核 P1）。
+  // 改为把 renameSync 打成 EPERM：两个平台都真的走失败分支，删兜底必然红。
+  const eperm = () => { throw Object.assign(new Error('EPERM: operation not permitted, rename'), { code: 'EPERM' }); };
+  t.mock.method(fs, 'renameSync', eperm);
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => Response.json(
     { choices: [{ message: { content: '能看到' } }], usage: { total_tokens: 1 } }
   );
-  t.after(() => {
-    globalThis.fetch = originalFetch;
-    try { fs.chmodSync(cfgFile, 0o666); } catch { /* 尽力恢复 */ }
-  });
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const emitted = [];
   const result = await scanModelsVision({
     providers: [{ id: 'p1', baseURL: 'https://p1.invalid/v1', apiKey: 'k', models: ['m1', 'm2'] }],
+    emit: (kind, payload) => emitted.push({ kind, payload }),
     limit: 2,
     timeoutMs: 5000
   });
   assert.equal(result.total, 2, '扫描本身要跑完（落盘失败不许中断扫描/带崩进程）');
+  assert.ok(
+    emitted.some((e) => typeof e.payload?.error === 'string' && /结果落盘失败/.test(e.payload.error)),
+    `必须上报落盘失败事件（否则这条修复完全不可观测），实际：${JSON.stringify(emitted.slice(0, 4))}`
+  );
   assert.ok(fs.existsSync(cfgFile), '进程活着，文件还在');
+});
+
+test('vision-scan：扫描进行中的定时器那次落盘失败也被兜住（原始 P2 的形态）', async (t) => {
+  const { scanModelsVision } = await import('../src/llm/vision-scan.js');
+  const cfgFile = path.join(root, 'config.json');
+  setRuntimeConfig({ ...structuredClone(getConfig()), server: { ...getConfig().server, token: 'vision-tok-12345678' } });
+  fs.writeFileSync(cfgFile, JSON.stringify(getConfig()), { mode: 0o600 });
+  t.mock.method(fs, 'renameSync', () => { throw Object.assign(new Error('EPERM: rename'), { code: 'EPERM' }); });
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    // 第一个模型立刻返回（结果进 pending），第二个拖过 2 秒 —— 让"每 2 秒一拍"的定时器
+    // 在扫描仍在进行时真的去落盘一次。这条定时器路径就是当初 P2 里"没有 .catch 兜底、
+    // 裸抛会变成 uncaughtException 直接 process.exit(1)"的那个形态。
+    if (calls === 2) await sleep(3200);
+    return Response.json({ choices: [{ message: { content: '能看到' } }], usage: { total_tokens: 1 } });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const emitted = [];
+  const result = await scanModelsVision({
+    providers: [{ id: 'p1', baseURL: 'https://p1.invalid/v1', apiKey: 'k', models: ['m1', 'm2'] }],
+    emit: (kind, payload) => emitted.push({ kind, payload }),
+    limit: 2,
+    timeoutMs: 8000
+  });
+  assert.equal(result.total, 2, '定时器落盘失败不许中断扫描');
+  assert.ok(
+    emitted.some((e) => /结果落盘失败/.test(String(e.payload?.error || ''))),
+    `定时器路径的落盘失败必须被兜住并上报，实际：${JSON.stringify(emitted.slice(0, 4))}`
+  );
 });
 
 // ── P2-6：replaceKnownFriends 尊重手工好友 override（双向）──
@@ -184,6 +223,16 @@ test('sessions：空跑会话不虚增当日 runs，真实运行照常计数', a
   s2.usage = { promptTokens: 30, completionTokens: 20, totalTokens: 50, cachedTokens: 0 };
   sessions.finish(s2.id, 'done');
   assert.equal(runsOf(), before + 1, '真实运行必须照常 +1（守卫不许变成一律不计）');
+
+  // 非会话模型调用（记忆整理、群日报）也要入今日账：tokens 照记、runs 不计
+  //（2026-10-07 复审 P3：此前整条链路对用量透明，控制台花费与预算判定都偏乐观）。
+  const tokensOf = () => Number(sessions.todayUsage(todayKey())?.totalTokens) || 0;
+  const tokensBefore = tokensOf();
+  sessions.recordExternalUsage({ promptTokens: 200, completionTokens: 100, totalTokens: 300, cachedTokens: 0 }, { model: 'memory-model' });
+  assert.equal(tokensOf(), tokensBefore + 300, '外部调用的 token 必须入账');
+  assert.equal(runsOf(), before + 1, '外部调用不算一次会话运行（runs 不变）');
+  sessions.recordExternalUsage({ promptTokens: 0, completionTokens: 0, totalTokens: 0 }, {});
+  assert.equal(tokensOf(), tokensBefore + 300, '0 token 的调用不产生任何变化');
 });
 
 // ── P3-4：发送失败路径的记账异常不掩盖真实错误、不丢 incident ──
@@ -218,7 +267,10 @@ test('sender：失败路径 finishSend 抛错时，原错误照抛、incident �
     '调用方要拿到真实传输错误（记账异常不许改判/顶掉它）'
   );
   assert.equal(finishCalls.length, 1, '失败路径也要记账一次');
-  assert.ok(['failed', 'unknown'].includes(finishCalls[0].outcome), `outcome 口径要对，实际：${finishCalls[0]?.outcome}`);
+  // ETIMEDOUT 属 uncertain → 必须是 unknown。写成"failed 或 unknown 都行"等于对口径零约束
+  //（2026-10-07 复核：把 classifyTransportFailure 改成一律 failed 也不会红）。
+  assert.equal(finishCalls[0].outcome, 'unknown',
+    `ETIMEDOUT = 可能已投递，必须 unknown；实际：${finishCalls[0]?.outcome}`);
   assert.equal(incidents.length, 1, 'incident 不能被记账异常顶掉');
 });
 
@@ -286,15 +338,27 @@ test('llm：跨渠道兜底响应带 channelChanged/originBaseUrl，vendor 解�
 test('onebot：get_login_info 连续失败后重试，selfId 最终拿到', async (t) => {
   const { OneBotClient } = await import('../src/onebot/onebot.js');
   let fails = 2;
+  const seen = [];
   const httpServer = http.createServer((req, res) => {
-    if (fails > 0) {
-      fails -= 1;
-      res.writeHead(500);
-      res.end('boom');
-      return;
-    }
-    res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', retcode: 0, data: { user_id: 12345, nickname: 'testbot' } }));
+    seen.push(`${req.method} ${req.url}`);
+    req.resume();   // 消费请求体（不消费则 'end' 不触发、连接悬挂）
+    req.on('end', () => {
+      // 假服务端也要看看请求长什么样：路径/方法错了照样回 200 的话，
+      // "URL 拼错""令牌退化成查询串"这类回归会被静默放过（2026-10-07 复核）。
+      if (req.method !== 'POST' || req.url !== '/get_login_info') {
+        res.writeHead(404);
+        res.end('not found');
+        return;
+      }
+      if (fails > 0) {
+        fails -= 1;
+        res.writeHead(500);
+        res.end('boom');
+        return;
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ status: 'ok', retcode: 0, data: { user_id: 12345, nickname: 'testbot' } }));
+    });
   });
   await new Promise((r) => httpServer.listen(0, '127.0.0.1', r));
   const httpPort = httpServer.address().port;
@@ -315,6 +379,9 @@ test('onebot：get_login_info 连续失败后重试，selfId 最终拿到', asyn
   await bot.connect();
   const ok = await waitFor(() => bot.selfId === '12345', 15000);
   assert.ok(ok, `get_login_info 失败后应重试并最终拿到 selfId，实际：'${bot.selfId}'（HTTP 失败 ${2 - fails} 次后成功）`);
+  assert.ok(seen.length >= 3, `500 两次 + 成功一次，至少 3 个请求，实际 ${seen.length}`);
+  assert.deepEqual([...new Set(seen)], ['POST /get_login_info'],
+    `请求形态必须恰好是 POST /get_login_info（令牌走请求头，不许出现在查询串），实际：${seen.join(', ')}`);
 });
 
 // ── P2-3：#wake 准备段（runningChats.add 之后、主 try 之前）抛错 → 必须清理并可再次唤醒 ──

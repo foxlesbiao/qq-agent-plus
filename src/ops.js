@@ -986,8 +986,11 @@ async function auditServer(args) {
   section('8. 运行态');
   if (!consoleInfo.token) skipLine('未设置 QQ_AGENT_CONSOLE_TOKEN，且 config.json 无 server.token，跳过控制台状态接口');
   else {
-    const status = await fetchJson(`http://127.0.0.1:${cfg.consolePort}/api/status?token=${encodeURIComponent(consoleInfo.token)}`);
-    if (!status.json) ngLine(`控制台状态接口不可达（${status.error || `HTTP ${status.status}`}）`);
+    // 令牌必须走请求头：查询串令牌已收窄到 /api/events（2026-10-06 复审），
+    // 这里还用 ?token= 的话拿到的是 401，而 fetchJson 无论状态码都解析 JSON ——
+    // 巡检会打印一条"看着正常"的假数据并误判通过（2026-10-07 复审 P2）。
+    const status = await fetchJson(`http://127.0.0.1:${cfg.consolePort}/api/status`, { 'x-console-token': consoleInfo.token });
+    if (!status.json || status.json.error) ngLine(`控制台状态接口不可达（${status.error || status.json?.error || `HTTP ${status.status}`}）`);
     else {
       const data = status.json;
       const onebot = data.onebot || {};
@@ -1363,7 +1366,7 @@ async function cmdWatchLogin(args) {
       const loginInfo = await fetchJson(`http://127.0.0.1:${cfg.onebotPort}/get_login_info`, { Authorization: `Bearer ${token}` }, 5000);
       say(`get_login_info: ${loginInfo.body.trim().slice(0, 300) || '（无响应）'}`);
       if (consoleInfo.token) {
-        const consoleStatus = await fetchJson(`http://127.0.0.1:${cfg.consolePort}/api/status?token=${encodeURIComponent(consoleInfo.token)}`, {}, 5000);
+        const consoleStatus = await fetchJson(`http://127.0.0.1:${cfg.consolePort}/api/status`, { 'x-console-token': consoleInfo.token }, 5000);
         say(`console: ${consoleStatus.body.trim().slice(0, 400) || '（无响应）'}`);
       }
       say('--- journal ---');

@@ -545,7 +545,9 @@ test('stop and time-window aborts are not counted as interface failures', () => 
   assert.equal(isNonFailureRunError(undefined), false);
 });
 
-test('aborting during the retry wait skips the retry and is not recorded as a feed failure', async () => {
+// 这条用例用一个"永不 resolve 的 sleep"+ abort 打破它来测中止语义：一旦中止语义回归，
+// 它不会失败而是**挂死**（消耗到 CI job 级超时）。给个 per-test 超时让它老实变红（2026-10-07 复核）。
+test('aborting during the retry wait skips the retry and is not recorded as a feed failure', { timeout: 20000 }, async () => {
   let feedCalls = 0;
   const f = fixture({
     feedCall: async () => {

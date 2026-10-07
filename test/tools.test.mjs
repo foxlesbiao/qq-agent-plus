@@ -295,6 +295,10 @@ test('collect_sticker：判断通过才入库，备注优先用判断给的那�
   const result = await tool('collect_sticker').execute(f.ctx, { messageId: '1710457251', note: '模型自己写的' });
   assert.equal(seen.length, 1);
   assert.equal(seen[0].opts.note, '熊猫头震惊，接梗用', '用判断那句更准的备注');
+  // 限频桶必须带 chatKey：漏传会全部落进 '' 桶 —— 单会话额度退化成跨会话共享，
+  // 且与预检（collectPeek 用真实 chatKey）读的不是同一个计数器（2026-10-07 复审 P2）。
+  assert.equal(seen[0].opts.chatKey, f.ctx.chatKey, 'collect 必须收到当前会话的 chatKey');
+  assert.equal(seen[0].opts.chatKey, 'group:1');
   assert.match(JSON.stringify(result), /本地图库/);
 });
 

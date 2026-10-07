@@ -113,7 +113,7 @@ import { budgetStatus } from './budget.js';
 import { readOwnerUin } from './notify-owner.js';
 import { ZONE_OFFSET_MS, minuteOfDayInZone, randInt, createEventBus, todayKey } from './util.js';
 import { buildSystemPrompt, buildUserPrompt, resolveContextTier } from '../llm/prompt.js';
-import { chatCompletion, chatCompletionWithRetry, addUsage, isRetryableError } from '../llm/llm.js';
+import { chatCompletion, chatCompletionWithRetry, addUsage, emptyUsage, isRetryableError } from '../llm/llm.js';
 import { buildToolDefs, toOpenAiTools, executeTool } from '../tools/tools.js';
 import { normalizeMid } from '../tools/tools-core.js';
 import { visionEnabled } from '../llm/vision-scan.js';
@@ -1011,9 +1011,18 @@ export class Orchestrator {
 
     // 未命中时只确认本次判定的快照；运行批次在模型处理成功后确认。
     const cfgNow = getConfig();
-    const conversation = conversationConfigForChat(chatKey);
+    // 2026-10-07 复审 P2：这段前置区（配置读取、预算判定、未读扫描、档位解析、claimUnread
+    // 的 sqlite 读写）任何一步抛出，都会让 waiting 会话永远停在 waiting —— 调用方已把它从
+    // pendingSessions 摘掉，控制台"等待中"清不掉、abortAll 也够不到它，直到重启。
+    // 与 10-06 修的"add 之后准备段"是同一类窗口，范围补齐 add 之前。
+    let conversation = null;
     let pendingEntries = [];
     let tierResult = null;
+    let runTimeoutMs = 0;
+    let lease = null;
+    let triggerEntries = [];
+    try {
+    conversation = conversationConfigForChat(chatKey);
     // ── 每日预算拦截（改进方案 #8/J.3）──
     // block：本次运行不进行（active 模式下同一天同一会话只回一句固定文案）；degrade：只回应 @ ——
     // 群聊里非 @ 触发直接跳过、消息保留未读（等被 @ 或明天）。两者都只影响**新**运行，
@@ -1109,11 +1118,11 @@ export class Orchestrator {
       }
     }
 
-    const runTimeoutMs = Math.min(240000, Math.max(1000, Number(cfgNow.api.runTimeoutMs) || 180000));
-    const lease = proactive ? null : this.store.claimUnread(chatKey, {
+    runTimeoutMs = Math.min(240000, Math.max(1000, Number(cfgNow.api.runTimeoutMs) || 180000));
+    lease = proactive ? null : this.store.claimUnread(chatKey, {
       limit: cfgNow.store.batchLimit, maxChars: cfgNow.store.batchMaxChars, leaseMs: runTimeoutMs + 60000
     });
-    const triggerEntries = lease?.messages || [];
+    triggerEntries = lease?.messages || [];
     if (!proactive && triggerEntries.length === 0) {
       if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted');
       return; // 没有未读就不空跑
@@ -1147,6 +1156,11 @@ export class Orchestrator {
       selfId: cfgNow.onebot?.selfId || this.onebot.selfId || '',
       cfg: storeConfigForChat(chatKey)   // 与 #predictTier 同一来源，保证预判/实跑一致
     });
+    } catch (error) {
+      // 前置区答案：会话落终态（否则永远等待中），原样上抛让调用方照旧记日志/告警。
+      if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted', String(error?.message ?? error));
+      throw error;
+    }
 
     this.runningChats.add(chatKey);
     // 2026-10-06 复审 P2：add 与主 try 之间原本是一大段无保护的同步准备 —— sqlite 读线程
@@ -2242,6 +2256,7 @@ export class Orchestrator {
         )
         : Math.max(60000, window.nextActiveAt - nowTick + 1000);
       this.proactiveTimer = setTimeout(() => { tick().catch(() => {}); }, next);
+      this.proactiveTimer.unref?.();
       if (this.aborted || this.paused || cfg.proactive?.enabled !== true) return;
       if (!window.active) return;
       // 距上次判定不足一个间隔（例如刚重启过）就跳过：重启不额外换来一次开话题的机会
@@ -2271,6 +2286,7 @@ export class Orchestrator {
         log.info('[proactive] 跳过：没有安静下来的群，45 分钟后再看');
         clearTimeout(this.proactiveTimer);
         this.proactiveTimer = setTimeout(() => { tick().catch(() => {}); }, 45 * 60 * 1000);
+        this.proactiveTimer.unref?.();
         return;
       }
       // 真要开口了，才把这一轮用掉（本间隔内不再判定）
@@ -2280,6 +2296,7 @@ export class Orchestrator {
       this.wake(chatKey, { proactive: true }).catch((error) => log.error('[orchestrator] proactive 出错:', error));
     };
     this.proactiveTimer = setTimeout(() => { tick().catch(() => {}); }, 15000);
+    this.proactiveTimer.unref?.();
   }
 
   #proactiveCandidates(cfg) {
@@ -2787,18 +2804,33 @@ export class Orchestrator {
     const mem = cfg.memory || {};
     if (mem.useChatModel !== false) {
       // 记忆整理 = 判断/总结类任务（与聊天、写作可各自设思考档位）。
-      return chatCompletion({ messages, temperature: 0.2, purpose: 'judge' });
-    }    const providers = currentProviders();
+      const response = await chatCompletion({ messages, temperature: 0.2, purpose: 'judge' });
+      this.#recordExternalUsage(response);
+      return response;
+    }
+    const providers = currentProviders();
     const p = providers.find((x) => x.id === mem.provider);
     if (!p?.baseURL || !p?.apiKey || !mem.model) {
       throw new Error('记忆整理专用模型未配置：请在设置 → 记忆里选择提供商与模型');
     }
-    return chatCompletion({
+    const response = await chatCompletion({
       messages,
       temperature: 0.2,
       purpose: 'judge',
       overrides: { baseUrl: p.baseURL, apiKey: p.apiKey, model: mem.model, timeoutMs: 180000 }
     });
+    this.#recordExternalUsage(response, mem.model);
+    return response;
+  }
+
+  /** 非会话模型调用（记忆整理）计入今日台账：此前整条链路对用量完全透明（2026-10-07 复审 P3）。 */
+  #recordExternalUsage(response, model = '') {
+    try {
+      const usage = emptyUsage();
+      addUsage(usage, response?.usage);
+      usage.calls = 1;
+      this.sessions?.recordExternalUsage?.(usage, { model: model || response?.model || '' });
+    } catch { /* 记账失败不影响主流程 */ }
   }
 
   stopProactiveLoop() {

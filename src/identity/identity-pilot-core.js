@@ -182,7 +182,7 @@ export class IdentityPilotManager {
       } catch (error) {
         this.friendSyncError = String(error?.message ?? error);
         this.friendSnapshotAt = 0;
-        this.log(`[identity-pilot] 好友列表读取失败，先按消息与旧记忆建库：${this.friendSyncError}`);
+        this.log(`[identity-pilot] 好友列表读取失败，先按消息与旧记忆建库：${this.friendSyncError}`, error);
       }
       // 远程好友请求可能等待数秒；最后再截取本地消息，避免等待期间的新消息漏索引。
       const activityRows = this.store.identityActivityRows()
@@ -204,7 +204,7 @@ export class IdentityPilotManager {
         try {
           await this.receiveIncomingFriendRequest(request);
         } catch (error) {
-          this.log(`[identity-pilot] 启动冲刷入站好友请求失败（跳过该条，继续启动）：${error?.message ?? error}`);
+          this.log(`[identity-pilot] 启动冲刷入站好友请求失败（跳过该条，继续启动）：${error?.message ?? error}`, error);
         }
       }
       if (incomingFriendRequestEnabled(this.config())) {
@@ -214,7 +214,7 @@ export class IdentityPilotManager {
         }).filter((request) => !request.notifiedAt);
         await Promise.all(pendingIncoming.map((request) =>
           this.#notifyIncomingFriendRequest(request).catch((error) => {
-            this.log(`[identity-pilot] 待审批请求通知失败（不阻塞启动）：${error?.message ?? error}`);
+            this.log(`[identity-pilot] 待审批请求通知失败（不阻塞启动）：${error?.message ?? error}`, error);
           })));
       }
       return this.status();
@@ -289,7 +289,7 @@ export class IdentityPilotManager {
       return this.identityStore.observe(chatKey, message);
     } catch (error) {
       this.lastError = String(error?.message ?? error);
-      this.log(`[identity-pilot] 增量索引失败：${this.lastError}`);
+      this.log(`[identity-pilot] 增量索引失败：${this.lastError}`, error);
       return false;
     }
   }
@@ -522,7 +522,7 @@ export class IdentityPilotManager {
         { repliedThisRun }
       ))
       .catch((error) => {
-        this.log(`[identity-pilot] 好友评估 ${created.opportunity.id} 失败：${error?.message ?? error}`);
+        this.log(`[identity-pilot] 好友评估 ${created.opportunity.id} 失败：${error?.message ?? error}`, error);
       });
     this.friendReviewChain = task;
     this.friendReviewTasks.add(task);
@@ -737,7 +737,8 @@ export class IdentityPilotManager {
       }
       this.log(
         `[identity-pilot] 好友候选 ${proposal.id} 主动发送`
-        + `${definiteFailure ? '失败' : '结果未知'}：${String(error?.message ?? error)}`
+        + `${definiteFailure ? '失败' : '结果未知'}：${String(error?.message ?? error)}`,
+        error
       );
       return {
         proposal: updated,

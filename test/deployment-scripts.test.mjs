@@ -26,7 +26,8 @@ test('deploy script verifies and rolls back the update service and timer', () =>
   const source = fs.readFileSync(path.join(repo, 'deploy.sh'), 'utf8');
   assert.match(source, /scripts\/auto-update\.mjs/);
   assert.match(source, /UPDATE_SERVICE="\$\{SERVICE\}-update"/);
-  assert.match(source, /systemd-analyze --user verify "\$UPDATE_UNIT_FILE"/);
+  // 行锚（^…$）而不是裸子串：注掉/缩进改坏这行都要红（裸匹配连注释都算命中，2026-10-07 复核）
+  assert.match(source, /^\s*systemd-analyze --user verify "\$UPDATE_UNIT_FILE"\s*$/m);
   assert.match(source, /systemctl --user enable --now "\$UPDATE_SERVICE\.timer"/);
   assert.match(source, /cp -p "\$LOCK_DIR\/state\/update\.service" "\$UPDATE_UNIT_FILE"/);
   assert.match(source, /QQ_AGENT_SOURCE_REVISION/);
@@ -175,7 +176,10 @@ test('deploy-all retries through a user-specified image mirror and never picks o
   assert.match(source, /candidate="\$\{mirror%\/\}\/\$IMAGE"/);
   assert.match(source, /if pull_with_retry "\$candidate"; then/);
   // 换了镜像站要把 .env 里的引用一起改掉（compose 走 --env-file），且保持权限
-  assert.match(source, /update_env_image\(\)/);
+  // ⚠️ 锚**调用点**不是定义点：`update_env_image()` 这个写法只在 699 行的定义处命中，
+  // 749 行的调用是 `update_env_image || true` —— 删掉调用照样绿，.env 会继续引用旧镜像
+  //（2026-10-07 复核，同文件 60-66 行早写过同款教训）。
+  assert.match(source, /^\s*update_env_image( \|\| true)?\s*$/m, '必须真的调用 update_env_image（不是只定义）');
   assert.match(source, /chmod --reference="\$ENV_FILE"/);
 
   // 失败时的指引：三条路都写到，且明确"脚本不替你选镜像站"
@@ -380,9 +384,12 @@ test('installed manage launcher uses the exact deployed Node runtime', (t) => {
     'utf8'
   );
   assert.match(updateUnit, /scripts\/auto-update\.mjs/);
-  // 更新器自身预算最坏 >50min（npm ci 10 + 单测 20 + deploy 20）：unit 超时必须大于它，
-  // 否则 systemd 会在回滚进行中 SIGKILL 整个 cgroup，留下半新半旧的安装目录。
-  assert.match(updateUnit, /TimeoutStartSec=75min/);
+  // 更新器最坏预算（2026-10-07 复审重算）：入口探测 ≤2×(5×20s) + 目标解析 ≤(retries+1)×fetch
+  // （默认 300s×4）+ 物化源码再一轮同量级 + npm ci 10min + 单测 20min + deploy.sh 20min ——
+  // 默认设置下已 ~100min，fetchTimeoutSeconds/networkRetries 调大后数小时。unit 超时必须大于
+  // 最坏预算，否则 systemd 会在 deploy.sh 中途（含回滚中）SIGKILL 整个 cgroup，
+  // 留下半新半旧的安装目录且失败告警发不出去。
+  assert.match(updateUnit, /TimeoutStartSec=240min/);
   assert.match(updateUnit, /TimeoutStopSec=10min/);
   assert.match(updateTimer, /OnUnitInactiveSec=1h/);
   assert.match(updateTimer, /RandomizedDelaySec=10min/);

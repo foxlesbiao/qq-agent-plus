@@ -564,9 +564,28 @@ elif command -v git >/dev/null && git -C "$ROOT" rev-parse --verify HEAD >/dev/n
 else
   REVISION="source-$(date -u +%Y%m%dT%H%M%SZ)"
 fi
-printf '%s\n' "$REVISION" > "$DATA_DIR/deployed-revision"
-chmod 600 "$DATA_DIR/deployed-revision"
-systemctl --user --no-pager status "$SERVICE.service"
-MODE="$("$NODE_BIN" -e 'const c=require(process.argv[1]);process.stdout.write(c.runtime.mode)' "$DATA_DIR/config.json")"
+# 以下都是"部署已成功（健康检查通过）之后的收尾"：任何一步失败都不该把退出码变成非 0 ——
+# 更新器按退出码判定成败，尾部失败会被记成"部署失败"并触发 disableOnFailure 自停 + 告警，
+# 而实际服务已经跑在新版本上（2026-10-07 复审 P3）。全部尽力而为。
+if printf '%s\n' "$REVISION" > "$DATA_DIR/deployed-revision" 2>/dev/null; then
+  chmod 600 "$DATA_DIR/deployed-revision" 2>/dev/null || true
+else
+  printf 'Warning: could not record deployed revision in %s\n' "$DATA_DIR/deployed-revision" >&2
+fi
+# 自动更新驱动（QQ_AGENT_SOURCE_REVISION 有值）且按控制台设置换了仓库/分支时，把安装记录
+# 对齐到实际来源 —— 否则下次校验仍按旧记录判"不一致"（见 verify-deployment-target.mjs）。
+if [[ -n "${QQ_AGENT_SOURCE_REVISION:-}" && -f "$INSTALL_DIR/.deployment.json" && ( -n "${QQ_AGENT_REPOSITORY:-}" || -n "${QQ_AGENT_BRANCH:-}" ) ]]; then
+  "$NODE_BIN" -e '
+    const fs = require("fs");
+    const [file, repository, branch] = process.argv.slice(1);
+    const meta = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (repository) meta.repository = repository;
+    if (branch) meta.branch = branch;
+    fs.writeFileSync(file, JSON.stringify(meta, null, 2));
+  ' "$INSTALL_DIR/.deployment.json" "${QQ_AGENT_REPOSITORY:-}" "${QQ_AGENT_BRANCH:-}" || printf 'Warning: could not sync .deployment.json source record\n' >&2
+  chmod 600 "$INSTALL_DIR/.deployment.json" 2>/dev/null || true
+fi
+systemctl --user --no-pager status "$SERVICE.service" || true
+MODE="$("$NODE_BIN" -e 'const c=require(process.argv[1]);process.stdout.write(c.runtime.mode)' "$DATA_DIR/config.json" 2>/dev/null)" || MODE="unknown"
 printf '\nConsole: http://%s:%s (%s mode)\nToken: %s/manage.sh token\n' "$HEALTH_HOST" "$PORT" "$MODE" "$INSTALL_DIR"
 [[ -z "$ROLLBACK_DIR" ]] || printf 'Rollback snapshot: %s\n' "$ROLLBACK_DIR"

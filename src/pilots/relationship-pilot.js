@@ -243,7 +243,7 @@ export class RelationshipPilotManager {
         this.lastFamiliarityRefresh.set(uin, now);
       } catch (error) {
         this.lastError = String(error?.message ?? error);
-        this.log(`[relationship-pilot] 熟悉度刷新失败：${this.lastError}`);
+        this.log(`[relationship-pilot] 熟悉度刷新失败：${this.lastError}`, error);
       }
     }
     return true;
@@ -313,7 +313,7 @@ export class RelationshipPilotManager {
         await this.#maybeEvaluate(uin, context);
       } catch (error) {
         this.lastError = String(error?.message ?? error);
-        this.log(`[relationship-pilot] ${uin} 影子评估失败：${this.lastError}`);
+        this.log(`[relationship-pilot] ${uin} 影子评估失败：${this.lastError}`, error);
       } finally {
         this.running = Math.max(0, this.running - 1);
         this.emit('relationship-pilot-update', this.status());

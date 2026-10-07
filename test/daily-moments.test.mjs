@@ -370,3 +370,78 @@ test('deny.groups 里的群不进快照：既不调模型也不外发（2026-10-
   await manager.runNow({ publish: false });
   assert.equal(completionCalls, 0, '被 deny 挡下的群，一条消息都不该进模型（原来手抄 allow 漏了 deny）');
 });
+
+// 本地库表情（findForSend 对 localFile 条目返回整图 base64://）必须能进候选与配图链路 ——
+// 此前 #loadImageCandidate 统一走 http(s) 校验 + 抓取，base64 直接被拒：上传/生成/收藏的
+// 本地图永远轮不到配图，说说阶段还会被静默丢进 imageErrors（2026-10-07 复审 P2）。
+test('本地表情库的 base64 候选：不进 http 校验/抓取，整图原样发出', async () => {
+  const now = Date.parse('2026-10-07T14:00:00Z');
+  const cfg = structuredClone(DEFAULT_CONFIG);
+  cfg.runtime.mode = 'active';
+  cfg.allow.groups = ['1'];
+  cfg.dailyMoments = { ...cfg.dailyMoments, enabled: true, minMessagesPerGroup: 1, allowImages: true, maxImages: 1 };
+  setRuntimeConfig(cfg);
+
+  const message = {
+    id: 1, mid: '9102', ts: now - 60_000, self: false, senderName: '群友',
+    text: '今天群里在聊表情包', media: []
+  };
+  // 一张"本地库图"：字节随手编（PNG 魔数开头，imageMime 按魔数识别）
+  const payload = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+  const base64Url = `base64://${payload.toString('base64')}`;
+  const validateCalls = [];
+  let fetchCalls = 0;
+  const published = [];
+  const toolSteps = [
+    { name: 'inspect_image_candidate', args: { imageId: 'image-1' } },
+    {
+      name: 'submit_daily_moment',
+      args: {
+        decision: 'publish',
+        reason: '有图可配',
+        content: '今天群里在挑表情包，认真挑一张比刷十个结论有意思。',
+        imageIds: ['image-1'],
+        groupSummaries: [{ chatKey: 'group:1', summary: '聊表情包' }]
+      }
+    }
+  ];
+  let completionCalls = 0;
+  const manager = new DailyMomentsManager({
+    store: { listChats: () => ['group:1'], recent: () => [message] },
+    memory: { members: () => [{ name: '群友', impressions: [] }], getHandoff: () => null },
+    stickers: {
+      sync: async () => ({ entries: [{ id: 's1', url: 'https://example.com/s1.png', localNote: '熊猫头' }] }),
+      findForSend: async () => ({ url: base64Url })   // localFile 条目的真实形态
+    },
+    onebot: {
+      getMsg: async () => ({ message: [] }),
+      call: async (action, params) => {
+        if (action === 'get_qzone_msg_list') return { msglist: [] };
+        assert.equal(action, 'send_qzone_msg');
+        published.push(params);
+        return { tid: 'tid-b64' };
+      }
+    },
+    resolveChatName: async () => '测试群',
+    complete: async () => {
+      const step = toolSteps[completionCalls++];
+      return {
+        model: 'test-model',
+        message: { content: null, tool_calls: [{ id: `call-${completionCalls}`, type: 'function', function: { name: step.name, arguments: JSON.stringify(step.args) } }] },
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 }
+      };
+    },
+    validateImage: async (url) => { validateCalls.push(url); return url; },
+    fetchBinary: async () => { fetchCalls += 1; return { buffer: payload, contentType: 'image/png' }; },
+    now: () => now,
+    random: () => 0
+  });
+
+  const result = await manager.runNow({ publish: true });
+  assert.equal(result.record.status, 'published');
+  assert.equal(result.record.imageCount, 1, '本地 base64 图必须能真的配上');
+  assert.equal(validateCalls.length, 0, 'base64 本地图不走 http(s) 校验（清单里的校验只服务远程地址）');
+  assert.equal(fetchCalls, 0, 'base64 本地图不许再走远程抓取');
+  assert.equal(published.length, 1);
+  assert.equal(published[0].images[0], base64Url, '整图 base64 必须原样发出（不许被截断/转码）');
+});

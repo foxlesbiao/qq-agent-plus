@@ -417,7 +417,7 @@ export class DailyMomentsManager {
     this.nextRunAt = Number(targetAt) || (this.now() + wait);
     this.timer = setTimeout(() => {
       withTrace(newTraceId(), () => this.#tick(startup, version)).catch((error) => {
-        this.log('[daily-moments] scheduler error:', error?.message ?? error);
+        this.log('[daily-moments] scheduler error:', error);
         if (!this.stopped && version === this.scheduleVersion) this.#schedule(60000);
       });
     }, wait);
@@ -455,7 +455,7 @@ export class DailyMomentsManager {
           await this.run({ dayKey, publish: true, source: startup ? 'startup-catchup' : 'scheduled' });
         } catch (error) {
           if (error?.code === 'TIME_CONTROL_INACTIVE') this.deferredDay = dayKey;
-          else this.log('[daily-moments] run failed:', error?.message ?? error);
+          else this.log('[daily-moments] run failed:', error);
         }
       }
     }
@@ -1413,13 +1413,25 @@ export class DailyMomentsManager {
     if (candidate.prepared) return candidate.prepared;
     const source = await this.#resolveImageSource(snapshot, imageId);
     if (!source) return null;
-    const safeUrl = await this.validateImage(source);
-    const { buffer, contentType } = await this.fetchBinary(
-      safeUrl,
-      8 * 1024 * 1024,
-      signal
-    );
-    if (!buffer?.length) throw new Error(`候选图片 ${imageId} 内容为空`);
+    let buffer;
+    let contentType = '';
+    if (source.startsWith('base64://')) {
+      // 本地库表情：findForSend 对 localFile 条目返回整图 base64（见 sticker-manager）。
+      // 这里以前统一走 http(s) 校验 + 抓取，本地图会被直接拒掉 —— 候选列表里
+      // 上传/生成的图永远轮不到，说说配图对它们永久失败（2026-10-07 复审）。
+      // 上限与本地库写入口一致（MAX_STICKER_BYTES = 8MiB）。
+      buffer = Buffer.from(source.slice('base64://'.length), 'base64');
+      if (!buffer.length) throw new Error(`候选图片 ${imageId} 内容为空`);
+      if (buffer.length > 8 * 1024 * 1024) throw new Error(`候选图片 ${imageId} 超过 8MB，不能用于说说配图`);
+    } else {
+      const safeUrl = await this.validateImage(source);
+      ({ buffer, contentType } = await this.fetchBinary(
+        safeUrl,
+        8 * 1024 * 1024,
+        signal
+      ));
+      if (!buffer?.length) throw new Error(`候选图片 ${imageId} 内容为空`);
+    }
     const mime = imageMime(buffer, contentType);
     // GIF 与消息图片同一收口：主流视觉网关不收 image/gif，且动图情绪在动作里——
     // 抽帧条转 JPEG 给模型判读；空间上传（uploadSource）仍用原始 GIF 保留动画。
