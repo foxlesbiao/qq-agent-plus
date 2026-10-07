@@ -192,7 +192,7 @@ test('平台能力：perGroup / quotas 坏形状被归一化，不牵连整份�
   }));
   assert.deepEqual(bad.config.platform.perGroup, {}, '整段写坏 → 空表');
   assert.deepEqual(bad.config.platform.quotas,
-    { reactionsPerHour: 15, profilePerDay: 2, remarksPerDay: 3, avatarsPerDay: 1 }, '整段写坏 → 默认值');
+    { reactionsPerHour: 10, profilePerDay: 1, remarksPerDay: 1, avatarsPerWeek: 1 }, '整段写坏 → 默认值');
   assert.equal(bad.config.api.apiKey, 'keep-me', '坏字段不许把整份配置冲掉');
 
   const dirty = loadWholeConfigInNewProcess(JSON.stringify({
@@ -206,4 +206,23 @@ test('平台能力：perGroup / quotas 坏形状被归一化，不牵连整份�
   }));
   assert.deepEqual(dirty.config.platform.perGroup, { '433': { reactionsWrite: false } },
     '只留"合法门控键 + 显式布尔值"；字符串值、非门控键（readReceipts）、坏形状的群整条丢掉');
+});
+
+// ── 平台能力：换头像额度从"每天"改"每周"（2026-10-07，按真人标准）──
+test('平台能力：老配置的 avatarsPerDay 搬成 avatarsPerWeek，值不丢、老键不留', () => {
+  const carried = loadWholeConfigInNewProcess(JSON.stringify({
+    platform: { quotas: { avatarsPerDay: 3 } },
+    api: { apiKey: 'keep-me' }
+  }));
+  assert.equal(carried.config.platform.quotas.avatarsPerWeek, 3, '老键的值要搬到新键（用户改过的额度不许被重置）');
+  assert.equal(carried.config.platform.quotas.avatarsPerDay, undefined,
+    '老键必须删掉：留着的话控制台"留空 = 用默认"那条兜底会读到它，等于这项改不动');
+  assert.equal(carried.config.api.apiKey, 'keep-me', '迁移不许连累其它段');
+
+  const fresh = loadWholeConfigInNewProcess(JSON.stringify({ api: { apiKey: 'keep-me' } }));
+  assert.equal(fresh.config.platform.quotas.avatarsPerWeek, 1, '没存过的按新默认（1/周）');
+  const junk = loadWholeConfigInNewProcess(JSON.stringify({
+    platform: { quotas: { avatarsPerDay: 'abc' } }, api: { apiKey: 'keep-me' }
+  }));
+  assert.equal(junk.config.platform.quotas.avatarsPerWeek, 1, '老键是坏值时按新默认');
 });

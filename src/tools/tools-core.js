@@ -27,7 +27,8 @@ export function resetImageQuotaForTest() {
 const reactionQuota = createQuota({ windowMs: 3600_000 });      // 贴表情：每小时封顶
 const profileQuota = createQuota({ windowMs: 24 * 3600_000 });  // 签名/在线状态：每天封顶
 const remarkQuota = createQuota({ windowMs: 24 * 3600_000 });   // 备注：每天封顶
-const avatarQuota = createQuota({ windowMs: 24 * 3600_000 });   // 换头像：每天封顶（最显眼，卡最紧）
+const avatarQuota = createQuota({ windowMs: 7 * 24 * 3600_000 }); // 换头像：**每周**封顶（窗口 7 天 —— 真人按周/月换头像，
+// "每天 1 次"一周也能换 7 次，挡不住"太勤"）
 /** 仅供测试：清空平台互动闸门。 */
 export function resetPlatformQuotasForTest() {
   reactionQuota.reset();
@@ -69,7 +70,7 @@ export function platformQuotaUsage(now = Date.now()) {
     reactions: pack(reactionQuota, 'reactionsPerHour'),
     profile: pack(profileQuota, 'profilePerDay'),
     remarks: pack(remarkQuota, 'remarksPerDay'),
-    avatars: pack(avatarQuota, 'avatarsPerDay')
+    avatars: pack(avatarQuota, 'avatarsPerWeek')
   };
 }
 
@@ -849,7 +850,7 @@ export function buildToolDefs() {
     },
     {
       name: 'set_my_avatar',
-      description: '换你自己的 QQ 头像（账号级，所有人都看得到）。图源二选一：messageId＝用某条消息里的图；stickerId＝表情库里的图（生成的图也在库里，见【可用表情包】）。很显眼的能力：别拿群友的生活照/别人的头像，偶尔一次就好（每天最多 2 次）。',
+      description: '换你自己的 QQ 头像（账号级，所有人都看得到）。图源二选一：messageId＝用某条消息里的图；stickerId＝表情库里的图（生成的图也在库里，见【可用表情包】）。很显眼的能力：别拿群友的生活照/别人的头像，偶尔一次就好（按周算额度，别当日常动作）。',
       parameters: {
         type: 'object',
         properties: {
@@ -885,10 +886,10 @@ export function buildToolDefs() {
             file = /^https?:\/\//i.test(String(target.url || '')) ? String(target.url) : String(target.file || '');
             if (!file) return err('这张图拿不到可用的地址');
           }
-          const avatarLimit = platformQuotaLimit(getConfig(), 'avatarsPerDay');
+          const avatarLimit = platformQuotaLimit(getConfig(), 'avatarsPerWeek');
           avatarQuota.configure({ globalMax: avatarLimit, perChatMax: Infinity });
           const reservedAt = Date.now();
-          if (!avatarQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`今天的换头像次数用完了（每天最多 ${avatarLimit} 次）`);
+          if (!avatarQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`这周的换头像次数用完了（每周最多 ${avatarLimit} 次）`);
           try {
             await ctx.onebot.setAvatar(file, { signal: ctx.signal });
           } catch (error) {

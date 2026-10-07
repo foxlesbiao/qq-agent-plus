@@ -204,7 +204,7 @@ test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能�
     assert.ok(voiceSel, '「语音音色」下拉应渲染');
     voiceSel.insertAdjacentHTML('beforeend', '<option value="lucy-voice-daji">妲己</option>');
     voiceSel.value = 'lucy-voice-daji';
-    const quota = window.document.querySelector('#cfg-platform-quota-avatarsPerDay');
+    const quota = window.document.querySelector('#cfg-platform-quota-avatarsPerWeek');
     assert.ok(quota, '换头像配额输入框应渲染');
     quota.value = '5';
     const perSel = window.document.querySelector('#pergroup-albumWrites');
@@ -237,7 +237,7 @@ test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能�
     assert.equal(patch.platform?.readReceipts, false, '默认关的项没勾 = false');
     assert.equal(patch.platform?.avatarWrites, false, '换头像默认关（没勾就是 false）');
     assert.equal(patch.platform?.qqVoiceCharacter, 'lucy-voice-daji', '选中的音色要跟着保存');
-    assert.equal(patch.platform?.quotas?.avatarsPerDay, 5, '改过的配额要存下去');
+    assert.equal(patch.platform?.quotas?.avatarsPerWeek, 5, '改过的配额要存下去');
     assert.deepEqual(patch.platform?.perGroup, { __replace__: { '10001': { albumWrites: true } } },
       '按群覆盖要带 __replace__ 存下去（普通深合并删不掉旧覆盖）');
     assert.deepEqual(Object.keys(patch.platform || {}).sort(),

@@ -108,13 +108,13 @@ export function platformToolAllowed(name, platform = {}, chatKeyOrGroup = '') {
 // 语义：0/非法值 = 用默认（**不是**"不设限"——这是防模型抽风的刹车，不该被一个 0 悄悄拆掉）；
 // 上限硬顶 200，防手滑把刹车调到没意义。
 export const PLATFORM_QUOTA_DEFAULTS = Object.freeze({
-  // 2026-10-07 收紧过一次（用户："不用这么频繁吧"）：这些是**刹车**不是目标，
-  // 原来的 30/3/5/2 是按"技术上别刷爆"定的，而不是按"像个真人"定的 ——
-  // 一小时内贴 15 个表情、一天改两次资料，已经比任何真人活跃了。
-  reactionsPerHour: 15,   // 贴表情：每小时（平均 4 分钟一个）
-  profilePerDay: 2,       // 签名 + 在线状态（共享一个额度；一天改两次够）
-  remarksPerDay: 3,       // 备注（与"每次整理最多发现 3 个新人"对齐）
-  avatarsPerDay: 1        // 换头像（一天换一次都算多）
+  // 2026-10-07 两次收紧（用户："不用这么频繁吧？""你按真人的标准来呀"）：
+  // 这些是**刹车**不是目标，标准是"真人会怎么做"，不是"技术上别刷爆"。
+  // 真人在群里贴表情是高频轻互动，但改签名/备注/头像是低频大动作。
+  reactionsPerHour: 10,   // 贴表情：每小时（平均 6 分钟一个；热闹时段真人也差不多）
+  profilePerDay: 1,       // 签名 / 在线状态（一天改一次都算勤）
+  remarksPerDay: 1,       // 备注（认识新人时打一次标签，不是日常动作）
+  avatarsPerWeek: 1       // 换头像：**窗口是 7 天**（真人按周/月换；"每天 1 次"一周也能换 7 次）
 });
 
 export const PLATFORM_QUOTA_KEYS = Object.freeze(Object.keys(PLATFORM_QUOTA_DEFAULTS));

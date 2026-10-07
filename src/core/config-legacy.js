@@ -543,10 +543,10 @@ export const DEFAULT_CONFIG = {
     // 写入类动作的闸门上限（滑动窗口内的全局次数；0/非法 = 用内置默认，硬顶 200）。
     // 语义与 PLATFORM_QUOTA_DEFAULTS 一一对应：这是防模型抽风的刹车，不是"限额玩法"。
     quotas: {
-      reactionsPerHour: 15,   // 贴表情：每小时
-      profilePerDay: 2,       // 签名 + 在线状态（共享一个额度）
-      remarksPerDay: 3,       // 备注
-      avatarsPerDay: 1        // 换头像（最显眼，卡最紧）
+      reactionsPerHour: 10,   // 贴表情：每小时
+      profilePerDay: 1,       // 签名 + 在线状态（共享一个额度）
+      remarksPerDay: 1,       // 备注
+      avatarsPerWeek: 1       // 换头像（窗口 7 天：真人按周/月换）
     },
     // 按群覆盖：{ "<群号>": { "<门控键>": true|false } }。只认显式布尔值，
     // 其余键/坏值一律回落全局开关；键名合法性在控制台与 migrateConfig 两处校验。
@@ -946,6 +946,16 @@ function migrateConfig(parsed) {
       }
     }
     if (out.platform.quotas !== undefined && !isPlainObject(out.platform.quotas)) out.platform.quotas = {};
+    // 配额键改名：avatarsPerDay → avatarsPerWeek（2026-10-07：换头像的窗口从"每天"改成"每周" ——
+    // "每天最多 1 次"一周仍能换 7 次，不符合"按真人标准"）。老键的值搬过去再把老键删掉：
+    // 留着它，控制台"留空 = 用默认"那条兜底会读到它，等于改不动这项。
+    if (isPlainObject(out.platform.quotas)) {
+      const carried = Number(out.platform.quotas.avatarsPerDay);
+      if (out.platform.quotas.avatarsPerWeek === undefined && Number.isFinite(carried) && carried > 0) {
+        out.platform.quotas.avatarsPerWeek = Math.min(200, Math.floor(carried));
+      }
+      delete out.platform.quotas.avatarsPerDay;
+    }
   }
   // ── 省 Token 模式：老配置没有这个键 ──
   // 缺键/坏值一律按 off 处理（默认关闭，行为与升级前完全一致）；坏值不许把整份配置带崩。

@@ -284,7 +284,7 @@ function qqSceneRules(grounded = false, platform = null, chatKey = '') {
     if (gate('avatarWrites')) bits.push('换 QQ 头像（set_my_avatar：用某条消息里的图或表情库里的图）');
     if (gate('nicknameWrites')) bits.push('改 QQ 昵称/个性说明（set_my_profile）');
     if (bits.length) {
-      lines.push(`- 你也能${bits.join('、')} —— 这是所有人都看得到的账号外观，偶尔一次就好（头像每天最多 ${quotaLimit('avatarsPerDay')} 次），别拿群友的生活照或别人的头像。`);
+      lines.push(`- 你也能${bits.join('、')} —— 这是所有人都看得到的账号外观，偶尔一次就好（头像每周最多 ${quotaLimit('avatarsPerWeek')} 次），别拿群友的生活照或别人的头像。`);
     }
   }
   {

@@ -50,10 +50,10 @@ const BEHAVIOR_ROWS = [
 // 写入闸门：与 src/core/platform-gates.js 的 PLATFORM_QUOTA_DEFAULTS 一一对应
 // （默认值只在这里做"输入框留空时的提示"，真正的默认值在服务端）。
 const QUOTA_ROWS = [
-  ['reactionsPerHour', '贴表情（每小时）', 15],
-  ['profilePerDay', '签名 / 在线状态（每天）', 2],
-  ['remarksPerDay', '备注（每天）', 3],
-  ['avatarsPerDay', '换头像（每天）', 1]
+  ['reactionsPerHour', '贴表情（每小时）', 10],
+  ['profilePerDay', '签名 / 在线状态（每天）', 1],
+  ['remarksPerDay', '备注（每天）', 1],
+  ['avatarsPerWeek', '换头像（每周）', 1]
 ];
 
 const gateCheckboxId = (key) => `cfg-platform-${key.toLowerCase()}`;
@@ -144,7 +144,7 @@ ${BEHAVIOR_ROWS.map(([id, label, note]) => behaviorRowHtml(id, label, note,
     <section class="plat-card">
       <div class="plat-card-head">
         <h3 class="plat-card-title">写入次数上限</h3>
-        <span class="plat-card-note">防模型抽风的刹车：默认 15/小时、2/天、3/天、1/天，这里可以改</span>
+        <span class="plat-card-note">防模型抽风的刹车：默认 10/小时、1/天、1/天、1/周，这里可以改</span>
       </div>
       <table class="plat-quota-table">
         <thead><tr><th>项目</th><th>上限</th><th>当前用量（滑动窗口）</th></tr></thead>
@@ -324,7 +324,9 @@ async function hydratePlatformGates() {
       for (const el of quotaSlots) {
         const info = byKey.get(el.dataset.quotaUsed);
         if (!info) { el.textContent = ''; continue; }
-        const per = info.windowMs <= 3600_000 ? '本小时' : '今日';
+        const per = info.windowMs <= 3600_000 ? '本小时'
+          : info.windowMs <= 24 * 3600_000 ? '今日'
+            : `近 ${Math.round(info.windowMs / 86400_000)} 天`;
         const detail = (info.chats || []).slice(0, 2)
           .map((c) => `${String(c.chatKey).replace(/^group:/, '群')}x${c.count}`).join(' ');
         el.textContent = `${info.used} / ${info.limit}${detail ? `（${per}，${detail}）` : `（${per}）`}`;

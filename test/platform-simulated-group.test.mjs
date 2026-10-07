@@ -184,6 +184,9 @@ it('模拟群：表情回应 / 查回应 / 群资料 / 签到 / 待办 / QQ语�
 
 it('模拟群：签名 / 在线状态 / 备注 / 陌生人资料 / 翻译 走真 HTTP', async () => {
   resetPlatformQuotasForTest();
+  // 这条用例连发 2 次资料 + 2 次备注，显式把额度放宽（默认值会随"真人标准"继续调，
+  // 写死默认值的用例会跟着红 —— 这里验的是 wire 形状，不是额度）
+  setRuntimeConfig({ ...base, platform: { ...base.platform, quotas: { ...base.platform.quotas, profilePerDay: 5, remarksPerDay: 5 } } });
   await withSim({
     respond: (action) => {
       if (action === 'get_stranger_info') return { nickname: '甲', sex: 'male', age: 20 };
@@ -209,6 +212,7 @@ it('模拟群：签名 / 在线状态 / 备注 / 陌生人资料 / 翻译 走真
     assert.deepEqual(sim.last('translate_en2zh').params, { words: ['hello'] });
     assert.equal(tr.translation, '你好');
   });
+  setRuntimeConfig(base);   // 还原额度，别把收紧后的默认值漏到后面的用例里
 });
 
 it('模拟群：换头像 / 改 QQ 资料走真 HTTP；改昵称后登录信息随之刷新', async () => {
@@ -507,13 +511,13 @@ it('提示词门控：平台开关关掉后不再教用法（工具已被摘除�
   const withAvatar = withPlatform({ avatarWrites: true });
   assert.ok(withAvatar.includes('set_my_avatar'), '开了头像开关才教');
   assert.ok(!withAvatar.includes('set_my_profile'), '头像开关不该把改昵称也放开');
-  assert.ok(withAvatar.includes('头像每天最多 1 次'), '额度（默认值）要写进提示词');
+  assert.ok(withAvatar.includes('头像每周最多 1 次'), '额度（默认值）要写进提示词（换头像是按周算的）');
   const withNickname = withPlatform({ nicknameWrites: true });
   assert.ok(withNickname.includes('set_my_profile'), '昵称开关单独生效');
   assert.ok(!withNickname.includes('set_my_avatar'));
   // 额度改成配置值后提示词跟着换口径（上限不是写死的 2）
-  const withAvatarQuota = withPlatform({ avatarWrites: true, quotas: { ...base.platform.quotas, avatarsPerDay: 7 } });
-  assert.ok(withAvatarQuota.includes('头像每天最多 7 次'), '提示词里的额度要读配置');
+  const withAvatarQuota = withPlatform({ avatarWrites: true, quotas: { ...base.platform.quotas, avatarsPerWeek: 7 } });
+  assert.ok(withAvatarQuota.includes('头像每周最多 7 次'), '提示词里的额度要读配置');
 
   const noProfile = withPlatform({ profileWrites: false });
   assert.ok(!noProfile.includes('set_my_signature'));

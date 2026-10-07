@@ -164,9 +164,9 @@ it('资料类：签名/状态/备注按配置的上限封顶，参数形状正�
   resetPlatformQuotasForTest();
 });
 
-it('set_my_avatar：消息图 / 表情库图两种图源，按配置的上限封顶', async (t) => {
+it('set_my_avatar：消息图 / 表情库图两种图源，按配置的上限封顶（窗口按周）', async (t) => {
   resetPlatformQuotasForTest();
-  withQuotas({ avatarsPerDay: 2 });   // 这条用例要连发两次，额度显式给 2
+  withQuotas({ avatarsPerWeek: 2 });   // 这条用例要连发两次，额度显式给 2
   t.after(restoreConfig);
   const avatars = [];
   const ctx = {
@@ -186,12 +186,14 @@ it('set_my_avatar：消息图 / 表情库图两种图源，按配置的上限封
 
   assert.equal((await tool('set_my_avatar').execute(ctx, {})).isError, true, '不给图源要报错');
   const third = await tool('set_my_avatar').execute(ctx, { messageId: '9' });
-  assert.match(third.content, /用完了/, '换头像按当日上限封顶');
-  assert.match(third.content, /每天最多 2 次/, '报错里带的是配置里的上限，不是写死的数字');
+  assert.match(third.content, /用完了/, '换头像按窗口上限封顶');
+  assert.match(third.content, /每周最多 2 次/, '报错里带的是配置里的上限，不是写死的数字');
   resetPlatformQuotasForTest();
 });
 
-it('set_my_profile：至少给一项、性别有校验、改昵称后刷新登录信息、与资料共享每日额度', async () => {
+it('set_my_profile：至少给一项、性别有校验、改昵称后刷新登录信息、与资料共享每日额度', async (t) => {
+  withQuotas({ profilePerDay: 3 });   // 这条用例要连发几次资料改动（默认已收紧到 1/天）
+  t.after(restoreConfig);
   resetPlatformQuotasForTest();
   const profiled = [];
   let refreshes = 0;
