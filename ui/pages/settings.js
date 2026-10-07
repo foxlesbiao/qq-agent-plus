@@ -25,7 +25,7 @@ import {
   renderDailyMomentsSection, renderGroupGameSection, renderQzoneInteractionSection, renderRemindersSection
 } from './moments.js';
 import { renderPersonaSection } from './persona.js';
-import { hydratePlatformVoiceSelect, renderPlatformSection } from './platform.js';
+import { hydratePlatformGates, hydratePlatformVoiceSelect, renderPlatformSection } from './platform.js';
 import { loadSessions } from './sessions.js';
 import { bindCrossSectionControls, bindSettingsEvents, isSplitThinking } from './settings-bind.js';
 import { renderAsrSection } from './settings-voice.js';
@@ -105,8 +105,10 @@ function renderSettingsImpl() {
     ${renderSettingsSection(c)}`;
   bindSettingsEvents(c);
   bindCrossSectionControls();
-  // 「平台能力」页的「语音音色」下拉要异步补目录（不在这一页时它自己 no-op）
+  // 「平台能力」页的异步补全：语音音色目录、每项的工具清单、闸门用量、按群覆盖编辑器
+  // （不在这一页时各自 no-op）
   hydratePlatformVoiceSelect();
+  hydratePlatformGates();
 }
 
 function renderSettingsSection(c) {

@@ -459,11 +459,12 @@ async function withSimOrchestrator({ readReceipts = false, envelope = null, mids
 }
 
 it('提示词门控：平台开关关掉后不再教用法（工具已被摘除，教了白烧一轮）', () => {
-  const withPlatform = (platform) => {
+  const withPlatform = (platform, chatKey = '') => {
     const cfg = structuredClone(base);
     cfg.platform = { ...base.platform, ...platform };
     setRuntimeConfig(cfg);
-    return buildSystemPrompt({ persona: cfg.persona, selfNickname: '犊子' });
+    // 平台配置与 chatKey 显式传进去（与 orchestrator 同一路径）：按群覆盖要能一起验
+    return buildSystemPrompt({ persona: cfg.persona, selfNickname: '犊子', platform: cfg.platform, chatKey });
   };
 
   // 默认（全开，相册上传除外）：该教的全教
@@ -477,11 +478,17 @@ it('提示词门控：平台开关关掉后不再教用法（工具已被摘除�
   assert.ok(!all.includes('upload_to_group_album'), '相册上传默认关，不该教');
   assert.ok(all.includes('like_album_photo'), 'albumRead 默认开，点赞用法要在');
 
-  // 逐个关：只影响自己那组
-  const noReactions = withPlatform({ reactions: false });
-  assert.ok(!noReactions.includes('react_to_message'));
-  assert.ok(!noReactions.includes('get_message_reactions'));
-  assert.ok(noReactions.includes('group_sign'), '其它开关不受影响');
+  // 逐个关：只影响自己那组；读 / 写分开（关一边不牵连另一边，2026-10-07 拆细）
+  const noReadReactions = withPlatform({ reactions: false });
+  assert.ok(!noReadReactions.includes('get_message_reactions'), '关了"看"就不教查回应');
+  assert.ok(noReadReactions.includes('react_to_message'), '关"看"不牵连"贴"');
+  assert.ok(noReadReactions.includes('group_sign'), '其它开关不受影响');
+  const noWriteReactions = withPlatform({ reactionsWrite: false });
+  assert.ok(!noWriteReactions.includes('react_to_message'), '关了"贴"就不教贴');
+  assert.ok(noWriteReactions.includes('get_message_reactions'), '关"贴"不牵连"看"');
+  const noReactionsAtAll = withPlatform({ reactions: false, reactionsWrite: false });
+  assert.ok(!noReactionsAtAll.includes('get_message_reactions'));
+  assert.ok(!noReactionsAtAll.includes('react_to_message'));
 
   const noOcrVoice = withPlatform({ ocr: false, qqVoice: false });
   assert.ok(!noOcrVoice.includes('read_image_text'));
@@ -494,36 +501,70 @@ it('提示词门控：平台开关关掉后不再教用法（工具已被摘除�
   assert.ok(pinnedVoice.includes('音色已由管理员固定'), '固定音色后要换口径');
   assert.ok(!pinnedVoice.includes('先不传 character 拿角色列表'), '固定后不该再教拉列表');
 
-  // 换头像/改昵称默认关 → 不教；开了才教（工具也是同门控）
+  // 换头像/改昵称默认关 → 不教；两个键各自独立（开了头像只教头像）
   assert.ok(!all.includes('set_my_avatar'), '默认关：提示词不该教换头像');
+  assert.ok(!all.includes('set_my_profile'), '默认关：提示词不该教改昵称');
   const withAvatar = withPlatform({ avatarWrites: true });
-  assert.ok(withAvatar.includes('set_my_avatar'), '开了外观开关才教');
-  assert.ok(withAvatar.includes('set_my_profile'));
-  assert.ok(withAvatar.includes('头像每天最多 2 次'), '额度要写进提示词');
+  assert.ok(withAvatar.includes('set_my_avatar'), '开了头像开关才教');
+  assert.ok(!withAvatar.includes('set_my_profile'), '头像开关不该把改昵称也放开');
+  assert.ok(withAvatar.includes('头像每天最多 2 次'), '额度（默认值）要写进提示词');
+  const withNickname = withPlatform({ nicknameWrites: true });
+  assert.ok(withNickname.includes('set_my_profile'), '昵称开关单独生效');
+  assert.ok(!withNickname.includes('set_my_avatar'));
+  // 额度改成配置值后提示词跟着换口径（上限不是写死的 2）
+  const withAvatarQuota = withPlatform({ avatarWrites: true, quotas: { ...base.platform.quotas, avatarsPerDay: 7 } });
+  assert.ok(withAvatarQuota.includes('头像每天最多 7 次'), '提示词里的额度要读配置');
 
   const noProfile = withPlatform({ profileWrites: false });
   assert.ok(!noProfile.includes('set_my_signature'));
   assert.ok(!noProfile.includes('set_my_status'));
-  assert.ok(!noProfile.includes('set_remark'));
+  assert.ok(noProfile.includes('set_remark'), '关签名/状态不牵连备注');
+  const noRemark = withPlatform({ remarkWrites: false });
+  assert.ok(!noRemark.includes('set_remark'));
+  assert.ok(noRemark.includes('set_my_signature'), '关备注不牵连签名');
 
   const noGroupTools = withPlatform({ groupTools: false });
-  assert.ok(!noGroupTools.includes('group_sign'));
   assert.ok(!noGroupTools.includes('get_group_profile'));
-  assert.ok(!noGroupTools.includes('set_group_todo'));
+  assert.ok(noGroupTools.includes('group_sign'), '关"看群资料"不该连"签到/待办"一起关');
+  assert.ok(noGroupTools.includes('set_group_todo'));
+  const noGroupWrites = withPlatform({ groupWrites: false });
+  assert.ok(!noGroupWrites.includes('group_sign'));
+  assert.ok(!noGroupWrites.includes('set_group_todo'));
+  assert.ok(noGroupWrites.includes('get_group_profile'), '关写不牵连读');
 
   const noFiles = withPlatform({ groupFiles: false });
   assert.ok(!noFiles.includes('list_group_files'));
+  assert.ok(noFiles.includes('send_group_file'), '关"看目录"不该连"发文件"一起关');
   assert.ok(noFiles.includes('list_group_album'), '文件开关不影响相册');
+  const noFileSend = withPlatform({ groupFileSend: false });
+  assert.ok(!noFileSend.includes('send_group_file'));
+  assert.ok(noFileSend.includes('list_group_files'));
 
-  // 相册：读关、上传开 → 只剩上传用法
-  const albumUploadOnly = withPlatform({ albumRead: false, albumUpload: true });
+  // 按群覆盖：同一个配置，两个群的提示词不同（工具表与提示词同判的根据就在这里）
+  const perGroup = { reactionsWrite: true, perGroup: { '433': { reactionsWrite: false } } };
+  const inGroup433 = withPlatform(perGroup, 'group:433');
+  const inGroup100 = withPlatform(perGroup, 'group:100');
+  assert.ok(!inGroup433.includes('react_to_message'), '被覆盖的群里不该教');
+  assert.ok(inGroup100.includes('react_to_message'), '没覆盖的群照旧教');
+
+  // 相册：只看关（看/赞评/上传三个键独立）
+  const albumReadOff = withPlatform({ albumRead: false });
+  assert.ok(!albumReadOff.includes('list_group_album'));
+  assert.ok(albumReadOff.includes('like_album_photo'), '关"看相册"不该连"点赞评论"一起关');
+  const albumWritesOff = withPlatform({ albumWrites: false });
+  assert.ok(!albumWritesOff.includes('like_album_photo'));
+  assert.ok(!albumWritesOff.includes('comment_album_photo'));
+  assert.ok(albumWritesOff.includes('list_group_album'), '关写不牵连读');
+
+  // 相册：读、写关，上传开 → 只剩上传用法
+  const albumUploadOnly = withPlatform({ albumRead: false, albumWrites: false, albumUpload: true });
   assert.ok(!albumUploadOnly.includes('list_group_album'));
   assert.ok(!albumUploadOnly.includes('like_album_photo'));
   assert.ok(albumUploadOnly.includes('upload_to_group_album'));
   assert.ok(albumUploadOnly.includes('群相册'), '相册行本身要留着（有上传用法）');
 
   // 相册全关 → 整行消失
-  const noAlbum = withPlatform({ albumRead: false, albumUpload: false });
+  const noAlbum = withPlatform({ albumRead: false, albumWrites: false, albumUpload: false });
   assert.ok(!noAlbum.includes('群相册（群聊限定）'));
 
   setRuntimeConfig(base);

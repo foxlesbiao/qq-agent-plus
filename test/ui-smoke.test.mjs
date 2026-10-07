@@ -36,7 +36,7 @@ function loadPage() {
   const fetchLog = [];
   const cfgStub = {
     api: { model: 'smoke-model', maxRounds: 3 },
-    allow: { groups: ['10001'], private: [] },
+    allow: { groups: ['10001', '20002'], private: [] },
     server: {}, runtime: { mode: 'observe' },
     webSearch: { enabled: false }, asr: {}, tts: {},
     identityPilot: {}, slangPilot: {}, incidentPilot: {}, memory: {}
@@ -49,6 +49,11 @@ function loadPage() {
       json: async () => (String(url).includes('/api/config') ? cfgStub : {})
     };
   };
+  // 浏览器标准全局：happy-dom 的 vm 上下文里没有 structuredClone，而 UI 代码（时间控制草稿、
+  // 按群覆盖草稿）用它做深拷贝 —— 补上，别让"浏览器里有、测试里没有"的差异把用例判红。
+  if (typeof window.structuredClone !== 'function') {
+    window.structuredClone = (value) => JSON.parse(JSON.stringify(value));
+  }
   window.EventSource = class EventSourceStub {
     constructor() { this.readyState = 0; }
     addEventListener() {}
@@ -149,12 +154,17 @@ test('真实 DOM 冒烟：QARegistry 的 transform / after / override 真的接�
 
 // P1（2026-10-07 独立复审）：patch 装配挂错了分区 —— 平台能力页的开关全在 settings-save.js
 // 的 `sec === 'chat'` 块里，在这一页点保存时 patch 为空（界面还提示"已保存"），开关只能手改
-// config.json 才生效。这条用例走真实点按路径：切 tab → 点侧边栏分区 → 改复选框 → 点保存，
-// 断言 POST 体里真的有这一页的开关 —— 纯渲染断言（"不抛"）咬不住这类"存不下去"。
-test('真实 DOM 冒烟：「平台能力」页的开关能真的存下去（保存块不许挂错分区）', { skip: SKIP }, async () => {
+// config.json 才生效。这条用例走真实点按路径：切 tab → 点侧边栏分区 → 改控件 → 点保存，
+// 断言 POST 体里真的有这一页的控件 —— 纯渲染断言（"不抛"）咬不住这类"存不下去"。
+//
+// 2026-10-07 第二批（设置细化）：读/写拆开（15 个门控键）+ 每项的工具清单占位 +
+// 四个闸门配额可改 + 按群覆盖编辑器。这条用例同时钉住"UI 的键表 == 服务端的键表"：
+// 在服务端加一个门控键而 UI 没跟上（或反过来），下面第一个 deepEqual 就会红。
+test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能真的存下去（保存块不许挂错分区）', { skip: SKIP }, async () => {
   const { window } = loadPage();
   await settle();
   try {
+    const { PLATFORM_GATE_KEYS, PLATFORM_QUOTA_KEYS } = await import('../src/core/platform-gates.js');
     window.switchTab('settings');
     await settle(50);
     const menuItem = window.document.querySelector('.settings-menu-item[data-section="platform"]');
@@ -162,31 +172,51 @@ test('真实 DOM 冒烟：「平台能力」页的开关能真的存下去（保
     menuItem.click();
     await settle(80);
 
-    // ① 渲染侧：这一页的复选框 id 就是这 12 个
+    // ① 渲染侧：门控复选框必须与服务端键表一一对应
     const renderedIds = [...window.document.querySelectorAll('#settings-form input[type="checkbox"]')]
       .map((el) => el.id).filter(Boolean).sort();
-    assert.deepEqual(renderedIds, [
-      'cfg-platform-albumread', 'cfg-platform-albumupload', 'cfg-platform-avatar',
-      'cfg-platform-forwardcards', 'cfg-platform-groupfiles', 'cfg-platform-grouptools',
-      'cfg-platform-ocr', 'cfg-platform-profile', 'cfg-platform-qqvoice',
-      'cfg-platform-reactions', 'cfg-platform-readreceipts', 'cfg-typing'
-    ], '「平台能力」页渲染出来的开关集合变了');
+    // 门控键 + 三个"行为开关"（正在输入 / 标已读 / 日报卡片 —— 它们不是工具门控，但仍归这一页）
+    assert.deepEqual(renderedIds,
+      [...PLATFORM_GATE_KEYS.map((k) => `cfg-platform-${k.toLowerCase()}`),
+        'cfg-typing', 'cfg-platform-readreceipts', 'cfg-platform-forwardcards'].sort(),
+      '「平台能力」页的开关集合与服务端门控键表不一致（服务端加键、UI 没跟上就会红）');
+    // 每个键都要有"它管的工具"占位（工具名由 /api/platform/gates 异步补）
+    const slots = [...window.document.querySelectorAll('[data-gate-tools]')].map((el) => el.dataset.gateTools).sort();
+    assert.deepEqual(slots, [...PLATFORM_GATE_KEYS].sort(), '每个门控键都要有工具清单占位');
+    // 配额输入框按服务端的配额键表渲染
+    const quotaIds = [...window.document.querySelectorAll('#settings-form input[type="number"]')]
+      .map((el) => el.id).filter((id) => id.startsWith('cfg-platform-quota-')).sort();
+    assert.deepEqual(quotaIds, PLATFORM_QUOTA_KEYS.map((k) => `cfg-platform-quota-${k}`).sort(),
+      '四个闸门配额都要有输入框');
+    // 按群覆盖编辑器：白名单的群可切换，且每个门控键都有三态下拉
+    assert.ok(window.document.querySelector('#pergroup-group'), '按群覆盖要有"选择群"下拉');
+    const perIds = [...window.document.querySelectorAll('[data-pergroup-key]')].map((el) => el.dataset.pergroupKey).sort();
+    assert.deepEqual(perIds, [...PLATFORM_GATE_KEYS].sort(), '按群覆盖要覆盖全部门控键');
 
-    // ② 保存侧：settings-save.js 读取的控件 id 必须与渲染侧一一对应（改名没同步就红）
-    const saveSrc = fs.readFileSync(path.join(UI, 'pages', 'settings-save.js'), 'utf8');
-    const readIds = [...new Set([...saveSrc.matchAll(/chk\('#(cfg-(?:platform-[a-z]+|typing))'/g)].map((m) => m[1]))].sort();
-    assert.deepEqual(readIds, renderedIds, '保存映射读取的 id 与页面渲染的控件不是同一组');
-    assert.ok(saveSrc.includes("val('#cfg-platform-voicechar'"), '「语音音色」下拉也要进保存映射');
-
-    // ③ 行为侧：取消勾选「表情回应」+ 选一个音色，保存后 POST 体里都要带着
-    const reactions = window.document.querySelector('#cfg-platform-reactions');
-    assert.equal(reactions.checked, true, '未配置时默认开（与 DEFAULT_CONFIG 一致）');
-    reactions.checked = false;
+    // ② 行为侧：改四个控件（门控复选框 / 音色 / 配额 / 按群覆盖），保存后都要在 POST 体里
+    const writeBox = window.document.querySelector('#cfg-platform-reactionswrite');
+    assert.equal(writeBox.checked, true, '未配置时按内置默认：读写都开');
+    writeBox.checked = false;
     const voiceSel = window.document.querySelector('#cfg-platform-voicechar');
     assert.ok(voiceSel, '「语音音色」下拉应渲染');
-    // 目录是异步拉的（这条桩返回空目录），手动补一个选项模拟"选了一个音色"
     voiceSel.insertAdjacentHTML('beforeend', '<option value="lucy-voice-daji">妲己</option>');
     voiceSel.value = 'lucy-voice-daji';
+    const quota = window.document.querySelector('#cfg-platform-quota-avatarsPerDay');
+    assert.ok(quota, '换头像配额输入框应渲染');
+    quota.value = '5';
+    const perSel = window.document.querySelector('#pergroup-albumWrites');
+    assert.ok(perSel, '按群覆盖：相册点赞/评论该有三态下拉');
+    perSel.value = 'on';
+    perSel.dispatchEvent(new window.Event('change'));
+    // 切到别的群再切回来：草稿不丢（切群只是换渲染的数据源）
+    const groupSel = window.document.querySelector('#pergroup-group');
+    assert.equal(groupSel.value, '10001', '默认选中第一个白名单群');
+    groupSel.value = '20002';
+    groupSel.dispatchEvent(new window.Event('change'));
+    assert.equal(window.document.querySelector('#pergroup-albumWrites').value, '', '另一个群没覆盖过 → 跟随全局');
+    groupSel.value = '10001';
+    groupSel.dispatchEvent(new window.Event('change'));
+    assert.equal(window.document.querySelector('#pergroup-albumWrites').value, 'on', '切回来草稿要还在');
 
     const posts = [];
     window.fetch = async (url, options = {}) => {
@@ -199,15 +229,21 @@ test('真实 DOM 冒烟：「平台能力」页的开关能真的存下去（保
     const save = posts.find((p) => p.url.includes('/api/config') && p.method === 'POST');
     assert.ok(save, '点「保存设置」必须 POST /api/config');
     const patch = JSON.parse(save.body || '{}');
-    assert.equal(patch.platform?.reactions, false, '改过的开关要按界面状态存下去（挂了错误分区时这里是 undefined）');
-    assert.equal(patch.platform?.qqVoice, true, '没动过的开关按当前值存');
+    assert.equal(patch.platform?.reactionsWrite, false, '改过的开关要按界面状态存下去（挂了错误分区时这里是 undefined）');
+    assert.equal(patch.platform?.reactions, true, '没动过的读开关按当前值存');
     assert.equal(patch.platform?.readReceipts, false, '默认关的项没勾 = false');
-    assert.equal(patch.platform?.avatarWrites, false, '换头像/改昵称默认关（没勾就是 false）');
+    assert.equal(patch.platform?.avatarWrites, false, '换头像默认关（没勾就是 false）');
     assert.equal(patch.platform?.qqVoiceCharacter, 'lucy-voice-daji', '选中的音色要跟着保存');
-    assert.deepEqual(Object.keys(patch.platform || {}).sort(), [
-      'albumRead', 'albumUpload', 'avatarWrites', 'forwardCards', 'groupFiles', 'groupTools',
-      'ocr', 'profileWrites', 'qqVoice', 'qqVoiceCharacter', 'reactions', 'readReceipts'
-    ], '这一页的每个开关/选择都要进 patch（漏一个 = 下次的"配了不生效"）');
+    assert.equal(patch.platform?.quotas?.avatarsPerDay, 5, '改过的配额要存下去');
+    assert.deepEqual(patch.platform?.perGroup, { __replace__: { '10001': { albumWrites: true } } },
+      '按群覆盖要带 __replace__ 存下去（普通深合并删不掉旧覆盖）');
+    assert.deepEqual(Object.keys(patch.platform || {}).sort(),
+      [...PLATFORM_GATE_KEYS, 'qqVoiceCharacter', 'quotas', 'perGroup', 'readReceipts', 'forwardCards'].sort(),
+      '这一页的每个控件都要进 patch（漏一个 = 下次的"配了不生效"）');
     assert.equal(patch.send?.typingIndicator, true, '「正在输入」也归这一页保存');
+    // 保存映射不许再手写第二份键清单（必须用 platform.js 的共享键表）
+    const saveSrc = fs.readFileSync(path.join(UI, 'pages', 'settings-save.js'), 'utf8');
+    assert.ok(saveSrc.includes('ALL_GATE_KEYS') && saveSrc.includes('gateCheckboxId'),
+      '保存映射要用 platform.js 的键表/命名约定（手抄清单迟早与渲染漂掉）');
   } finally { window.happyDOM?.abort?.(); }
 });

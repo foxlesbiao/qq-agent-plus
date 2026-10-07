@@ -36,37 +36,41 @@ export function resetPlatformQuotasForTest() {
   avatarQuota.reset();
 }
 
-// 平台能力开关（控制台「平台能力」页）→ 工具名的映射：orchestrator 的工具过滤与测试共用一份，
-// 两边各写一遍迟早会漂（2026-10-07 协议端 1.14.22 能力接入）。
-export const PLATFORM_TOOL_GATES = {
-  reactions: ['react_to_message', 'get_message_reactions'],
-  qqVoice: ['send_qq_voice'],
-  profileWrites: ['set_my_signature', 'set_my_status', 'set_remark'],
-  avatarWrites: ['set_my_avatar', 'set_my_profile'],
-  groupTools: ['get_group_profile', 'group_sign', 'set_group_todo'],
-  ocr: ['read_image_text'],
-  groupFiles: ['list_group_files', 'group_file_url', 'send_group_file'],
-  albumRead: ['list_group_album', 'like_album_photo', 'comment_album_photo'],
-  albumUpload: ['upload_to_group_album']
-};
+// 平台能力开关（控制台「平台能力」页）：映射表、默认取向、按群覆盖、配额上限都在
+// core/platform-gates.js（零依赖，prompt/orchestrator/控制台共用一份，防两边各写一遍漂掉）。
+// 这里重导出，保持既有 `from '../tools/tools-core.js'` 的引用路径不变。
+import { platformQuotaLimit } from '../core/platform-gates.js';
+export {
+  PLATFORM_DEFAULT_OFF, PLATFORM_GATE_KEYS, PLATFORM_GATE_LABELS, PLATFORM_QUOTA_DEFAULTS,
+  PLATFORM_QUOTA_KEYS, PLATFORM_TOOL_GATES, platformGateAllowed, platformGroupIdOf,
+  platformQuotaLimit, platformToolAllowed
+} from '../core/platform-gates.js';
 
-// "默认关"的开关（未显式 true 就不放行）。与 config.js 的 platform 默认值一一对应：
-// 会往群里**发布内容**或改**账号外观**的项默认关（相册上传、换头像/改昵称）。
-const PLATFORM_DEFAULT_OFF = new Set(['albumUpload', 'avatarWrites']);
-
-/**
- * 某个工具在当前平台配置下是否可用。默认值语义与 config.js 的 platform 段一致：
- * 只有 PLATFORM_DEFAULT_OFF 里的键是"默认关"（未显式 true 就不放行），其余都是"默认开"
- * （显式 false 才关）。
- */
-export function platformToolAllowed(name, platform = {}) {
-  const tool = String(name || '');
-  for (const [key, tools] of Object.entries(PLATFORM_TOOL_GATES)) {
-    if (!tools.includes(tool)) continue;
-    const raw = platform?.[key];
-    return PLATFORM_DEFAULT_OFF.has(key) ? raw === true : raw !== false;
-  }
-  return true;
+/** 四个平台写入闸门的当前用量（控制台「平台能力」页展示；滑动窗口内计数）。 */
+export function platformQuotaUsage(now = Date.now()) {
+  const cfg = getConfig();
+  const pack = (quota, key) => {
+    const snap = quota.snapshot(now);
+    return {
+      key,
+      windowMs: snap.windowMs,
+      // 上限按**配置**报（不是闸门内部值）：闸门要等第一次调用才 configure，
+      // 之前内部是 Infinity（JSON 里会变成 null），控制台就会显示"上限 -"。
+      limit: platformQuotaLimit(cfg, key),
+      used: snap.globalUsed,
+      // 各会话分账：控制台展示前三个（排查"是哪个群在刷"）
+      chats: Object.entries(snap.chats)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([chatKey, count]) => ({ chatKey, count }))
+    };
+  };
+  return {
+    reactions: pack(reactionQuota, 'reactionsPerHour'),
+    profile: pack(profileQuota, 'profilePerDay'),
+    remarks: pack(remarkQuota, 'remarksPerDay'),
+    avatars: pack(avatarQuota, 'avatarsPerDay')
+  };
 }
 
 // 消息 id 归一化：模型常把聊天记录里的 "#123" 连 # 一起传进来，而 OneBot 只认纯数字 id。
@@ -730,10 +734,12 @@ export function buildToolDefs() {
           if (!mid) return err('messageId 不能为空，用聊天记录里那条消息前的 #数字');
           const emojiId = String(args.emojiId ?? '').trim();
           if (!/^\d+$/.test(emojiId)) return err('emojiId 要是 QQ 系统表情编号（数字），如 14 微笑、128077 👍');
-          reactionQuota.configure({ globalMax: 30, perChatMax: Infinity });
+          const cfg = getConfig();
+          const reactLimit = platformQuotaLimit(cfg, 'reactionsPerHour');
+          reactionQuota.configure({ globalMax: reactLimit, perChatMax: Infinity });
           const reservedAt = Date.now();
           const gate = reactionQuota.tryConsume(ctx.chatKey, reservedAt);
-          if (!gate.ok) return err('这一小时贴的表情够多了，过一会儿再贴');
+          if (!gate.ok) return err(`这一小时贴的表情够多了（上限 ${reactLimit} 次），过一会儿再贴`);
           try {
             // 与 OneBotClient.reactToMessage 同一实现（wire 形状只留一处，2026-10-07 复审 P3）
             await ctx.onebot.reactToMessage(mid, emojiId, args.set !== false, ctx.signal);
@@ -793,9 +799,10 @@ export function buildToolDefs() {
         try {
           const signature = safeSlice(String(args.signature ?? '').trim(), 40);
           if (!signature) return err('signature 不能为空');
-          profileQuota.configure({ globalMax: 3, perChatMax: Infinity });
+          const profileLimit = platformQuotaLimit(getConfig(), 'profilePerDay');
+          profileQuota.configure({ globalMax: profileLimit, perChatMax: Infinity });
           const reservedAt = Date.now();
-          if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的资料改动次数用完了（每天最多几次）');
+          if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`今天的资料改动次数用完了（每天最多 ${profileLimit} 次）`);
           try {
             await ctx.onebot.call('set_self_longnick', { long_nick: signature }, 15000, ctx.signal);
           } catch (error) {
@@ -824,9 +831,10 @@ export function buildToolDefs() {
           const wording = safeSlice(String(args.wording ?? '').trim(), 16);
           if (!wording) return err('wording 不能为空');
           const faceId = Number(normalizeMid(args.faceId) || 0) || 0;
-          profileQuota.configure({ globalMax: 3, perChatMax: Infinity });
+          const profileLimit = platformQuotaLimit(getConfig(), 'profilePerDay');
+          profileQuota.configure({ globalMax: profileLimit, perChatMax: Infinity });
           const reservedAt = Date.now();
-          if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的资料改动次数用完了（每天最多几次）');
+          if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`今天的资料改动次数用完了（每天最多 ${profileLimit} 次）`);
           try {
             await ctx.onebot.call('set_diy_online_status', { face_id: faceId, face_type: 1, wording }, 15000, ctx.signal);
           } catch (error) {
@@ -877,9 +885,10 @@ export function buildToolDefs() {
             file = /^https?:\/\//i.test(String(target.url || '')) ? String(target.url) : String(target.file || '');
             if (!file) return err('这张图拿不到可用的地址');
           }
-          avatarQuota.configure({ globalMax: 2, perChatMax: Infinity });
+          const avatarLimit = platformQuotaLimit(getConfig(), 'avatarsPerDay');
+          avatarQuota.configure({ globalMax: avatarLimit, perChatMax: Infinity });
           const reservedAt = Date.now();
-          if (!avatarQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的换头像次数用完了（每天最多 2 次）');
+          if (!avatarQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`今天的换头像次数用完了（每天最多 ${avatarLimit} 次）`);
           try {
             await ctx.onebot.setAvatar(file, { signal: ctx.signal });
           } catch (error) {
@@ -915,9 +924,10 @@ export function buildToolDefs() {
             sex = Number(normalizeMid(sexRaw));
             if (![0, 1, 2].includes(sex)) return err('sex 只能是 0（未知）/ 1（男）/ 2（女）');
           }
-          profileQuota.configure({ globalMax: 3, perChatMax: Infinity });
+          const profileLimit = platformQuotaLimit(getConfig(), 'profilePerDay');
+          profileQuota.configure({ globalMax: profileLimit, perChatMax: Infinity });
           const reservedAt = Date.now();
-          if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的资料改动次数用完了（每天最多几次）');
+          if (!profileQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`今天的资料改动次数用完了（每天最多 ${profileLimit} 次）`);
           try {
             await ctx.onebot.setProfile({ nickname: nickname || undefined, personalNote, sex }, { signal: ctx.signal });
           } catch (error) {
@@ -1126,9 +1136,10 @@ export function buildToolDefs() {
           // 数字校验要在扣额度**之前**：以前放在 tryConsume 之后，模型传个名字就会
           // 白扣一天 5 次里的一次（2026-10-07 复审 P3；与 react_to_message 同口径）。
           if (userId && !/^\d+$/.test(userId)) return err('userId 要是数字 QQ 号（不知道就先查 get_active_members）');
-          remarkQuota.configure({ globalMax: 5, perChatMax: Infinity });
+          const remarkLimit = platformQuotaLimit(getConfig(), 'remarksPerDay');
+          remarkQuota.configure({ globalMax: remarkLimit, perChatMax: Infinity });
           const reservedAt = Date.now();
-          if (!remarkQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err('今天的备注次数用完了（每天最多几次）');
+          if (!remarkQuota.tryConsume(ctx.chatKey, reservedAt).ok) return err(`今天的备注次数用完了（每天最多 ${remarkLimit} 次）`);
           try {
             if (userId) {
               await ctx.onebot.call('set_friend_remark', { user_id: Number(userId), remark }, 15000, ctx.signal);

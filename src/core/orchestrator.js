@@ -1604,8 +1604,9 @@ export class Orchestrator {
       if (!imageGenEnabled && d.name === 'generate_image') return false;
       // 平台能力开关（2026-10-07 协议端 1.14.22 能力接入，控制台「平台能力」页）：
       // 关掉就连工具带提示词一起撤 —— 与"表情包/搜索/ASR"同一口径，
-      // 留着只会让模型去调一个必然不可用的工具。映射表在 tools-core 里（与测试共用一份）。
-      if (!platformToolAllowed(d.name, cfg.platform)) return false;
+      // 留着只会让模型去调一个必然不可用的工具。映射表在 core/platform-gates.js（与测试共用一份）。
+      // **带上 chatKey**：控制台可以按群覆盖（platform.perGroup），工具表与提示词必须同判。
+      if (!platformToolAllowed(d.name, cfg.platform, chatKey)) return false;
       if (d.feature === 'identityPilot' && !identityAvailable) return false;
       if (d.feature === 'friendProposal' && !friendProposalAvailable) return false;
       return true;
@@ -1618,7 +1619,10 @@ export class Orchestrator {
       gameContext: this.getGames?.()?.summaryFor(chatKey) || '',
       identityPilotAvailable: identityAvailable,
       friendProposalAvailable,
-      stickerEntries
+      stickerEntries,
+      // 平台能力的"教不教"必须与上面工具表的"给不给"同判（含按群覆盖）：同一个 chatKey。
+      platform: cfg.platform,
+      chatKey
     });
     const promptPrefixHash = crypto.createHash('sha256')
       .update(String(cfg.api.provider || ''))

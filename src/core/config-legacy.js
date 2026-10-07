@@ -13,6 +13,7 @@ import {
 import { DEFAULT_TIME_CONTROL, normalizeTimeControl } from './time-control.js';
 import { normalizeTokenSaverMode } from './token-saver.js';   // 零依赖模块，避免循环依赖
 import { normalizeMomentWindows } from '../features/moment-schedule.js';
+import { PLATFORM_GATE_KEYS } from './platform-gates.js';   // 零依赖模块：按群覆盖的键名校验
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 本文件在 src/core/ 下：仓库根要多退一层（挪目录时最容易漏的就是这里）
@@ -512,24 +513,44 @@ export const DEFAULT_CONFIG = {
   },
   // QQ 平台能力（协议端 SnowLuma ≥1.14.20 提供）：每个开关关掉后，对应工具会从模型工具表
   // 里摘除、提示词也不再教用法（与"表情包/搜索/ASR"同一口径，避免模型调用必然失败的工具）。
-  // 默认值取向：读/轻互动默认开；会往群里**发布内容**或改变账号外观的默认关（相册上传、已读标记）。
+  // 2026-10-07 拆细：读与写分开（"只让它看、不让它动手"要能单独配）；映射表在
+  // core/platform-gates.js（控制台渲染、orchestrator 过滤、提示词共用同一份）。
+  // 默认值取向：读/轻互动默认开；会改变**账号级外观**或**往群里发布内容**的默认关
+  // （换头像、改昵称/个性说明、传相册）。拆细后的默认组合与拆分前逐项等价。
   platform: {
-    reactions: true,        // 表情回应：贴/看（群聊限定）
+    reactions: true,        // 【读】看谁贴了什么表情（get_message_reactions；[贴表情] 记录一直会落存档）
+    reactionsWrite: true,   // 【写】给群里的消息贴表情（react_to_message）
     qqVoice: true,          // QQ 原生 AI 语音（send_qq_voice）
     // QQ 语音音色（协议端 character_id，如 lucy-voice-laibixiaoxin=小新）。
     // 空 = 不固定：模型每次自己从协议端返回的角色目录里挑一个。
     qqVoiceCharacter: '',
-    profileWrites: true,    // 改签名/在线状态/备注（账号侧可见，带 24h 闸门）
+    profileWrites: true,    // 【写】改签名 / 在线状态（账号侧可见，带 24h 闸门）
+    remarkWrites: true,     // 【写】给好友/群设备注（独立闸门）
     // 换头像 / 改 QQ 昵称与个性说明（set_my_avatar / set_my_profile）——账号级外观，
     // 所有人都看得到、且不像发言那样可以被上下文解释，默认关（与相册上传同一档）。
     avatarWrites: false,
-    groupTools: true,       // 群资料/公告/荣誉、签到、群待办
+    nicknameWrites: false,
+    groupTools: true,       // 【读】群资料/公告/荣誉（get_group_profile）
+    groupWrites: true,      // 【写】群签到 / 设群待办
     ocr: true,              // 服务端 OCR（读图上的文字）
-    groupFiles: true,       // 群文件：列表 / 取下载链 / 发文件
-    albumRead: true,        // 群相册：看 / 点赞 / 评论
-    albumUpload: false,     // 群相册：把图传进相册（默认关：会往群里发布内容）
+    groupFiles: true,       // 【读】群文件：看目录 / 取下载链
+    groupFileSend: true,    // 【写】发文件到群
+    albumRead: true,        // 【读】群相册：看相册与照片
+    albumWrites: true,      // 【写】相册点赞 / 评论
+    albumUpload: false,     // 【写】把图传进相册（默认关：会往群里发布内容）
     readReceipts: false,    // 处理完的消息在 QQ 里标已读（默认关：会改变你自己各端的未读观感）
-    forwardCards: true      // 长内容（群日报）用「合并转发卡片」发送，而不是一大段文本
+    forwardCards: true,     // 长内容（群日报）用「合并转发卡片」发送，而不是一大段文本
+    // 写入类动作的闸门上限（滑动窗口内的全局次数；0/非法 = 用内置默认，硬顶 200）。
+    // 语义与 PLATFORM_QUOTA_DEFAULTS 一一对应：这是防模型抽风的刹车，不是"限额玩法"。
+    quotas: {
+      reactionsPerHour: 30,   // 贴表情：每小时
+      profilePerDay: 3,       // 签名 + 在线状态（共享一个额度）
+      remarksPerDay: 5,       // 备注
+      avatarsPerDay: 2        // 换头像（最显眼，卡最紧）
+    },
+    // 按群覆盖：{ "<群号>": { "<门控键>": true|false } }。只认显式布尔值，
+    // 其余键/坏值一律回落全局开关；键名合法性在控制台与 migrateConfig 两处校验。
+    perGroup: {}
   },
   // 存储
   store: {
@@ -903,6 +924,29 @@ function migrateConfig(parsed) {
   // 让默认值补上的话，老实例（例如选的是猫娘）载入后会被当成绑定了默认卡、正文被换掉。
   // 空串 = 未绑定（正文按自定义处理，不改动）；在控制台重选一次卡就会自动绑上。
   if (out.persona.templateId === undefined) out.persona.templateId = '';
+  // ── 平台能力（2026-10-07 键拆细：读/写分离）──
+  // 老配置里 avatarWrites 一个键同时管"换头像"和"改昵称/个性说明"。拆细后按老键回填：
+  // 显式开过 avatarWrites=true 的实例，昵称也保持开着 —— 否则用户"开过换头像/改资料"的
+  // 意图会被拆细静默收掉一半（保存一次控制台即固化）。
+  if (isPlainObject(out.platform)) {
+    if (out.platform.nicknameWrites === undefined && out.platform.avatarWrites === true) {
+      out.platform.nicknameWrites = true;
+    }
+    // perGroup / quotas 的坏形状先归一化：手改坏一个字符不许把整份配置带崩
+    // （这两段是 2026-10-07 新增的嵌套结构，别的字段都没有这一层）。
+    if (out.platform.perGroup !== undefined && !isPlainObject(out.platform.perGroup)) out.platform.perGroup = {};
+    if (isPlainObject(out.platform.perGroup)) {
+      for (const [gid, node] of Object.entries(out.platform.perGroup)) {
+        if (!isPlainObject(node)) { delete out.platform.perGroup[gid]; continue; }
+        // 只留"合法门控键 + 显式布尔值"：字符串 'true'、未知键（如把 readReceipts 写进按群）
+        // 都在这里清掉，查找侧也就不必再兜第二遍。
+        for (const [key, value] of Object.entries(node)) {
+          if (typeof value !== 'boolean' || !PLATFORM_GATE_KEYS.includes(key)) delete node[key];
+        }
+      }
+    }
+    if (out.platform.quotas !== undefined && !isPlainObject(out.platform.quotas)) out.platform.quotas = {};
+  }
   // ── 省 Token 模式：老配置没有这个键 ──
   // 缺键/坏值一律按 off 处理（默认关闭，行为与升级前完全一致）；坏值不许把整份配置带崩。
   if (!isPlainObject(out.tokenSaver)) out.tokenSaver = { mode: 'off' };

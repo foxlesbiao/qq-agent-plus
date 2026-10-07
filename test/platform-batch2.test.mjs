@@ -15,7 +15,7 @@ fs.writeFileSync(path.join(dir, 'face-names.json'), JSON.stringify({ bySid: { 14
 const { ChatStore } = await import('../src/core/store.js');
 const { SendQueue } = await import('../src/onebot/sender.js');
 const { OneBotClient } = await import('../src/onebot/onebot.js');
-const { buildToolDefs, platformToolAllowed } = await import('../src/tools/tools-core.js');
+const { buildToolDefs, platformGateAllowed, platformQuotaLimit, platformToolAllowed } = await import('../src/tools/tools-core.js');
 const { DEFAULT_CONFIG, setRuntimeConfig } = await import('../src/core/config.js');
 
 const cfg = structuredClone(DEFAULT_CONFIG);
@@ -47,27 +47,91 @@ it('工具表：第二批工具都在；平台开关默认值正确', () => {
     assert.ok(names.has(expected), `缺工具 ${expected}`);
   }
   assert.equal(DEFAULT_CONFIG.platform.albumUpload, false, '相册上传默认关');
-  assert.equal(DEFAULT_CONFIG.platform.avatarWrites, false, '换头像/改昵称默认关（账号级外观）');
+  assert.equal(DEFAULT_CONFIG.platform.avatarWrites, false, '换头像默认关（账号级外观）');
+  assert.equal(DEFAULT_CONFIG.platform.nicknameWrites, false, '改昵称/个性说明默认关（账号级外观）');
   assert.equal(DEFAULT_CONFIG.platform.readReceipts, false, '已读标记默认关');
   assert.equal(DEFAULT_CONFIG.platform.forwardCards, true, '日报卡片默认开');
   assert.equal(DEFAULT_CONFIG.platform.qqVoiceCharacter, '', 'QQ 语音音色默认不固定');
   assert.equal(DEFAULT_CONFIG.send.typingIndicator, true, '正在输入默认开');
+  // 读写分离拆细（2026-10-07）：写侧默认延续拆分前的取向（原来跟着"读开关"一起开）
+  for (const key of ['reactionsWrite', 'remarkWrites', 'groupWrites', 'groupFileSend', 'albumWrites']) {
+    assert.equal(DEFAULT_CONFIG.platform[key], true, `${key} 默认应延续拆细前的取向（开）`);
+  }
+  for (const key of ['reactions', 'albumRead', 'groupFiles', 'groupTools', 'ocr', 'profileWrites', 'qqVoice']) {
+    assert.equal(DEFAULT_CONFIG.platform[key], true, `${key} 默认应延续拆细前的取向（开）`);
+  }
+  assert.deepEqual(DEFAULT_CONFIG.platform.perGroup, {}, '按群覆盖默认空');
+  assert.deepEqual(DEFAULT_CONFIG.platform.quotas,
+    { reactionsPerHour: 30, profilePerDay: 3, remarksPerDay: 5, avatarsPerDay: 2 },
+    '四个写入闸门的默认上限（拆细前的硬编码值）');
 });
 
-it('platformToolAllowed：默认全开（相册上传/换头像除外），显式关生效', () => {
+it('platformToolAllowed：默认全开（账号级外观三项除外），显式关生效，读写互不牵连', () => {
   assert.equal(platformToolAllowed('react_to_message', {}), true);
   assert.equal(platformToolAllowed('send_qq_voice', {}), true);
   assert.equal(platformToolAllowed('upload_to_group_album', {}), false, '默认关：未显式开就不放行');
   assert.equal(platformToolAllowed('upload_to_group_album', { albumUpload: true }), true);
   assert.equal(platformToolAllowed('set_my_avatar', {}), false, '换头像也是默认关');
   assert.equal(platformToolAllowed('set_my_avatar', { avatarWrites: true }), true);
-  assert.equal(platformToolAllowed('set_my_profile', { avatarWrites: false }), false);
-  assert.equal(platformToolAllowed('set_my_profile', { avatarWrites: true }), true);
-  assert.equal(platformToolAllowed('react_to_message', { reactions: false }), false);
-  assert.equal(platformToolAllowed('send_group_file', { groupFiles: false }), false);
-  assert.equal(platformToolAllowed('list_group_album', { albumRead: false }), false);
+  assert.equal(platformToolAllowed('set_my_profile', {}), false, '改昵称/个性说明同样默认关');
+  assert.equal(platformToolAllowed('set_my_profile', { nicknameWrites: true }), true);
+  // 读 / 写分开：关一边不牵连另一边（这正是这次拆细的意义）
+  assert.equal(platformToolAllowed('react_to_message', { reactions: false }), true, '关"看表情"不该连"贴表情"一起关');
+  assert.equal(platformToolAllowed('get_message_reactions', { reactions: false }), false);
+  assert.equal(platformToolAllowed('get_message_reactions', { reactionsWrite: false }), true);
+  assert.equal(platformToolAllowed('list_group_files', { groupFileSend: false }), true);
+  assert.equal(platformToolAllowed('send_group_file', { groupFileSend: false }), false);
+  assert.equal(platformToolAllowed('send_group_file', { groupFiles: false }), true, '关"看目录"不该连"发文件"一起关');
+  assert.equal(platformToolAllowed('list_group_album', { albumWrites: false }), true);
+  assert.equal(platformToolAllowed('like_album_photo', { albumWrites: false }), false);
+  assert.equal(platformToolAllowed('like_album_photo', { albumRead: false }), true, '关"看相册"不该连"点赞"一起关');
+  assert.equal(platformToolAllowed('get_group_profile', { groupWrites: false }), true);
+  assert.equal(platformToolAllowed('group_sign', { groupWrites: false }), false);
+  assert.equal(platformToolAllowed('group_sign', { groupTools: false }), true, '关"看群资料"不该连"签到"一起关');
+  assert.equal(platformToolAllowed('set_my_signature', { remarkWrites: false }), true);
+  assert.equal(platformToolAllowed('set_remark', { remarkWrites: false }), false);
+  assert.equal(platformToolAllowed('set_remark', { profileWrites: false }), true);
   assert.equal(platformToolAllowed('read_image_text', { ocr: false }), false);
   assert.equal(platformToolAllowed('send_message', { reactions: false }), true, '无关工具不受平台开关影响');
+});
+
+it('按群覆盖：本群显式布尔值优先于全局，别的群不受影响', () => {
+  const platform = {
+    reactionsWrite: true,
+    albumWrites: true,
+    avatarWrites: false,
+    perGroup: {
+      '433': { reactionsWrite: false, avatarWrites: true },
+      '999': { albumWrites: false, readReceipts: true }   // readReceipts 不是门控键 → 不许生效
+    }
+  };
+  // group:433：本群关了贴表情、开了换头像
+  assert.equal(platformToolAllowed('react_to_message', platform, 'group:433'), false);
+  assert.equal(platformToolAllowed('set_my_avatar', platform, 'group:433'), true);
+  // 别的群照旧走全局
+  assert.equal(platformToolAllowed('react_to_message', platform, 'group:100'), true);
+  assert.equal(platformToolAllowed('set_my_avatar', platform, 'group:100'), false);
+  // 裸群号与控制台同口径（事件与配置里都是裸号）
+  assert.equal(platformToolAllowed('react_to_message', platform, '433'), false);
+  // 私聊不带按群覆盖（chatKey 里没有群号）
+  assert.equal(platformToolAllowed('react_to_message', platform, 'private:5'), true);
+  // 覆盖里没写的键回落全局
+  assert.equal(platformToolAllowed('like_album_photo', platform, 'group:433'), true);
+  assert.equal(platformToolAllowed('like_album_photo', platform, 'group:999'), false);
+  // get_message_reactions 只归 reactions（本群没覆盖它）→ 仍按全局
+  assert.equal(platformToolAllowed('get_message_reactions', platform, 'group:433'), true);
+  // "默认关"的键也能被本群显式打开（avatarWrites 没有全局值）
+  assert.equal(platformGateAllowed('avatarWrites', { perGroup: { '8': { avatarWrites: true } } }, 'group:8'), true);
+});
+
+it('配额上限读配置：改小立刻生效，非法值回落默认', () => {
+  assert.equal(platformQuotaLimit({}, 'reactionsPerHour'), 30, '缺配置 = 内置默认');
+  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: 7 } } }, 'reactionsPerHour'), 7);
+  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: 0 } } }, 'reactionsPerHour'), 30, '0 = 默认（刹车不是不限量开关）');
+  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: -5 } } }, 'reactionsPerHour'), 30);
+  assert.equal(platformQuotaLimit({ platform: { quotas: { reactionsPerHour: 'abc' } } }, 'reactionsPerHour'), 30);
+  assert.equal(platformQuotaLimit({ platform: { quotas: { avatarsPerDay: 999 } } }, 'avatarsPerDay'), 200, '硬顶 200');
+  assert.equal(platformQuotaLimit({ platform: { quotas: { avatarsPerDay: 2.7 } } }, 'avatarsPerDay'), 2, '取整向下');
 });
 
 it('list_group_files：映射文件与文件夹；私聊拒绝', async () => {

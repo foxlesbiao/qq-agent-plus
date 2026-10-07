@@ -17,6 +17,9 @@ import {
   normalizeStickerCollectMax, normalizeStickerMax, parseList, sliderToTierUI
 } from '../core/format.js';
 import { pickedGroups, state } from '../core/state.js';
+// 「平台能力」页的键表与配额行：渲染在 platform.js，这里只按同一份键名读控件
+// （键名与 id 约定只维护一处；改名不同步时源码锚点用例会红）。
+import { ALL_GATE_KEYS, QUOTA_ROWS, gateCheckboxId, gateDefaultOn } from './platform.js';
 import { currentPersonaId } from './persona.js';
 import { captureTimeControlRule } from './settings-bind.js';
 import { syncThinkingUi } from './settings.js';
@@ -753,24 +756,32 @@ async function saveConfig({ quiet = false } = {}) {
     };
     // 平台能力开关：与 DEFAULT_CONFIG.platform 一一对应，
     // 缺控件时按已保存值回退（旧页面/旧存档不会把开关误抹）。
-    patch.platform = {
-      ...c.platform,
-      reactions: chk('#cfg-platform-reactions', c.platform?.reactions !== false),
-      qqVoice: chk('#cfg-platform-qqvoice', c.platform?.qqVoice !== false),
-      // 音色（下拉；列表由 platform.js 异步补全）：缺控件时按已保存值回退
-      qqVoiceCharacter: String(val('#cfg-platform-voicechar', c.platform?.qqVoiceCharacter || '')).trim(),
-      profileWrites: chk('#cfg-platform-profile', c.platform?.profileWrites !== false),
-      // 换头像/改昵称（账号级外观）：默认关的项，缺控件时按已保存值回退
-      avatarWrites: chk('#cfg-platform-avatar', c.platform?.avatarWrites === true),
-      groupTools: chk('#cfg-platform-grouptools', c.platform?.groupTools !== false),
-      ocr: chk('#cfg-platform-ocr', c.platform?.ocr !== false),
-      groupFiles: chk('#cfg-platform-groupfiles', c.platform?.groupFiles !== false),
-      albumRead: chk('#cfg-platform-albumread', c.platform?.albumRead !== false),
-      // 两个"默认关"的项（相册上传、已读标记）：缺控件时同样按已保存值回退
-      albumUpload: chk('#cfg-platform-albumupload', c.platform?.albumUpload === true),
-      readReceipts: chk('#cfg-platform-readreceipts', c.platform?.readReceipts === true),
-      forwardCards: chk('#cfg-platform-forwardcards', c.platform?.forwardCards !== false)
-    };
+    const platform = { ...c.platform };
+    // 门控键（读/写分开的 15 项）：键名表与渲染同一份（platform.js）。
+    // 缺控件时按已保存值回退、没存过就按内置默认取向 —— 渲染失败也不会把开关抹成默认。
+    for (const key of ALL_GATE_KEYS) {
+      const saved = typeof c.platform?.[key] === 'boolean' ? c.platform[key] : gateDefaultOn(key);
+      platform[key] = chk(`#${gateCheckboxId(key)}`, saved);
+    }
+    // 音色（下拉；列表由 platform.js 异步补全）：缺控件时按已保存值回退
+    platform.qqVoiceCharacter = String(val('#cfg-platform-voicechar', c.platform?.qqVoiceCharacter || '')).trim();
+    // 写入闸门上限：留空/非法 = 内置默认（与 platformQuotaLimit 同口径）；1~200 夹紧
+    platform.quotas = {};
+    for (const [key, , dflt] of QUOTA_ROWS) {
+      const n = Number(String(val(`#cfg-platform-quota-${key}`, '')).trim());
+      platform.quotas[key] = Number.isFinite(n) && n > 0 ? Math.max(1, Math.min(200, Math.round(n))) : dflt;
+    }
+    // 按群覆盖：草稿（platform.js 维护，切群不丢）里所有群的改动一次提交。
+    // __replace__ 是必须的 —— 普通深合并删不掉"被清空的群"。
+    // 草稿只在编辑器真渲染过之后才存在（白名单为空 / 渲染失败时它没有）：
+    // 那种情况回落到已保存值，别拿空表把用户之前的覆盖悄悄清掉。
+    const perGroupDraft = state.platformPerGroupDraft
+      ?? (c.platform?.perGroup && typeof c.platform.perGroup === 'object' ? c.platform.perGroup : {});
+    platform.perGroup = { __replace__: structuredClone(perGroupDraft) };
+    // 全局行为开关（不属于工具门控）：已读标记 / 日报卡片仍走全局
+    platform.readReceipts = chk('#cfg-platform-readreceipts', c.platform?.readReceipts === true);
+    platform.forwardCards = chk('#cfg-platform-forwardcards', c.platform?.forwardCards !== false);
+    patch.platform = platform;
   }
 
   if (sec === 'desktop') {

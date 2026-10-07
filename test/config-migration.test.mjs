@@ -171,3 +171,39 @@ test('省 Token：老配置缺键补 off、坏值不许带崩整份配置', () =
   const good = loadWholeConfigInNewProcess(JSON.stringify({ tokenSaver: { mode: 'aggressive' } }));
   assert.equal(good.config.tokenSaver.mode, 'aggressive', '合法值原样保留');
 });
+
+// ── 平台能力键拆细（2026-10-07：读/写分开 + 按群覆盖 + 配额上限）──
+test('平台能力拆细：老配置只开过 avatarWrites 时，昵称也回填成开（意图不许被拆细收掉一半）', () => {
+  const on = loadWholeConfigInNewProcess(JSON.stringify({ platform: { avatarWrites: true }, api: { apiKey: 'keep-me' } }));
+  assert.equal(on.config.platform.avatarWrites, true, '老键原样保留');
+  assert.equal(on.config.platform.nicknameWrites, true, '显式开过外观开关 → 改昵称一并回填');
+  const off = loadWholeConfigInNewProcess(JSON.stringify({ platform: { avatarWrites: false }, api: { apiKey: 'keep-me' } }));
+  assert.equal(off.config.platform.nicknameWrites, false, '没开过就保持新默认关');
+  const absent = loadWholeConfigInNewProcess(JSON.stringify({ api: { apiKey: 'keep-me' } }));
+  assert.equal(absent.config.platform.nicknameWrites, false, '全新配置默认关');
+  assert.equal(absent.config.platform.reactionsWrite, true, '拆出来的写侧默认延续拆细前（开）');
+  assert.equal(absent.config.platform.avatarWrites, false, '拆出来的头像键仍是默认关');
+});
+
+test('平台能力：perGroup / quotas 坏形状被归一化，不牵连整份配置', () => {
+  const bad = loadWholeConfigInNewProcess(JSON.stringify({
+    platform: { perGroup: 'nope', quotas: [1, 2] },
+    api: { apiKey: 'keep-me' }
+  }));
+  assert.deepEqual(bad.config.platform.perGroup, {}, '整段写坏 → 空表');
+  assert.deepEqual(bad.config.platform.quotas,
+    { reactionsPerHour: 30, profilePerDay: 3, remarksPerDay: 5, avatarsPerDay: 2 }, '整段写坏 → 默认值');
+  assert.equal(bad.config.api.apiKey, 'keep-me', '坏字段不许把整份配置冲掉');
+
+  const dirty = loadWholeConfigInNewProcess(JSON.stringify({
+    platform: {
+      perGroup: {
+        '433': { reactionsWrite: false, albumWrites: 'yes', readReceipts: true, bogus: 1 },
+        '999': 'not-an-object'
+      }
+    },
+    api: { apiKey: 'keep-me' }
+  }));
+  assert.deepEqual(dirty.config.platform.perGroup, { '433': { reactionsWrite: false } },
+    '只留"合法门控键 + 显式布尔值"；字符串值、非门控键（readReceipts）、坏形状的群整条丢掉');
+});

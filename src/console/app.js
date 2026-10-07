@@ -57,6 +57,11 @@ import {
   incidentDatabasePath
 } from '../pilots/incident-pilot.js';
 import { safeFetchBinary } from '../llm/safe-fetch.js';
+// 平台能力门控的元数据（键→标签/工具/默认取向/配额默认）：控制台不手抄第二份，防漂移
+import {
+  PLATFORM_DEFAULT_OFF, PLATFORM_GATE_LABELS, PLATFORM_QUOTA_DEFAULTS, PLATFORM_TOOL_GATES,
+  platformQuotaUsage
+} from '../tools/tools-core.js';
 import { integrationStatus, updateSnowLumaPassword } from './integrations.js';
 import { AutoUpdateManager, autoUpdatePending, readAutoUpdateState } from '../auto-update.js';
 import { checkForUpdate, ignoreVersion } from '../update-notice.js';
@@ -1803,6 +1808,21 @@ export function createApp({
   router.add('GET', '/api/group-game/status', async (req, res) => json(res, 200, groupGame.status()));
   router.add('GET', '/api/group-digest/status', async (req, res) => json(res, 200, groupDigest.status()));
   router.add('GET', '/api/tts/presets', async (req, res) => json(res, 200, { ok: true, services: TTS_SERVICES }));
+  // 「平台能力」页的元数据：键 → 标签 / 它管的工具 / 默认取向（"默认关"的三项在 UI 上要标注）。
+  // 让 UI 从服务端拿这份清单，而不是在 ui/ 里再抄一份 —— 抄一份就会在下次拆键时漏掉一半。
+  router.add('GET', '/api/platform/gates', async (req, res) => json(res, 200, {
+    ok: true,
+    gates: Object.entries(PLATFORM_TOOL_GATES).map(([key, tools]) => ({
+      key,
+      label: PLATFORM_GATE_LABELS[key] || key,
+      tools,
+      defaultOn: !PLATFORM_DEFAULT_OFF.has(key)
+    })),
+    quotas: Object.entries(PLATFORM_QUOTA_DEFAULTS).map(([key, value]) => ({ key, default: value }))
+  }));
+  // 平台写入闸门的当前用量（滑动窗口内）：UI 显示"本小时/今日已用 x / 上限 y"。
+  // 注意这是**进程内**计数 —— 控制台与机器人同一进程（src/console/app.js 就是主进程的装配）。
+  router.add('GET', '/api/platform/quota-usage', async (req, res) => json(res, 200, { ok: true, quotas: platformQuotaUsage() }));
   router.add('GET', '/api/identity-pilot/status', async (req, res) => json(res, 200, identityPilotStatus()));
   router.add('GET', '/api/slang-pilot/status', async (req, res) => json(res, 200, slangPilotStatus()));
   router.add('GET', '/api/incident-pilot/status', async (req, res) => json(res, 200, incidentPilotStatus()));
