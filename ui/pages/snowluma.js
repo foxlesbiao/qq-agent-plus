@@ -39,7 +39,8 @@ async function hydrateSnowlumaPanel() {
     ].join('') + `<div class="hint" style="margin-top:4px">${esc(fmtState(st))}</div>`;
     const updateBtn = document.getElementById('snowluma-update-btn');
     if (updateBtn) {
-      updateBtn.textContent = st.outdated && st.targetVersion ? `更新到 ${st.targetVersion}` : '重建协议端容器';
+      // 已经是基线时别承诺"重建"：镜像 tag 没变，compose 不会重启容器（只拉取/校验）
+      updateBtn.textContent = st.outdated && st.targetVersion ? `更新到 ${st.targetVersion}` : '重新拉取镜像';
       updateBtn.disabled = !st.installed || st.busy;
     }
     const backBtn = document.getElementById('snowluma-rollback-btn');
@@ -61,10 +62,14 @@ function bindSnowlumaActions() {
 
   document.getElementById('snowluma-update-btn')?.addEventListener('click', async (event) => {
     const btn = event.currentTarget;
+    const outdated = lastStatus?.outdated === true;
     const target = lastStatus?.targetVersion ? ` ${lastStatus.targetVersion}` : '';
-    if (!window.confirm(`确定更新协议端吗？\n\n会把镜像换成项目基线${target}并重建容器：\n· 端口/数据卷不动，QQ 登录态保留\n· 更新期间机器人会短暂离线（约 10~30 秒）\n· 拉取失败只还原配置，起不来会自动回滚\n\n镜像备份与日志会留在协议端目录的 backups/ 下。`)) return;
+    const head = outdated
+      ? `确定更新协议端吗？\n\n会把镜像换成项目基线${target}并重建容器：`
+      : '当前已经是项目基线版本。\n\n这会重新拉取镜像并让 compose 对齐配置（镜像没变时不会白重启容器）：';
+    if (!window.confirm(`${head}\n· 端口/数据卷不动，QQ 登录态保留\n· 更新期间机器人会短暂离线（约 10~30 秒）\n· 拉取失败只还原配置，起不来会自动回滚\n\n镜像备份与日志会留在协议端目录的 backups/ 下。`)) return;
     btn.disabled = true;
-    say('正在更新协议端…（拉镜像 + 重建容器，通常 10~60 秒）');
+    say('正在更新协议端…（拉镜像 + 对齐容器，通常 10~60 秒）');
     try {
       const res = await api('/api/snowluma/update', { method: 'POST', body: JSON.stringify({}) });
       say(res.ok

@@ -245,8 +245,10 @@ export function createSnowlumaUpdater({
     if (dryRun) {
       return { ok: true, dryRun: true, from, to: target, envChange: `${IMAGE_KEY}=${target}`, steps };
     }
-    if (compareVersions(parseImage(target).version, parseImage(from).version) === 0 && target === from) {
-      log(`[snowluma] 已经是目标镜像 ${target}，重建容器以确认状态`);
+    if (target === from) {
+      // 真机验证过的行为：镜像 tag 没变时 `compose up -d` 发现配置无变化，**不会**重启容器
+      // （这是好事：没必要为了"更新"平白断一次连接）。要强制重建得手动 --force-recreate。
+      log(`[snowluma] 已经是目标镜像 ${target}：只拉取/校验，compose 不会白重启容器`);
     }
     const backup = backupComposeFiles(dir);
     const envFile = path.join(dir, '.env');
