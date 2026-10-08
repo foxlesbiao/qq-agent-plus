@@ -62,24 +62,15 @@ function renderSettingsSidebar() {
   const s = state.status;
   const sidebar = $('#settings-sidebar');
   if (!sidebar) return;
+  // 分组（2026-10-08）：17 个分区平铺一长条最劝退，按"对话 / 记忆与人设 / 运行 / 平台 /
+  // 系统"五组归位，每组一个小标题。分组只影响侧栏观感，分区 id 与行为一个都没动
+  // （ui-smoke 断言 .settings-menu-item[data-section=...] 仍在，锚点不受影响）。
   const menu = [
-    ['api', '模型 API'],
-    ['search', '搜索服务'],
-    ['asr', '语音转文字'],
-    ['memory', '记忆'],
-    ['experiments', '实验功能'],
-    ['groupGame', '群游戏'],
-    ['moments', '每日动态'],
-    ['reminders', '定时提醒'],
-    ['qzone-interactions', '动态互动'],
-    ['time-control', '时间控制'],
-    ['token-saver', '省 Token'],
-    ['persona', '人设'],
-    ['allow', '聊天白名单'],
-    ['chat', '聊天设置'],
-    ['platform', '平台能力'],
-    ['desktop', '系统'],
-    ['onebot', 'OneBot']
+    ['对话与人格', [['persona', '人设'], ['chat', '聊天设置'], ['allow', '聊天白名单'], ['memory', '记忆']]],
+    ['模型与服务', [['api', '模型 API'], ['search', '搜索服务'], ['asr', '语音转文字'], ['token-saver', '省 Token']]],
+    ['自动行为', [['moments', '每日动态'], ['qzone-interactions', '动态互动'], ['reminders', '定时提醒'], ['groupGame', '群游戏'], ['time-control', '时间控制'], ['experiments', '实验功能']]],
+    ['平台', [['platform', '平台能力'], ['onebot', 'OneBot']]],
+    ['系统', [['desktop', '系统']]]
   ];
   sidebar.innerHTML = `
     <div class="settings-runstate">
@@ -88,7 +79,10 @@ function renderSettingsSidebar() {
       <div class="rs-row muted">${state.paused ? '已暂停' : (s?.orchestrator?.model ? `模型：${esc(s.orchestrator.model)}` : '模型：未设置')}</div>
     </div>
     <div class="settings-menu">
-      ${menu.map(([id, label]) => `<button class="settings-menu-item ${state.settingsSection === id ? 'active' : ''}" data-section="${id}">${label}</button>`).join('')}
+      ${menu.map(([group, items]) => `
+        <div class="settings-menu-group">${esc(group)}</div>
+        ${items.map(([id, label]) => `<button class="settings-menu-item ${state.settingsSection === id ? 'active' : ''}" data-section="${id}">${label}</button>`).join('')}
+      `).join('')}
     </div>`;
   sidebar.querySelectorAll('.settings-menu-item').forEach((el) => {
     el.addEventListener('click', () => {
