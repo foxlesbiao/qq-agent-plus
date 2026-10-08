@@ -161,18 +161,19 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * 协议端更新器。exec 可注入（测试用替身）；probe 同理。
  * 只做"改 .env + compose pull/up + 等就绪 + 失败自动回滚"，不碰容器名/端口/数据卷。
  */
-export function createSnowlumaUpdater({
-  composeDir,
-  container = 'qq-agent-snowluma',
-  webuiPort = 5099,
-  baseline = SNOWLUMA_BASELINE_IMAGE,
-  exec = defaultExec,
-  probe = probeWebui,
-  log = () => {},
-  readyTimeoutMs = 120000,
-  readyPollMs = 2000
-} = {}) {
-  const dir = String(composeDir || '');
+export function createSnowlumaUpdater(options = {}) {
+  // ⚠️ 注入点写成 const 而不是"解构参数默认值"：未定义调用扫描（node src/ops.js scan --strict，
+  // CI 会跑）只认已声明的标识符，`{ exec = defaultExec }` 这种默认值它看不见，
+  // 会把 exec(...)/probe(...) 报成"可疑未定义调用"（2026-10-08 CI 抓到过一次）。
+  const dir = String(options.composeDir || '');
+  const container = options.container || 'qq-agent-snowluma';
+  const webuiPort = Number(options.webuiPort) || 5099;
+  const baseline = options.baseline || SNOWLUMA_BASELINE_IMAGE;
+  const exec = options.exec || defaultExec;
+  const probe = options.probe || probeWebui;
+  const log = options.log || (() => {});
+  const readyTimeoutMs = Number(options.readyTimeoutMs) || 120000;
+  const readyPollMs = Number(options.readyPollMs) || 2000;
   let busy = null;                  // 同一时刻只允许一个更新在跑
   let lastResult = null;            // 最近一次更新结果（供"回滚到上一版"用）
 
