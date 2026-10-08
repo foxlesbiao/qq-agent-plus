@@ -113,9 +113,11 @@ async function loadOverview() {
   const modeChip = status?.paused ? { text: '暂停', cls: 'warn' } : null;
 
   const incidentList = Array.isArray(incidents?.incidents) ? incidents.incidents : [];
-  const openCount = Number(incidents?.status?.open) || Number(incidents?.status?.counts?.open) || 0;
-  const criticalCount = Number(incidents?.status?.critical) || Number(incidents?.status?.counts?.critical) || 0;
-  const ackedCount = Number(incidents?.status?.acked) || Number(incidents?.status?.counts?.acked) || 0;
+  // 计数字段在 status.counts 里（open / acknowledged / resolved / critical）—— 别猜扁平键名
+  const counts = incidents?.status?.counts || {};
+  const openCount = Number(counts.open) || 0;
+  const criticalCount = Number(counts.critical) || 0;
+  const ackedCount = Number(counts.acknowledged) || 0;
 
   const slVersion = String(snowluma?.currentVersion || '');
   const slChip = !snowluma?.installed ? { text: '未检测到', cls: '' }
@@ -123,21 +125,26 @@ async function loadOverview() {
       : snowluma?.belowRecommended ? { text: `低于推荐 ${snowluma.minRecommended}`, cls: 'warn' }
         : { text: '已是最新', cls: 'ok' };
 
-  const rows = Array.isArray(usage?.rows) ? usage.rows : [];
+  // 按天的行在 stats.days 里（不是 rows）；每天的次数用 exactCalls，runs 是另一维
+  const statDays = Array.isArray(usage?.days) ? usage.days : [];
   const dayRows = days(7).map((day) => {
-    const hit = rows.find((r) => String(r.day) === day) || {};
-    return { day, calls: Number(hit.calls) || 0, cost: Number(hit.cost) || 0 };
+    const hit = statDays.find((r) => String(r.day) === day) || {};
+    return { day, calls: Number(hit.exactCalls) || Number(hit.runs) || 0, cost: Number(hit.cost) || 0 };
   });
+  const calls7d = Number(usage?.totals?.exactCalls) || Number(usage?.totals?.runs) || 0;
 
-  const cacheHit = Number(status?.cacheHitRate) || 0;
+  // cacheHitRate 是**比例**（0.7456），要 ×100 才是百分比 —— 顶部状态条也是这么算的
+  const cacheHit = (Number(status?.cacheHitRate) || 0) * 100;
+  // 花费与顶部状态条同源（cost.cost），避免同一屏两个数打架
+  const todayCost = Number(status?.cost?.cost ?? usageToday.estimatedYuan) || 0;
   // 最近异常列表：没有记录时给一句空状态，不渲染空 <ul>
   const incidentBody = incidentList.length
     ? `<ul class="feed">
         ${incidentList.map((it) => `
           <li>
-            <span class="feed-time">${fmtTime(it.last_at)}</span>
+            <span class="feed-time">${fmtTime(it.lastAt)}</span>
             <span class="chip ${SEVERITY_CLASS[it.severity] || ''}">${esc(SEVERITY_LABEL[it.severity] || it.severity)}</span>
-            <span class="feed-text">${esc(String(it.safe_message || it.code || '').slice(0, 90))}</span>
+            <span class="feed-text">${esc(String(it.message || it.code || '').slice(0, 90))}</span>
             ${it.count > 1 ? `<span class="muted">×${it.count}</span>` : ''}
             <span class="muted">${esc(STATE_LABEL[it.state] || it.state)}</span>
           </li>`).join('')}
@@ -168,11 +175,11 @@ async function loadOverview() {
       ${kpi({
         icon: 'activity', label: '今日运行',
         value: `${fmtNum(usageToday.runs)} <span class="kpi-unit">次</span>`,
-        sub: `调用 ${fmtNum(usage?.totals?.calls)} 次（近 7 天） · 联网 ${fmtNum(status?.webSearchCount)} 次`
+        sub: `近 7 天 ${fmtNum(calls7d)} 次调用 · 联网 ${fmtNum(status?.webSearchCount)} 次`
       })}
       ${kpi({
         icon: 'coins', label: '今日花费（估算）',
-        value: `¥${(Number(usageToday.estimatedYuan) || 0).toFixed(3)}`,
+        value: `¥${todayCost.toFixed(3)}`,
         sub: `缓存命中 ${cacheHit.toFixed(1)}% · ${fmtNum(usageToday.totalTokens)} tok`
           + (Number(usageToday.unpricedRuns) ? ` · ${usageToday.unpricedRuns} 次未计价` : '')
       })}
@@ -193,7 +200,7 @@ async function loadOverview() {
     <div class="grid-2">
       ${panel('连接与身份', '机器人接的是哪个协议端、用的哪个模型', `
         <dl class="kv">
-          <dt>OneBot</dt><dd>${esc(status?.onebot?.httpUrl || '（未读到地址）')} · ${onebot.connected ? '<span class="chip ok">已连接</span>' : '<span class="chip">未连接</span>'}</dd>
+          <dt>OneBot</dt><dd>${onebot.connected ? '<span class="chip ok">已连接</span> 正向 WebSocket + HTTP API' : '<span class="chip">未连接</span>（地址与令牌在「OneBot」设置页）'}</dd>
           <dt>机器人</dt><dd>${selfName ? `${esc(selfName)}${onebot.self?.userId ? ` · ${esc(onebot.self.userId)}` : ''}` : '（还没拿到登录信息）'}</dd>
           <dt>模型</dt><dd>${esc(status?.orchestrator?.model || '（未设置）')}</dd>
           <dt>协议端</dt><dd>${slVersion ? `v${esc(slVersion)}` : '—'} · <a href="#" id="overview-goto-onebot">去更新 / 看详情</a></dd>
@@ -202,7 +209,7 @@ async function loadOverview() {
       { icon: 'alert', actions: '<a href="#" id="overview-goto-incidents" class="panel-link">全部异常 →</a>' })}
     </div>
 
-    ${panel('近 7 天用量', `共 ${fmtNum(usage?.totals?.calls)} 次调用 · ¥${(Number(usage?.totals?.cost) || 0).toFixed(3)}`,
+    ${panel('近 7 天用量', `共 ${fmtNum(calls7d)} 次调用 · ¥${(Number(usage?.totals?.cost) || 0).toFixed(3)}`,
     dayRows.some((r) => r.calls) ? miniBars(dayRows) : '<div class="hint">这 7 天没有调用记录。</div>', { icon: 'activity' })}
 
     ${panel('主机资源', host ? `${esc(host.hostname || '')}${host.cpuModel ? ` · ${esc(host.cpuModel)}` : ''}${host.cpuCount ? ` · ${host.cpuCount} 核` : ''}` : '没读到主机信息', host ? `

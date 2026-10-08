@@ -323,7 +323,7 @@ html.boot-show .loading-overlay { opacity: 1; }
    content: attr(data-icon) 直接画 emoji —— emoji 自带配色、各系统形状不同，
    选中/悬停态也没法统一。改成 SVG 后颜色跟随 currentColor。 */
 .ico { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 18px; height: 18px; }
-.ico svg { display: block; }
+.ico svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .tab .ico { opacity: .85; }
 .tab:hover .ico { opacity: 1; }
 .tab.active .ico { opacity: 1; color: var(--accent); }
