@@ -286,7 +286,7 @@ test('抬头在"只有一个/全都没用过"与"全都用过"两个边界不再
 
 test('清单把两类来源标出来：QQ 收藏表情 vs 本地图库（发出去是图片）', () => {
   const entries = [
-    { id: '3808482642_1', desc: '真表情', url: 'https://p.qpic.cn/qq_expression/x/1', source: 'qq', useCount: 1, lastUsedAt: 1 },
+    { id: '10086_1', desc: '真表情', url: 'https://p.qpic.cn/qq_expression/x/1', source: 'qq', useCount: 1, lastUsedAt: 1 },
     { id: 'collected_-100', desc: '收藏的图片', url: 'https://multimedia.nt.qq.com.cn/download?fileid=x', source: 'ai', useCount: 0 },
     { id: 'manual_abc', desc: '手动上传的图', localFile: 'sticker-assets/manual_abc.png', source: 'manual', useCount: 0 }
   ];

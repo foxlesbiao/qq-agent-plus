@@ -221,7 +221,7 @@ it('模拟群：换头像 / 改 QQ 资料走真 HTTP；改昵称后登录信息�
   try {
     await withSim({
       respond: (action) => {
-        if (action === 'get_login_info') return { user_id: 3808482642, nickname: '犊子二号' };
+        if (action === 'get_login_info') return { user_id: 10086, nickname: '犊子二号' };
         return {};
       }
     }, async (sim, client) => {
