@@ -43,9 +43,12 @@ function revealOrigin(ev) {
     x = r.left + r.width / 2;
     y = r.top + r.height / 2;
   }
-  // 用 typeof 判断"有没有坐标"，不能用真值判断：点在视口左上角时 clientX/clientY 都是 0，
-  // `clientX || clientY` 会当成"没有坐标"，波纹就从屏幕中心冒出来（实测用例造出过这个值）。
-  if (ev && typeof ev.clientX === 'number' && typeof ev.clientY === 'number') {
+  // 两个坑叠在一起：
+  //   ① 点在视口左上角时 clientX/clientY 都是 0，用真值判断会当成"没有坐标"；
+  //   ② 键盘触发的 click（以及 element.click()）坐标也全是 0 —— 那不是"左上角"，
+  //      而是"这次交互根本没有位置"，该退回元素中心，否则波纹从屏幕角落冒出来。
+  // detail > 0 恰好区分这两者：真实指针点击 detail 为 1，键盘/脚本触发的 click 为 0。
+  if (ev && ev.detail > 0 && typeof ev.clientX === 'number' && typeof ev.clientY === 'number') {
     x = ev.clientX;
     y = ev.clientY;
   }

@@ -50,13 +50,26 @@ function fakeBrowser({ motion = '', reduceMedia = false, withVT = true, viewport
 test('revealOrigin：优先用指针落点，半径取到视口四角的最远距离', () => {
   const env = fakeBrowser({ viewport: [1000, 500] });
   try {
-    const o = revealOrigin({ clientX: 100, clientY: 200 });
+    const o = revealOrigin({ clientX: 100, clientY: 200, detail: 1 });
     assert.deepEqual([o.x, o.y], [100, 200]);
     // 远角是 (1000, 500) → dx=900, dy=300 → hypot≈948.68 → ceil 949
     assert.equal(o.r, Math.ceil(Math.hypot(900, 300)));
     // 落点在角上时半径 = 视口对角线
-    assert.equal(revealOrigin({ clientX: 0, clientY: 0 }).r, Math.ceil(Math.hypot(1000, 500)));
-    assert.equal(revealOrigin({ clientX: 1000, clientY: 500 }).r, Math.ceil(Math.hypot(1000, 500)));
+    assert.equal(revealOrigin({ clientX: 0, clientY: 0, detail: 1 }).r, Math.ceil(Math.hypot(1000, 500)));
+    assert.equal(revealOrigin({ clientX: 1000, clientY: 500, detail: 1 }).r, Math.ceil(Math.hypot(1000, 500)));
+  } finally { env.restore(); }
+});
+
+test('revealOrigin：键盘触发的 click（坐标是 0 但不是"落在左上角"）退回元素中心', () => {
+  const env = fakeBrowser({ viewport: [1000, 500] });
+  try {
+    const el = { getBoundingClientRect: () => ({ left: 200, top: 100, width: 80, height: 40 }) };
+    // 键盘按 Enter/Space 触发的 click：clientX/clientY 都是 0、detail 是 0
+    const kb = revealOrigin({ clientX: 0, clientY: 0, detail: 0, currentTarget: el });
+    assert.deepEqual([kb.x, kb.y], [240, 120], 'detail=0 表示"这次交互没有位置"，要用元素中心，不能从屏幕角落扩散');
+    // 真实指针点在最左上角（detail=1）：那就是 0,0，不该被当成"没有坐标"
+    const corner = revealOrigin({ clientX: 0, clientY: 0, detail: 1, currentTarget: el });
+    assert.deepEqual([corner.x, corner.y], [0, 0]);
   } finally { env.restore(); }
 });
 
@@ -81,7 +94,7 @@ test('动效被关掉时直切：不设置变量、不调用 View Transition', (
     try {
       assert.equal(motionDisabled(), true, `${JSON.stringify(opts)} 下应当判定为"不动效"`);
       let applied = 0;
-      const used = applyWithReveal(() => { applied++; }, { clientX: 1, clientY: 1 });
+      const used = applyWithReveal(() => { applied++; }, { clientX: 1, clientY: 1, detail: 1 });
       assert.equal(used, false, '被关掉时要返回 false（直切）');
       assert.equal(applied, 1, '切换本身必须照常发生');
       assert.equal(env.calls.length, 0, '不许调用 startViewTransition');
@@ -94,7 +107,7 @@ test('浏览器不支持 View Transition 时直切（不报错）', () => {
   const env = fakeBrowser({ withVT: false });
   try {
     let applied = 0;
-    assert.equal(applyWithReveal(() => { applied++; }, { clientX: 5, clientY: 5 }), false);
+    assert.equal(applyWithReveal(() => { applied++; }, { clientX: 5, clientY: 5, detail: 1 }), false);
     assert.equal(applied, 1);
     assert.equal(env.vars.size, 0);
   } finally { env.restore(); }
@@ -104,7 +117,7 @@ test('支持且允许动效时：写好 --vt-* 再把它交给 startViewTransiti
   const env = fakeBrowser({ viewport: [800, 600] });
   try {
     let applied = 0;
-    const used = applyWithReveal(() => { applied++; }, { clientX: 800, clientY: 600 });
+    const used = applyWithReveal(() => { applied++; }, { clientX: 800, clientY: 600, detail: 1 });
     assert.equal(used, true);
     assert.equal(env.vars.get('--vt-x'), '800px');
     assert.equal(env.vars.get('--vt-y'), '600px');
@@ -120,16 +133,16 @@ test('上一次过渡还没结束时的第二次调用：直切，不把用户�
   const env = fakeBrowser();
   try {
     let first = 0;
-    assert.equal(applyWithReveal(() => { first++; }, { clientX: 10, clientY: 10 }), true);
+    assert.equal(applyWithReveal(() => { first++; }, { clientX: 10, clientY: 10, detail: 1 }), true);
     assert.equal(first, 0, '第一次走动画（回调还没被调用）');
     let second = 0;
-    assert.equal(applyWithReveal(() => { second++; }, { clientX: 20, clientY: 20 }), false, '第二次不能再开一次过渡');
+    assert.equal(applyWithReveal(() => { second++; }, { clientX: 20, clientY: 20, detail: 1 }), false, '第二次不能再开一次过渡');
     assert.equal(second, 1, '但第二次的变更必须立刻生效');
     assert.equal(env.calls.length, 1, 'startViewTransition 只被调用过一次');
     // 收尾：把"忙"标记放掉，否则这条用例会把状态带进后面几条（模块级单例）
     await env.release();
     let third = 0;
-    assert.equal(applyWithReveal(() => { third++; }, { clientX: 30, clientY: 30 }), true, '释放之后又能走动画了');
+    assert.equal(applyWithReveal(() => { third++; }, { clientX: 30, clientY: 30, detail: 1 }), true, '释放之后又能走动画了');
     assert.equal(third, 0);
     assert.equal(env.calls.length, 2);
   } finally { await env.release(); env.restore(); }

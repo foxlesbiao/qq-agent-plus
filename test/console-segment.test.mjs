@@ -19,7 +19,7 @@ const SKIP = WindowClass ? false : 'happy-dom 未安装（devDependencies；--om
 const { PILL_CLASS, enhanceSeg, refreshSeg } = await import('../ui/core/segment.js');
 
 /** 造一个三段的分段控件；几何值由调用方指定（happy-dom 不做布局）。 */
-function makeSeg(window, { pad = 3, border = 1, widths = [36, 52, 44], selected = 0 } = {}) {
+function makeSeg(window, { pad = 4, border = 0, widths = [36, 52, 44], selected = 0 } = {}) {
   const doc = window.document;
   doc.body.innerHTML = `<div class="seg" style="padding-left:${pad}px"></div>`;
   const seg = doc.querySelector('.seg');
@@ -51,12 +51,12 @@ test('enhanceSeg：只插一个滑块、放在最前面，重复调用是幂等�
   assert.equal(seg.firstElementChild.classList.contains(PILL_CLASS), true, '滑块要在最前面（其它项按序排）');
   assert.equal(pills[0].getAttribute('aria-hidden'), 'true', '滑块是纯装饰，要 aria-hidden');
   assert.equal(seg.classList.contains('seg-enhanced'), true);
-  assert.equal(seg.dataset.segPad, '3', '要把轨道内边距记下来，定位时要用');
+  assert.equal(seg.dataset.segPad, '4', '要把轨道内边距（由几何反推）记下来，定位时要用');
 });
 
 test('滑块位置 = 选中项偏移 − 轨道边框 − 轨道内边距，宽度取选中项宽度', { skip: SKIP }, () => {
   const window = new WindowClass();
-  const seg = makeSeg(window, { pad: 3, border: 1, widths: [36, 52, 44], selected: 0 });
+  const seg = makeSeg(window, { pad: 4, border: 0, widths: [36, 52, 44], selected: 0 });
   enhanceSeg(seg);
   const pill = seg.querySelector('.' + PILL_CLASS);
   const items = [...seg.querySelectorAll('.seg-item')];
@@ -65,18 +65,24 @@ test('滑块位置 = 选中项偏移 − 轨道边框 − 轨道内边距，宽�
     w: parseFloat(pill.style.getPropertyValue('--pill-w')),
     opacity: pill.style.opacity
   });
-  // 第 0 格：offsetLeft = 1 + 3 = 4 → 4 − 1 − 3 = 0
+  // 第 0 格：offsetLeft = 0 + 4 = 4，内边距由几何反推 = 4 → 4 − 0 − 4 = 0
   assert.deepEqual(read(), { x: 0, w: 36, opacity: '1' });
 
-  // 换到第 2 格（offsetLeft = 4 + 36 + 52 = 92）→ 92 − 1 − 3 = 88
+  // 换到第 2 格（offsetLeft = 4 + 36 + 52 = 92）→ 92 − 0 − 4 = 88
   items.forEach((el) => el.classList.toggle('selected', el === items[2]));
   refreshSeg(seg);
   assert.deepEqual(read(), { x: 88, w: 44, opacity: '1' });
 
-  // 换到第 1 格 → 40 − 1 − 3 = 36
+  // 换到第 1 格 → 40 − 0 − 4 = 36
   items.forEach((el) => el.classList.toggle('selected', el === items[1]));
   refreshSeg(seg);
   assert.deepEqual(read(), { x: 36, w: 52, opacity: '1' });
+
+  // 有边框时也要减掉它（border 会算进 offsetLeft，但滑块是相对 padding box 定位的）
+  const seg2 = makeSeg(window, { pad: 4, border: 1, widths: [30, 30, 30], selected: 1 });
+  enhanceSeg(seg2);
+  const pill2 = seg2.querySelector('.' + PILL_CLASS);
+  assert.equal(parseFloat(pill2.style.getPropertyValue('--pill-x')), 30, '第 1 格：offsetLeft 35 − 边框 1 − 内边距 4 = 30');
 });
 
 test('没有选中项时滑块收起来（不留一个悬空色块）', { skip: SKIP }, () => {

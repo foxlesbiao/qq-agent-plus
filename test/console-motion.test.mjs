@@ -141,3 +141,16 @@ test('色板 / 深色强度 / 侧栏样式 / 字体 / 背景各有对应的生�
   assert.ok(/html\[data-hide-badges='1'\] \.top-status/.test(css), '顶栏徽章开关要生效');
   assert.ok(/html\[data-hide-theme-btn='1'\] #theme-btn/.test(css), '顶栏主题按钮开关要生效');
 });
+
+test('开关的覆盖范围包含外观面板（.opt-row-ctrl），且轨道用 inset 描边而非 1px 边框', () => {
+  // 这条是实测抓到的回归：外观页的开关挂在 .opt-row-ctrl 里，选择器只写了 .checkbox-row / .plat-row，
+  // 结果那一页的开关全是原生复选框（DOM 断言看不到 —— 它只查 checked，不查计算样式）。
+  assert.ok(/\.opt-row-ctrl > input\[type='checkbox'\]/.test(css), '外观面板的开关也要被开关样式覆盖');
+  assert.ok(/\.opt-row-ctrl > input\[type='checkbox'\]:checked::after/.test(css), '选中态的圆点位移也要覆盖它');
+  // 分段轨道的边框：1px border 会被按 DPR 取成 0.667px，而 offsetLeft 只给整数，
+  // 滑块按几何算位置就会差 1px —— 所以改用 inset 描边（padding box == border box）。
+  const segBlock = css.match(/\.seg \{[\s\S]*?\}/);
+  assert.ok(segBlock, '要有 .seg 规则');
+  assert.equal(/border:\s*1px solid/.test(segBlock[0]), false, '分段轨道不许用 1px border（取整误差会让滑块对不齐）');
+  assert.ok(/box-shadow: inset 0 0 0 1px var\(--border\)/.test(segBlock[0]), '描边要用 inset box-shadow 画');
+});

@@ -3141,39 +3141,10 @@ dialog { margin: auto; max-height: 88vh; }
 #update-notice-result { margin: 0; font-size: 12px; }
 #update-notice-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 
-/* 思考模式分段选择（ChatGPT 式：一排档位块，选中项实心高亮）。 */
-.seg {
-  display: flex;
-  gap: 4px;
-  padding: 3px;
-  background: var(--bg-3);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  width: 100%;
-  box-sizing: border-box;
-}
-.seg.dim { opacity: .45; }
-.seg-item {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 6px 4px;
-  border: none;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text);
-  font-size: 12.5px;
-  line-height: 1.3;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background .12s ease, color .12s ease;
-}
-.seg-item:hover { background: rgba(127, 127, 127, .14); }
-.seg-item.selected {
-  background: var(--accent);
-  color: #fff;
-  font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, .22);
-}
+/* 思考模式分段选择（ChatGPT 式：一排档位块，选中项实心高亮）。
+   注意：轨道与选项的最终样式在文件末尾「分段控件 v2」—— 这里只保留这条注释，
+   原来的那一版（自带 1px border + 10px 圆角 + 换色 transition）已经被它整体取代，
+   两份叠着只会让下一个改的人分不清哪条生效。 */
 
 /* ══════════════════════════════════════════════════════════════
    「平台能力」页（2026-10-07 重塑）
@@ -3778,11 +3749,12 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
 ::view-transition-group(root) { animation-duration: .5s; }
 
 /* ── 9. 开关（checkbox → 胶囊开关）。
-      只改"开关语义"的位置：设置页 .checkbox-row 与平台能力页 .plat-row。
+      只改"开关语义"的位置：设置页 .checkbox-row、平台能力页 .plat-row、外观页 .opt-row-ctrl。
       列表里那种多选（.ma-check / .bl-chk / .group-check / 白名单分群）保持方框，
       它们表达的是"选中若干项"，不是"开/关"，长成开关反而会读错。 ── */
 .checkbox-row > input[type='checkbox'],
-.plat-row > input[type='checkbox'] {
+.plat-row > input[type='checkbox'],
+.opt-row-ctrl > input[type='checkbox'] {
   -webkit-appearance: none;
   appearance: none;
   position: relative;
@@ -3801,7 +3773,8 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
     box-shadow var(--dur-interaction) var(--ease-in-out);
 }
 .checkbox-row > input[type='checkbox']::after,
-.plat-row > input[type='checkbox']::after {
+.plat-row > input[type='checkbox']::after,
+.opt-row-ctrl > input[type='checkbox']::after {
   content: '';
   position: absolute;
   top: 3px;
@@ -3814,18 +3787,23 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
   transition: transform 160ms var(--ease-spring);
 }
 .checkbox-row > input[type='checkbox']:checked,
-.plat-row > input[type='checkbox']:checked {
+.plat-row > input[type='checkbox']:checked,
+.opt-row-ctrl > input[type='checkbox']:checked {
   background: var(--accent);
   box-shadow: inset 0 0 0 1px transparent;
   animation: none;   /* 旧的 checkPop 是给方框用的，开关上不需要 */
 }
 .checkbox-row > input[type='checkbox']:checked::after,
-.plat-row > input[type='checkbox']:checked::after { transform: translateX(var(--switch-travel)); }
+.plat-row > input[type='checkbox']:checked::after,
+.opt-row-ctrl > input[type='checkbox']:checked::after { transform: translateX(var(--switch-travel)); }
 .checkbox-row > input[type='checkbox']:disabled,
-.plat-row > input[type='checkbox']:disabled { opacity: .45; cursor: not-allowed; }
-.checkbox-row > input[type='checkbox']:disabled::after { background: var(--muted); }
+.plat-row > input[type='checkbox']:disabled,
+.opt-row-ctrl > input[type='checkbox']:disabled { opacity: .45; cursor: not-allowed; }
+.checkbox-row > input[type='checkbox']:disabled::after,
+.opt-row-ctrl > input[type='checkbox']:disabled::after { background: var(--muted); }
 .checkbox-row > input[type='checkbox']:focus-visible,
-.plat-row > input[type='checkbox']:focus-visible {
+.plat-row > input[type='checkbox']:focus-visible,
+.opt-row-ctrl > input[type='checkbox']:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 999px;
@@ -3835,26 +3813,34 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
 .checkbox-row > label { line-height: var(--lh-base); }
 @media (prefers-reduced-motion: reduce) {
   .checkbox-row > input[type='checkbox']::after,
-  .plat-row > input[type='checkbox']::after { transition: none; }
+  .plat-row > input[type='checkbox']::after,
+  .opt-row-ctrl > input[type='checkbox']::after { transition: none; }
 }
 
 /* ── 10. 分段控件 v2：轨道 + 平移滑块 ── */
 .seg {
   position: relative;
+  display: flex;          /* 这两条原来散落在老规则里：思考档位要按 100% 撑满它的容器 */
+  width: 100%;
+  box-sizing: border-box;
   gap: 0;
-  padding: 3px;
+  /* 用 inset 描边代替 1px 边框：border 的宽度会被浏览器按 DPR 取成 0.667px 这类小数，
+     而 offsetLeft/clientLeft 只给整数 —— 滑块要按几何算位置，那个取整误差会让它对不齐
+     （实测差 1px）。去掉 border 之后 padding box 就是 border box，算术全是整数。
+     视觉与 1px 边框等价（描边画在背景之内，滑块是子元素、画在它上面，不会被盖住）。 */
+  padding: 4px;
   background: var(--bg-3);
-  border: 1px solid var(--border);
+  border: none;
   border-radius: calc(9px * var(--r-scale));
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .07);
+  box-shadow: inset 0 0 0 1px var(--border), inset 0 1px 2px rgba(0, 0, 0, .07);
 }
 .seg-pill {
   position: absolute;
-  top: 3px;
-  bottom: 3px;
+  top: 4px;
+  bottom: 4px;
   /* left 与轨道内边距同源：由 segment.js 按实测几何写进 --pill-left，
-     CSS 里不再写死一个和 padding 重复的 3px */
-  left: var(--pill-left, 3px);
+     CSS 里不再写死一个和 padding 重复的 4px */
+  left: var(--pill-left, 4px);
   width: var(--pill-w, 0px);
   border-radius: calc(6px * var(--r-scale));
   background: var(--accent);
@@ -3870,6 +3856,9 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
 .seg-item {
   position: relative;
   z-index: 1;
+  flex: 1 1 0;            /* 等宽等分（原来在老规则里） */
+  min-width: 0;
+  white-space: nowrap;
   background: transparent;
   border: none;
   color: var(--muted);
