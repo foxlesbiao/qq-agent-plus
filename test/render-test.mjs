@@ -70,10 +70,15 @@ function makeEl(id = '', cls = '') {
     querySelector: (sel) => { el._q ||= {} ; el._q[sel] ||= makeEl(); return el._q[sel]; },
     querySelectorAll: () => [],
     appendChild(c) { el.children.push(c); return c; },
+    // 滑块（ui/core/nav-pill.js）要往容器第一个位置插自己；侧栏那套要读 data-* 开关。
+    // 真浏览器里这两个方法永远在，桩缺了会让整页渲染直接抛（2026-10-08 踩到）
+    insertBefore(c) { el.children.unshift(c); return c; },
     remove() {},
     closest: () => null,
     setAttribute() {},
     getAttribute: () => null,
+    hasAttribute: () => false,
+    removeAttribute() {},
     focus() {},
     scrollIntoView() {},
     getBoundingClientRect: () => ({ top: 0, left: 0, width: 100, height: 20 }),

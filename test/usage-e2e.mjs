@@ -55,7 +55,11 @@ function makeEl(id = '') {
     querySelector(sel) { el._q[sel] ||= makeEl(); return el._q[sel]; },
     querySelectorAll: () => [],
     appendChild(c) { el.children.push(c); return c; },
+    // 侧栏（ui/core/side-nav.js）会读 data-side-* 开关、往列表首位插滑块；
+    // 桩缺这两个方法时整页渲染会抛（2026-10-08 踩到）
+    insertBefore(c) { el.children.unshift(c); return c; },
     remove() {}, closest: () => null, setAttribute() {}, getAttribute: () => null,
+    hasAttribute: () => false, removeAttribute() {},
     focus() {}, scrollIntoView() {}
   };
   el.classList = {

@@ -42,8 +42,13 @@ function positionNavPill(list, { activeSelector = ':scope > .active', previous =
   const doc = list.ownerDocument;
   let pill = previous || list.querySelector(':scope > .' + NAV_PILL_CLASS);
   if (!pill) pill = createNavPill(doc);
-  // 新建的、以及调用方交回来的旧节点，都要挂进容器（后者是"重建 DOM 后接回来"的那条路）
-  if (pill.parentNode !== list) list.insertBefore(pill, list.firstChild);
+  // 新建的、以及调用方交回来的旧节点，都要挂进容器（后者是"重建 DOM 后接回来"的那条路）。
+  // 滑块是**装饰性**节点：容器不支持插入时（手写的极简 DOM 桩）直接跳过，绝不让它把整页渲染
+  // 带崩 —— 真浏览器里这个方法永远在（render-test 的假 DOM 就只实现了 querySelector）。
+  if (pill.parentNode !== list) {
+    if (typeof list.insertBefore !== 'function') return pill;
+    list.insertBefore(pill, list.firstChild);
+  }
   const active = list.querySelector(activeSelector);
   if (!active) {
     pill.style.opacity = '0';
