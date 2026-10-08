@@ -449,8 +449,27 @@ function bindAppearanceControls() {
   }
 
   // 色板预览卡里的"底色"要按当前明暗画，所以每次绑定时对着当前主题刷一遍内联色
-  paintSchemePreviews();
-  syncLabels();
+  refreshPanel = () => { syncLabels(); paintSchemePreviews(); };
+  refreshPanel();
+  bindAppearanceListener();
+}
+
+/**
+ * 外观一变就刷新"面板上的当前值"（选中态、缩放百分比、微调行的字面、色板预览的强调色圆点）。
+ * 挂在 applyAppearance 广播的 qqa:appearance 上而不是紧跟在 setAppearance 后面：
+ * 走波纹时应用是延后执行的，跟在调用点后面刷只会刷到"还没生效"的那份。
+ * 只注册一次（模块级标记）：设置页每渲染一次都会调 bindAppearanceControls。
+ */
+let appearanceListenerBound = false;
+/** 当前这一版面板的"刷新自身"动作；每次渲染时由 bindAppearanceControls 替换。 */
+let refreshPanel = null;
+
+function bindAppearanceListener() {
+  if (appearanceListenerBound) return;
+  appearanceListenerBound = true;
+  document.addEventListener('qqa:appearance', () => {
+    try { refreshPanel?.(); } catch { /* 面板可能已经不在这一页了，忽略 */ }
+  });
 }
 
 /**
@@ -494,4 +513,4 @@ function paintSchemePreviews(app = currentAppearance()) {
       </span>`;
   }
 }
-export { bindAppearanceControls, paintSchemePreviews, renderAppearanceBlock };
+export { bindAppearanceControls, bindAppearanceListener, paintSchemePreviews, renderAppearanceBlock };

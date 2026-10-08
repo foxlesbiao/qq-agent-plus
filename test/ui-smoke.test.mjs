@@ -199,7 +199,11 @@ test('真实 DOM 冒烟：波纹回调延迟执行时，连续操作仍以最后
     const pending = [];
     doc.startViewTransition = (cb) => {
       pending.push(cb);
-      return { finished: new Promise(() => {}), updateCallbackDone: new Promise(() => {}) };
+      // finished 立刻 resolve → "忙"标记在下一个微任务就放掉，于是**每一次**点击都会开一次
+      // 过渡、每次的回调都被延后（真浏览器里连续操作就是这个样子：上一次动画还在跑，新的照开，
+      // 只是被跳过；而回调落到下一帧）。updateCallbackDone 挂着不 settle，避免兜底分支提前把
+      // 变更灌进去，让用例真正测"回调延迟"这件事。
+      return { finished: Promise.resolve(), updateCallbackDone: new Promise(() => {}) };
     };
     for (const scheme of ['nord', 'rose', 'slate']) {
       doc.querySelector(`#appearance-schemes .scheme-card[data-scheme="${scheme}"]`).click();
@@ -212,6 +216,18 @@ test('真实 DOM 冒烟：波纹回调延迟执行时，连续操作仍以最后
       '延迟执行的回调必须应用"最新那一份"，而不是排队时的快照');
     assert.equal(doc.querySelectorAll('#appearance-schemes .scheme-card.on')[0]?.dataset.scheme, 'slate',
       '视觉选中态与生效值也要一致');
+
+    // 同一件事在强调色上更容易露馅：色板的"高亮"是每次生效后重新推出来的（syncLabels），
+    // 而生效可能是延迟发生的 —— 刷新动作必须挂在"已生效"这个事件上，否则高亮会停在中途那一格
+    // （实测：连点三个强调色，色值落在了最后一个，高亮却停在中间那个）。
+    const presets = [...doc.querySelectorAll('#appearance-presets [data-preset]')];
+    for (const i of [0, 3, 6]) { presets[i].click(); await settle(25); }
+    for (const cb of pending.splice(0)) cb();
+    await settle(80);
+    const onNow = [...doc.querySelectorAll('#appearance-presets [data-preset].on')];
+    assert.equal(onNow.length, 1, '色板同时只有一个高亮');
+    assert.equal(onNow[0].dataset.preset, presets[6].dataset.preset,
+      '高亮要跟着"最后选中的那个"走，不能停在中途那一格');
   } finally { window.happyDOM?.abort?.(); }
 });
 

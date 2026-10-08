@@ -135,6 +135,10 @@ function applyAppearance(pref = {}) {
   applyTheme(app.mode);
   try { localStorage.setItem('qqa-appearance', JSON.stringify(appearancePatch(app))); } catch { /* 忽略 */ }
   state.appearance = app;
+  // 广播一次"外观已生效"。走波纹时这个函数是在浏览器的更新回调里跑的（比调用点晚几十~几百
+  // 毫秒），所以"调用点之后立刻刷新界面"是不可靠的 —— 设置页的选中态与色板预览必须挂在这里，
+  // 否则会出现"生效值和亮着的那一格不一致"（实测：连点强调色后色值对了、高亮停在中间那个）。
+  try { document.dispatchEvent(new CustomEvent('qqa:appearance')); } catch { /* 老浏览器没有 CustomEvent 也不影响外观本身 */ }
   return app;
 }
 
