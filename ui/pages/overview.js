@@ -1,0 +1,238 @@
+// 「总览」首页（2026-10-08）：把散在顶栏、用量页、异常页、设置页的关键状态收成一屏。
+//
+// 为什么要有它：以前打开控制台落在「会话」列表上，而"机器人连着没""今天花了多少""有没有
+// 待处理异常""这台机器磁盘满没满"要分别去四个地方（顶栏一行、用量页、异常页、还得 ssh 看主机）。
+// 这里只做**只读聚合**：一个数据源失败就少一格（不整页失败），所有数字都来自现成接口。
+'use strict';
+
+import { api } from '../core/api.js';
+import { esc } from '../core/dom.js';
+import { applyIcons, iconSvg } from '../core/icons.js';
+
+const SEVERITY_LABEL = { critical: '严重', error: '错误', warn: '警告', info: '信息' };
+const SEVERITY_CLASS = { critical: 'bad', error: 'bad', warn: 'warn', info: '' };
+const STATE_LABEL = { open: '待处理', acked: '已确认', resolved: '已解决' };
+
+function fmtNum(n) {
+  const v = Number(n) || 0;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
+  if (v >= 10_000) return `${(v / 1000).toFixed(1)}k`;
+  return String(v);
+}
+
+function fmtBytes(bytes) {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = n;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) { value /= 1024; i += 1; }
+  return `${i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
+}
+
+function fmtTime(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  const d = new Date(n);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  return sameDay ? `${hh}:${mm}` : `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')} ${hh}:${mm}`;
+}
+
+function days(n) {
+  const out = [];
+  for (let i = n - 1; i >= 0; i -= 1) {
+    const d = new Date(Date.now() - i * 86400_000);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+  }
+  return out;
+}
+
+/** KPI 卡：图标 + 标签 + 大数字 + 副行（副行可含 chip）。 */
+function kpi({ icon, label, value, sub = '', chip = '', id = '' }) {
+  return `
+    <div class="kpi"${id ? ` id="${id}"` : ''}>
+      <div class="kpi-head"><span class="kpi-ico">${iconSvg(icon, { size: 16 })}</span><span class="kpi-label">${esc(label)}</span></div>
+      <div class="kpi-value">${value}</div>
+      <div class="kpi-sub">${sub}${chip ? ` <span class="chip ${chip.cls || ''}">${esc(chip.text)}</span>` : ''}</div>
+    </div>`;
+}
+
+function bar(percent, cls = '') {
+  const p = Math.max(0, Math.min(100, Number(percent) || 0));
+  return `<div class="meter ${cls}"><div class="meter-fill" style="width:${p}%"></div></div>`;
+}
+
+/** 近 N 天用量迷你柱状图：柱高按最大值归一，今天的柱子高亮。 */
+function miniBars(rows) {
+  const max = Math.max(1, ...rows.map((r) => Number(r.calls) || 0));
+  return `<div class="bars">${rows.map((r, i) => {
+    const calls = Number(r.calls) || 0;
+    const h = Math.round((calls / max) * 100);
+    const isToday = i === rows.length - 1;
+    return `<div class="bars-col" title="${esc(r.day)}　${calls} 次调用　¥${(Number(r.cost) || 0).toFixed(3)}">
+      <div class="bars-bar${isToday ? ' on' : ''}" style="height:${Math.max(calls ? 4 : 0, h)}%"></div>
+      <div class="bars-x">${esc(String(r.day).slice(5))}</div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function panel(title, sub, body, { icon = '', actions = '' } = {}) {
+  return `
+    <section class="panel">
+      <div class="panel-head">
+        ${icon ? `<span class="panel-ico">${iconSvg(icon, { size: 16 })}</span>` : ''}
+        <div class="panel-titles"><h3>${esc(title)}</h3>${sub ? `<div class="panel-sub">${sub}</div>` : ''}</div>
+        <div class="panel-actions">${actions}</div>
+      </div>
+      <div class="panel-body">${body}</div>
+    </section>`;
+}
+
+async function loadOverview() {
+  const box = document.getElementById('overview-page');
+  if (!box) return;
+  if (!box.dataset.ready) {
+    box.innerHTML = '<div class="hint" style="padding:24px">正在读取总览…</div>';
+  }
+  // 五个数据源各自独立：任何一个失败都不该让整页空着
+  const [status, usage, incidents, snowluma, host] = await Promise.all([
+    api('/api/status').catch(() => null),
+    api('/api/usage/stats?range=7d').catch(() => null),
+    api('/api/incidents?limit=5').catch(() => null),
+    api('/api/snowluma/version').catch(() => null),
+    api('/api/host').catch(() => null)
+  ]);
+
+  const onebot = status?.onebot || {};
+  const usageToday = status?.usage || {};
+  const selfName = onebot?.self?.nickname ? String(onebot.self.nickname) : '';
+  const modeText = status?.paused ? '已暂停' : (status?.runtime?.mode === 'observe' || status?.mode === 'observe' ? '观察模式' : '运行中');
+  const modeChip = status?.paused ? { text: '暂停', cls: 'warn' } : null;
+
+  const incidentList = Array.isArray(incidents?.incidents) ? incidents.incidents : [];
+  const openCount = Number(incidents?.status?.open) || Number(incidents?.status?.counts?.open) || 0;
+  const criticalCount = Number(incidents?.status?.critical) || Number(incidents?.status?.counts?.critical) || 0;
+  const ackedCount = Number(incidents?.status?.acked) || Number(incidents?.status?.counts?.acked) || 0;
+
+  const slVersion = String(snowluma?.currentVersion || '');
+  const slChip = !snowluma?.installed ? { text: '未检测到', cls: '' }
+    : snowluma?.outdated ? { text: `落后 → ${snowluma.targetVersion}`, cls: 'warn' }
+      : snowluma?.belowRecommended ? { text: `低于推荐 ${snowluma.minRecommended}`, cls: 'warn' }
+        : { text: '已是最新', cls: 'ok' };
+
+  const rows = Array.isArray(usage?.rows) ? usage.rows : [];
+  const dayRows = days(7).map((day) => {
+    const hit = rows.find((r) => String(r.day) === day) || {};
+    return { day, calls: Number(hit.calls) || 0, cost: Number(hit.cost) || 0 };
+  });
+
+  const cacheHit = Number(status?.cacheHitRate) || 0;
+  // 最近异常列表：没有记录时给一句空状态，不渲染空 <ul>
+  const incidentBody = incidentList.length
+    ? `<ul class="feed">
+        ${incidentList.map((it) => `
+          <li>
+            <span class="feed-time">${fmtTime(it.last_at)}</span>
+            <span class="chip ${SEVERITY_CLASS[it.severity] || ''}">${esc(SEVERITY_LABEL[it.severity] || it.severity)}</span>
+            <span class="feed-text">${esc(String(it.safe_message || it.code || '').slice(0, 90))}</span>
+            ${it.count > 1 ? `<span class="muted">×${it.count}</span>` : ''}
+            <span class="muted">${esc(STATE_LABEL[it.state] || it.state)}</span>
+          </li>`).join('')}
+      </ul>`
+    : '<div class="hint">最近没有异常记录。</div>';
+  const mem = host?.mem || null;
+  const disk = host?.disk || null;
+
+  box.dataset.ready = '1';
+  box.innerHTML = `
+    <div class="pane-head">
+      <div>
+        <h2>总览</h2>
+        <div class="pane-sub">机器人、协议端与这台机器的当前状态 · 数据每次打开这一页时刷新</div>
+      </div>
+      <button class="btn btn-small" id="overview-refresh">${iconSvg('refresh', { size: 15 })}<span>刷新</span></button>
+    </div>
+
+    <div class="kpi-grid">
+      ${kpi({
+        icon: 'zap', label: '机器人',
+        value: `<span class="dot ${onebot.connected ? 'dot-on' : 'dot-off'}"></span>${esc(modeText)}`,
+        sub: onebot.connected
+          ? `OneBot 已连接${selfName ? ` · ${esc(selfName)}` : ''}`
+          : (onebot.everConnected ? 'OneBot 未连接（曾连上过）' : 'OneBot 还没连上过'),
+        chip: modeChip
+      })}
+      ${kpi({
+        icon: 'activity', label: '今日运行',
+        value: `${fmtNum(usageToday.runs)} <span class="kpi-unit">次</span>`,
+        sub: `调用 ${fmtNum(usage?.totals?.calls)} 次（近 7 天） · 联网 ${fmtNum(status?.webSearchCount)} 次`
+      })}
+      ${kpi({
+        icon: 'coins', label: '今日花费（估算）',
+        value: `¥${(Number(usageToday.estimatedYuan) || 0).toFixed(3)}`,
+        sub: `缓存命中 ${cacheHit.toFixed(1)}% · ${fmtNum(usageToday.totalTokens)} tok`
+          + (Number(usageToday.unpricedRuns) ? ` · ${usageToday.unpricedRuns} 次未计价` : '')
+      })}
+      ${kpi({
+        icon: 'alert', label: '待处理异常',
+        value: `${fmtNum(openCount)} <span class="kpi-unit">条</span>`,
+        sub: `严重 ${criticalCount} · 已确认 ${ackedCount}`,
+        chip: criticalCount ? { text: '需要处理', cls: 'bad' } : (openCount ? null : { text: '干净', cls: 'ok' })
+      })}
+      ${kpi({
+        icon: 'globe', label: '协议端（SnowLuma）',
+        value: slVersion ? `v${esc(slVersion)}` : '—',
+        sub: snowluma?.installed ? `容器${snowluma.running ? '运行中' : '未运行'} · 基线 v${esc(snowluma.targetVersion || '')}` : '没检测到协议端 compose 项目',
+        chip: slChip
+      })}
+    </div>
+
+    <div class="grid-2">
+      ${panel('连接与身份', '机器人接的是哪个协议端、用的哪个模型', `
+        <dl class="kv">
+          <dt>OneBot</dt><dd>${esc(status?.onebot?.httpUrl || '（未读到地址）')} · ${onebot.connected ? '<span class="chip ok">已连接</span>' : '<span class="chip">未连接</span>'}</dd>
+          <dt>机器人</dt><dd>${selfName ? `${esc(selfName)}${onebot.self?.userId ? ` · ${esc(onebot.self.userId)}` : ''}` : '（还没拿到登录信息）'}</dd>
+          <dt>模型</dt><dd>${esc(status?.orchestrator?.model || '（未设置）')}</dd>
+          <dt>协议端</dt><dd>${slVersion ? `v${esc(slVersion)}` : '—'} · <a href="#" id="overview-goto-onebot">去更新 / 看详情</a></dd>
+        </dl>`, { icon: 'link' })}
+      ${panel('最近异常', `最近 ${incidentList.length} 条 · 点标题看全部`, incidentBody,
+      { icon: 'alert', actions: '<a href="#" id="overview-goto-incidents" class="panel-link">全部异常 →</a>' })}
+    </div>
+
+    ${panel('近 7 天用量', `共 ${fmtNum(usage?.totals?.calls)} 次调用 · ¥${(Number(usage?.totals?.cost) || 0).toFixed(3)}`,
+    dayRows.some((r) => r.calls) ? miniBars(dayRows) : '<div class="hint">这 7 天没有调用记录。</div>', { icon: 'activity' })}
+
+    ${panel('主机资源', host ? `${esc(host.hostname || '')}${host.cpuModel ? ` · ${esc(host.cpuModel)}` : ''}${host.cpuCount ? ` · ${host.cpuCount} 核` : ''}` : '没读到主机信息', host ? `
+      <div class="grid-3">
+        <div class="stat">
+          <div class="stat-label">CPU 负载</div>
+          <div class="stat-value">${host.loadavg ? host.loadavg.map((v) => v.toFixed(2)).join(' / ') : '<span class="muted">不可用</span>'}</div>
+          <div class="stat-sub">1 / 5 / 15 分钟${host.loadavg ? '' : '（Windows 上 Linux 语义的 loadavg 不存在，看下面的进程内存）'}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">内存</div>
+          <div class="stat-value">${mem ? `${mem.usedPercent}%` : '—'}</div>
+          ${mem ? bar(mem.usedPercent) : ''}
+          <div class="stat-sub">${mem ? `${fmtBytes(mem.used)} / ${fmtBytes(mem.total)}` : '读不到'}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">磁盘（数据目录）</div>
+          <div class="stat-value">${disk ? `${disk.usedPercent}%` : '—'}</div>
+          ${disk ? bar(disk.usedPercent, disk.usedPercent >= 90 ? 'bad' : disk.usedPercent >= 75 ? 'warn' : '') : ''}
+          <div class="stat-sub">${disk ? `${fmtBytes(disk.used)} / ${fmtBytes(disk.total)}${disk.usedPercent >= 90 ? ' · 快满了' : ''}` : '读不到'}</div>
+        </div>
+      </div>
+      <div class="hint" style="margin-top:8px">本进程 ${host.process ? `RSS ${fmtBytes(host.process.rss)} · 堆 ${fmtBytes(host.process.heapUsed)} / ${fmtBytes(host.process.heapTotal)}` : '—'}${host.process?.nodeVersion ? ` · Node ${esc(host.process.nodeVersion)}` : ''} · 运行 ${Math.floor((host.uptimeSec || 0) / 3600)} 小时</div>`
+      : '<div class="hint">没读到主机信息（接口不可用）。</div>', { icon: 'cpu' })}
+  `;
+
+  applyIcons(box);
+  document.getElementById('overview-refresh')?.addEventListener('click', () => { delete box.dataset.ready; loadOverview(); });
+  document.getElementById('overview-goto-incidents')?.addEventListener('click', (e) => { e.preventDefault(); window.switchTab('incidents'); });
+  document.getElementById('overview-goto-onebot')?.addEventListener('click', (e) => { e.preventDefault(); window.switchTab('settings'); window.dispatchEvent(new CustomEvent('qa-settings-section', { detail: 'onebot' })); });
+}
+
+export { loadOverview };

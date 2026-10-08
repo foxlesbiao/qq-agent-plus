@@ -25,8 +25,13 @@ import {
   onebotIssueText, serviceTileState, serviceUrl, uiServiceOfUrl, versionWithRevision
 } from './core/format.js';
 import { QARegistry } from './core/registry.js';
+import { applyIcons, iconSvg } from './core/icons.js';
 import { pendingSessionDetail, refreshIntervalMs, startUpdateProgressTicker, state } from './core/state.js';
+
+// 导航/主题等静态节点上的 data-icon 在启动时统一注入 SVG（幂等，可重复调用）
+applyIcons(document);
 import { loadChats } from './pages/chat.js';
+import { loadOverview } from './pages/overview.js';
 import {
   loadAssetObservatory, loadExperimentalFeatureStatuses, loadFriendOpportunities, loadFriendProposals,
   loadIncomingFriendRequests, loadSlangFeaturePage, renderAssetObservatory, renderFriendFeaturePageImpl,
@@ -84,7 +89,8 @@ function applyTheme(pref) {
   document.documentElement.setAttribute('data-theme', actual);
   const btn = $('#theme-btn');
   if (btn) {
-    btn.textContent = THEME_ICON[pref] || THEME_ICON.dark;
+    // 主题按钮也是 SVG 图标：原来这里塞 emoji（🌙/☀️/🖥️），各系统形状不一、还自带配色
+    btn.innerHTML = iconSvg(THEME_ICON[pref] || THEME_ICON.dark, { size: 17 });
     btn.title = `主题：${THEME_LABEL[pref] || '暗色'}（点击切换）`;
   }
   try { localStorage.setItem('qqa-theme', pref); } catch { /* 忽略 */ }
@@ -122,7 +128,7 @@ function renderBanner() {
   // 预算保险丝已移除：原先这里有一个 pauseReason === 'budget' 的分支
   if (state.paused) {
     show = true;
-    html = '⏸ 机器人已暂停，不会处理任何消息。';
+    html = '机器人已暂停，不会处理任何消息。';
   } else if (s && !s.onebot.connected && !s.onebot.everConnected) {
     show = true;
     const why = onebotIssueText(s.onebot);
@@ -146,6 +152,7 @@ function switchTab(name) {
   $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
   state.tab = name;
+  if (name === 'overview') loadOverview();
   if (name === 'control') loadControlHub();
   if (name === 'sessions') loadSessions();
   if (name === 'chats') loadChats();

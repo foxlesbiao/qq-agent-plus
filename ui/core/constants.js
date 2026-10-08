@@ -66,7 +66,8 @@ const USAGE_RANGES = [
      2. 后端 config.ui.theme —— 跨设备/重装后保留（尽力而为，失败不阻塞）
    首屏防闪由 index.html 的内联脚本负责（读 localStorage 直接设 data-theme）。
 */
-const THEME_ICON = { dark: '🌙', light: '☀️', system: '🖥️' };
+// 图标名（ui/icons.js 的 SVG 集）：不再用 emoji —— 各系统渲染形状不一致，也不跟文字颜色
+const THEME_ICON = { dark: 'moon', light: 'sun', system: 'monitor' };
 
 const THEME_LABEL = { dark: '暗色', light: '亮色', system: '跟随系统' };
 

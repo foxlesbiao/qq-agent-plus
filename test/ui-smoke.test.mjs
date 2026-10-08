@@ -69,7 +69,7 @@ function loadPage() {
   return { window, fetchLog, errors };
 }
 
-test('真实 DOM 冒烟：加载全部脚本、11 个 tab 切换入口不抛', { skip: SKIP }, async () => {
+test('真实 DOM 冒烟：加载全部脚本、全部 tab 切换入口不抛', { skip: SKIP }, async () => {
   const { window, errors } = loadPage();
   await settle();
   try {

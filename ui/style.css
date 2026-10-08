@@ -319,7 +319,14 @@ html.boot-show .loading-overlay { opacity: 1; }
   white-space: nowrap;
   transition: background .14s ease, color .14s ease, border-color .14s ease;
 }
-.tab::before { content: attr(data-icon); font-size: 15px; width: 18px; text-align: center; flex-shrink: 0; opacity: .95; }
+/* 图标：内联 SVG（ui/icons.js 注入 <span class="ico">）。原来这里是
+   content: attr(data-icon) 直接画 emoji —— emoji 自带配色、各系统形状不同，
+   选中/悬停态也没法统一。改成 SVG 后颜色跟随 currentColor。 */
+.ico { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 18px; height: 18px; }
+.ico svg { display: block; }
+.tab .ico { opacity: .85; }
+.tab:hover .ico { opacity: 1; }
+.tab.active .ico { opacity: 1; color: var(--accent); }
 .tab:hover { background: var(--hover); color: var(--text); }
 .tab.active {
   background: rgba(76, 141, 255, .15);
@@ -3301,3 +3308,79 @@ dialog { margin: auto; max-height: 88vh; }
   .plat-grid { grid-template-columns: minmax(0, 1fr); }
   .plat-grid-row:nth-child(2) { border-top: 1px dashed var(--border); }
 }
+
+/* ══════════════════════════════════════════════════════════════
+   「总览」页 + 通用卡片系统（2026-10-08）
+   ══════════════════════════════════════════════════════════════
+   设计口径（对齐参照物 SnowLuma 控制台，但不照搬）：
+     · 一屏三层：KPI 卡（数字）→ 两栏面板（连接 / 最近异常）→ 面板（用量走势 / 主机资源）；
+     · 卡片统一 12px 圆角 + 1px 边框 + 极轻阴影；悬浮只做 1px 位移，不做发光；
+     · 数字用等宽字体（--mono）并放大，标签小字灰色 —— 一眼能读出"多少"；
+     · 强调色只用在：选中态、关键 chip、图表柱；其余一律中性灰。
+   这些类（.panel/.kpi/.stat/.meter/.feed/.bars）不只总览页用，后续页面统一往这套上靠。
+*/
+.overview-pane { flex: 1; min-width: 0; overflow-y: auto; padding: 20px 22px 28px; }
+
+.pane-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.pane-head h2 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: .01em; }
+.pane-sub { margin-top: 4px; font-size: 12px; color: var(--muted); }
+.pane-head .btn { display: inline-flex; align-items: center; gap: 6px; }
+
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.kpi {
+  border: 1px solid var(--border); border-radius: 12px; background: var(--bg-2);
+  padding: 13px 15px 14px; min-width: 0;
+  transition: transform var(--dur-base, .16s) ease, border-color var(--dur-base, .16s) ease;
+}
+.kpi:hover { transform: translateY(-1px); border-color: var(--border-strong, var(--border)); }
+.kpi-head { display: flex; align-items: center; gap: 7px; color: var(--muted); }
+.kpi-ico { display: inline-flex; color: var(--accent); }
+.kpi-label { font-size: 12px; }
+.kpi-value { margin-top: 7px; font-family: var(--mono); font-size: 22px; font-weight: 650; line-height: 1.15; display: flex; align-items: center; gap: 6px; }
+.kpi-unit { font-size: 12px; font-weight: 500; color: var(--muted); }
+.kpi-sub { margin-top: 6px; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+
+.panel { border: 1px solid var(--border); border-radius: 12px; background: var(--bg-2); padding: 14px 16px 15px; margin-bottom: 14px; }
+.grid-2 > .panel { margin-bottom: 0; }
+.panel-head { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 11px; }
+.panel-ico { display: inline-flex; color: var(--muted); margin-top: 1px; }
+.panel-titles { min-width: 0; flex: 1; }
+.panel-titles h3 { margin: 0; font-size: 13.5px; font-weight: 600; }
+.panel-sub { margin-top: 3px; font-size: 11.5px; color: var(--muted); }
+.panel-actions { flex-shrink: 0; font-size: 12px; }
+.panel-link { color: var(--accent); text-decoration: none; }
+.panel-link:hover { text-decoration: underline; }
+.panel-body { min-width: 0; }
+
+.kv { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 7px 10px; margin: 0; font-size: 12.5px; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.kv a { color: var(--accent); text-decoration: none; }
+.kv a:hover { text-decoration: underline; }
+
+.feed { list-style: none; margin: 0; padding: 0; font-size: 12.5px; }
+.feed li { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-top: 1px dashed var(--border); }
+.feed li:first-child { border-top: 0; padding-top: 0; }
+.feed-time { font-family: var(--mono); font-size: 11.5px; color: var(--muted); flex-shrink: 0; }
+.feed-text { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.meter { height: 6px; border-radius: 999px; background: var(--bg-3); overflow: hidden; margin-top: 8px; }
+.meter-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width .3s ease; }
+.meter.warn .meter-fill { background: var(--orange); }
+.meter.bad .meter-fill { background: var(--red); }
+
+.stat { min-width: 0; }
+.stat-label { font-size: 11.5px; color: var(--muted); }
+.stat-value { margin-top: 5px; font-family: var(--mono); font-size: 17px; font-weight: 600; }
+.stat-sub { margin-top: 6px; font-size: 11.5px; color: var(--muted); }
+
+.bars { display: flex; align-items: flex-end; gap: 10px; height: 96px; padding-top: 4px; }
+.bars-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
+.bars-bar { width: 100%; max-width: 46px; border-radius: 5px 5px 2px 2px; background: var(--bg-3); border: 1px solid var(--border); transition: background .2s ease; }
+.bars-bar.on { background: rgba(76, 141, 255, .32); border-color: rgba(76, 141, 255, .5); }
+.bars-x { margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+
+.chip.bad { color: var(--red); border-color: rgba(255, 107, 107, .45); background: rgba(255, 107, 107, .08); }

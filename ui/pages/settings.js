@@ -27,6 +27,7 @@ import {
 import { renderPersonaSection } from './persona.js';
 import { hydratePlatformGates, hydratePlatformVoiceSelect, renderPlatformSection } from './platform.js';
 import { bindSnowlumaActions, hydrateSnowlumaPanel } from './snowluma.js';
+import { applyIcons } from '../core/icons.js';
 import { loadSessions } from './sessions.js';
 import { bindCrossSectionControls, bindSettingsEvents, isSplitThinking } from './settings-bind.js';
 import { renderAsrSection } from './settings-voice.js';
@@ -84,7 +85,7 @@ function renderSettingsSidebar() {
     <div class="settings-runstate">
       <div class="rs-title">机器人运行状态</div>
       <div class="rs-row" ${s?.onebot?.connected ? '' : `title="${esc(onebotIssueText(s?.onebot) || '正在等待首次连接')}"`}><span class="dot ${s?.onebot?.connected ? 'dot-on' : 'dot-off'}"></span><span>${s?.onebot?.connected ? '运行中' : '未就绪'}</span></div>
-      <div class="rs-row muted">${state.paused ? '⏸ 已暂停' : (s?.orchestrator?.model ? `模型：${esc(s.orchestrator.model)}` : '模型：未设置')}</div>
+      <div class="rs-row muted">${state.paused ? '已暂停' : (s?.orchestrator?.model ? `模型：${esc(s.orchestrator.model)}` : '模型：未设置')}</div>
     </div>
     <div class="settings-menu">
       ${menu.map(([id, label]) => `<button class="settings-menu-item ${state.settingsSection === id ? 'active' : ''}" data-section="${id}">${label}</button>`).join('')}
@@ -104,6 +105,8 @@ function renderSettingsImpl() {
   renderSettingsSidebar();
   box.innerHTML = `
     ${renderSettingsSection(c)}`;
+  // 主题选择器等静态节点上的 data-icon 在这里注入 SVG（幂等）
+  applyIcons(box);
   bindSettingsEvents(c);
   bindCrossSectionControls();
   // 「平台能力」页的异步补全：语音音色目录、每项的工具清单、闸门用量、按群覆盖编辑器
@@ -778,7 +781,7 @@ function renderDesktopSection(c) {
       <div class="theme-picker" id="theme-picker">
         ${THEME_VALUES.map((t) => `
           <div class="theme-option${getThemePref() === t ? ' on' : ''}" data-theme-opt="${t}" role="button" tabindex="0">
-            <span class="t-ico">${THEME_ICON[t]}</span>
+            <span class="t-ico" data-icon="${esc(THEME_ICON[t])}"></span>
             <span>${THEME_LABEL[t]}</span>
           </div>`).join('')}
       </div>

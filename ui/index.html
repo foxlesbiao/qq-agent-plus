@@ -52,20 +52,22 @@
       </div>
 
       <nav id="tabs" data-page-node-id="E9BCxQoSdlNgyXwJBELj6z">
+        <div class="nav-group-label">总览</div>
+        <button class="tab active" data-icon="gauge" data-tab="overview" data-page-node-id="qoverviewnav">总览</button>
         <div class="nav-group-label">对话</div>
-        <button class="tab active" data-icon="💬" data-tab="sessions" data-page-node-id="QA2pcdHYdARJK2APBNKZmC">会话</button>
-        <button class="tab" data-icon="🗂" data-tab="chats" data-page-node-id="AdXD0D2NiWH5UBfpPQqzQ2">存档</button>
-        <button class="tab" data-icon="🎛" data-tab="control" data-page-node-id="qcontrolnav">控制</button>
+        <button class="tab" data-icon="chat" data-tab="sessions" data-page-node-id="QA2pcdHYdARJK2APBNKZmC">会话</button>
+        <button class="tab" data-icon="archive" data-tab="chats" data-page-node-id="AdXD0D2NiWH5UBfpPQqzQ2">存档</button>
+        <button class="tab" data-icon="sliders" data-tab="control" data-page-node-id="qcontrolnav">控制</button>
         <div class="nav-group-label">记忆</div>
-        <button class="tab" data-icon="🧠" data-tab="memory" data-page-node-id="vXS9OY6wG4MkJlzQ2aLADZ">会话记忆</button>
-        <button class="tab" data-icon="👥" data-tab="people-memory" data-page-node-id="qpeoplememorynav">人物记忆</button>
-        <button class="tab" data-icon="🪪" data-tab="identity" data-feature-nav="identity">人物印象</button>
-        <button class="tab" data-icon="🤝" data-tab="friends" data-feature-nav="auto-friend">好友管理</button>
+        <button class="tab" data-icon="database" data-tab="memory" data-page-node-id="vXS9OY6wG4MkJlzQ2aLADZ">会话记忆</button>
+        <button class="tab" data-icon="users" data-tab="people-memory" data-page-node-id="qpeoplememorynav">人物记忆</button>
+        <button class="tab" data-icon="idcard" data-tab="identity" data-feature-nav="identity">人物印象</button>
+        <button class="tab" data-icon="userplus" data-tab="friends" data-feature-nav="auto-friend">好友管理</button>
         <div class="nav-group-label">运行</div>
-        <button class="tab" data-icon="📈" data-tab="assets" data-page-node-id="qassetobserve">观测</button>
-        <button class="tab" data-icon="💰" data-tab="usage" data-page-node-id="hcZzcXuMojNoiE7UcRVYfR">用量</button>
-        <button class="tab" data-icon="🚨" data-tab="incidents" data-feature-nav="incidents">异常处理</button>
-        <button class="tab" data-icon="⚙️" data-tab="settings" data-page-node-id="4cXbRBtGmcpcL272eKvHPV">设置</button>
+        <button class="tab" data-icon="activity" data-tab="assets" data-page-node-id="qassetobserve">观测</button>
+        <button class="tab" data-icon="coins" data-tab="usage" data-page-node-id="hcZzcXuMojNoiE7UcRVYfR">用量</button>
+        <button class="tab" data-icon="alert" data-tab="incidents" data-feature-nav="incidents">异常处理</button>
+        <button class="tab" data-icon="gear" data-tab="settings" data-page-node-id="4cXbRBtGmcpcL272eKvHPV">设置</button>
       </nav>
 
       <div class="side-foot">
@@ -96,12 +98,17 @@
 
   <main id="layout" data-page-node-id="hvuDZ0DOoYC7fFheJnpiGZ">
     <!-- 统一控制入口 -->
+    <!-- 总览（首页）：一屏看全局 -->
+    <section id="view-overview" class="view active" data-page-node-id="qoverviewview">
+      <div id="overview-page" class="overview-pane" data-page-node-id="qoverviewpage"></div>
+    </section>
+
     <section id="view-control" class="view" data-page-node-id="qcontrolview">
       <div id="control-page" class="control-pane" data-page-node-id="qcontrolpage"></div>
     </section>
 
     <!-- 会话视图 -->
-    <section id="view-sessions" class="view active" data-page-node-id="EfuI6TFTs4KY9veb0pkva1">
+    <section id="view-sessions" class="view" data-page-node-id="EfuI6TFTs4KY9veb0pkva1">
       <aside id="session-list" class="list-pane" data-page-node-id="NNTSUz4evxhvLGzuY26viB">
         <div class="list-head muted" data-page-node-id="aSFyF0LvBNUq4BH2sydWl0"><span id="session-count"></span></div>
         <div id="session-items" data-page-node-id="q9NIG3lrlhe4Pg8LqGJIuV"></div>
@@ -270,6 +277,7 @@
     </div>
   </dialog>
   <script type="module" src="/i18n/zh-CN.js"></script>
+  <script type="module" src="/core/icons.js"></script>
   <script type="module" src="/core/registry.js"></script>
   <script type="module" src="/core/dom.js"></script>
   <script type="module" src="/core/api.js"></script>
@@ -288,6 +296,7 @@
   <script type="module" src="/pages/persona.js"></script>
   <script type="module" src="/pages/moments.js"></script>
   <script type="module" src="/pages/features.js"></script>
+  <script type="module" src="/pages/overview.js"></script>
   <script type="module" src="/pages/platform.js"></script>
   <script type="module" src="/pages/snowluma.js"></script>
   <!-- 设置域（第二轮拆出；app.js 的 loadSettings/bindSettingsEvents/saveConfig 链全靠它们） -->

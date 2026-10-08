@@ -64,6 +64,7 @@ import {
 } from '../tools/tools-core.js';
 import { integrationStatus, updateSnowLumaPassword } from './integrations.js';
 import { createSnowlumaUpdater } from '../core/snowluma-update.js';
+import { hostStats } from '../core/host-stats.js';
 import { AutoUpdateManager, autoUpdatePending, readAutoUpdateState } from '../auto-update.js';
 import { checkForUpdate, ignoreVersion } from '../update-notice.js';
 
@@ -1836,6 +1837,8 @@ export function createApp({
   router.add('GET', '/api/integrations/status', async (req, res) => json(res, 200, await integrationStatus()));
   router.add('GET', '/api/auto-update/status', async (req, res) => json(res, 200, autoUpdate.status()));
   // 协议端（SnowLuma）版本 / 更新 / 回滚：控制台「设置 → OneBot」页用
+  // 主机资源（只读）：总览页用。取不到的项返回 null，接口本身不因为某个指标失败而 500。
+  router.add('GET', '/api/host', async (req, res) => json(res, 200, { ok: true, ...hostStats({ dir: DATA_DIR }) }));
   router.add('GET', '/api/snowluma/version', async (req, res) => {
     const st = snowlumaUpdater.status();
     const auto = getConfig().autoUpdate?.snowluma || {};
