@@ -617,9 +617,32 @@ export const DEFAULT_CONFIG = {
     token: ''                 // 留空 = 只监听 127.0.0.1
   },
   ui: {
+    // ── 外观（2026-10-08 v3，七轴）────────────────────────────────────────────
     // 主题：'dark' | 'light' | 'system'（system = 跟随系统偏好）。
     // 前端以 localStorage 为准做到即时生效，这里只是跨设备/重装后保留用。
     theme: 'dark',
+    darkIntensity: 'soft',    // 深色强度：soft | oled（纯黑）
+    scheme: 'default',        // 表面色板：default | slate | nord | forest | rose
+    accentPreset: 'indigo',   // 强调色预设 id（见 ui/core/appearance.js 的 ACCENTS）
+    accent: '',               // 自定义强调色（#rrggbb）；非空时压过预设
+    accentScope: 'global',    // 强调色作用范围：global | sidebar
+    sidebarStyle: 'follow',   // 侧栏底色：follow | panel | accent
+    background: 'none',       // 整页背景：none | solid | gradient
+    bgColor: '#0b1220',
+    bgFrom: '#4c8dff',
+    bgTo: '#a78bfa',
+    bgAngle: 135,
+    font: 'default',          // 界面字体：default | rounded | serif
+    radius: 1,                // 圆角倍率（0.6 / 1 / 1.2 / 1.45 四档）
+    zoom: 1,                  // 界面缩放 0.8~1.3
+    density: 'cozy',          // 显示密度：cozy | compact | roomy
+    tweaks: {},               // 主题微调：白名单 CSS 变量 → 颜色（未设的保持色板默认）
+    showBadges: true,         // 顶栏显示连接/用量徽章
+    showTopbarTheme: true,    // 顶栏显示主题切换按钮
+    reduceMotion: false,      // 减弱动效
+    noMotion: false,          // 关闭全部动效
+    contrast: 'normal',       // 对比度：normal | high
+    // ── 其它界面项 ─────────────────────────────────────────────────────────
     showVision: true,         // 模型目录显示图片输入能力徽标
     refreshMs: 15000          // 界面轮询间隔
   }
@@ -911,6 +934,9 @@ export function asrKeySlots(asr) {
   return out;
 }
 
+/** 外观 v2 的「主题配色」id → v3 的强调色 id（只用于迁移，别的地方不要用这张表）。 */
+const LEGACY_PRESET_TO_ACCENT = { snow: 'indigo', mint: 'emerald', amber: 'amber', violet: 'violet', rose: 'rose' };
+
 function migrateConfig(parsed) {
   // 顶层必须是对象：手改坏的 config.json 可能是 null / 5 / "x" / true（都是合法 JSON）。
   // 放它过去，下面 out.persona = … 那一步就会抛（Cannot create property 'persona' on number '5'），
@@ -1050,6 +1076,18 @@ function migrateConfig(parsed) {
     delete out.server.closeToTray;
   }
   if (out.ui?.theme === '?') out.ui.theme = 'dark';
+  // 外观 v2 → v3（2026-10-08）：v2 只有"主题配色"（ui.preset）一个抽象，v3 把它拆成
+  // "表面色板"（scheme）与"强调色"（accentPreset）两条轴 —— 老值按同一份色相搬到 accentPreset，
+  // 然后把 preset 删掉。留着它就会出现两个真源：界面读 accentPreset，存档里还躺着一个 preset，
+  // 而保存路径（ui/core/appearance.js 的 appearancePatch）根本不写 preset，它只会变成一具干尸。
+  if (out.ui && typeof out.ui === 'object') {
+    if (out.ui.accentPreset == null && LEGACY_PRESET_TO_ACCENT[out.ui.preset]) {
+      out.ui.accentPreset = LEGACY_PRESET_TO_ACCENT[out.ui.preset];
+    }
+    delete out.ui.preset;
+    // v2 的 avatarsPerDay 式"越界历史值"不用在这里修：resolveAppearance 已经是那条唯一入口，
+    // 它会夹紧；这里只处理"字段改名/消失"，不做取值规整。
+  }
   // ── 派生位 has* 的剥离要覆盖**每一段** ──
   // sanitizeConfigSecrets 会给任何密钥类字段生成 hasXxx；GET /api/config 把它们一起下发，
   // "整份配置展开回传"的客户端就会把它们送回来。不剥的话保存一次就落进 config.json，

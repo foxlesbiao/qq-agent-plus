@@ -89,45 +89,91 @@ test('真实 DOM 冒烟：加载全部脚本、全部 tab 切换入口不抛', {
   } finally { window.happyDOM?.abort?.(); }
 });
 
-test('真实 DOM 冒烟：外观（预设/强调色/圆角/缩放/密度）能存下去、点了就生效', { skip: SKIP }, async () => {
+test('真实 DOM 冒烟：外观（明暗/色板/强调色/圆角/密度/微调）能存下去、点了就生效', { skip: SKIP }, async () => {
   const { window } = loadPage();
   await settle();
   try {
     window.switchTab('settings');
     await settle(60);
-    window.document.querySelector('.settings-menu-item[data-section="desktop"]').click();
-    await settle(120);
+    const nav = window.document.querySelector('.settings-menu-item[data-section="appearance"]');
+    assert.ok(nav, '设置侧栏要有独立的「外观」分区');
+    nav.click();
+    await settle(150);
+    const doc = window.document;
+    const rootVars = doc.documentElement.style;
 
-    const presets = [...window.document.querySelectorAll('#appearance-presets [data-preset]')];
-    assert.ok(presets.length >= 4, `预设色板应至少 4 个，实际 ${presets.length}`);
-    // 点第 3 个预设（薄荷）：点了就生效（CSS 变量落在 <html> 上）
-    presets[2].click();
+    // ① 外观是独立分区，六张卡都在
+    for (const id of ['appearance-mode', 'appearance-darkintensity', 'appearance-schemes',
+      'appearance-presets', 'appearance-scope', 'appearance-sidebarstyle', 'appearance-bg',
+      'appearance-font', 'appearance-radius', 'appearance-density', 'appearance-tweaks']) {
+      assert.ok(doc.getElementById(id), `外观面板缺少 #${id}`);
+    }
+    // 分段控件要插上滑块（否则选中的那格和滑块对不齐）
+    assert.ok(doc.querySelectorAll('#appearance-mode .seg-pill').length === 1, '分段控件要有滑块');
+    assert.equal(doc.querySelectorAll('#appearance-mode .seg-item.selected').length, 1, '显示模式要恰好选中一项');
+
+    // ② 强调色：预设色板点了立刻生效，且不是"只改了高亮"
+    const presets = [...doc.querySelectorAll('#appearance-presets [data-preset]')];
+    assert.ok(presets.length >= 5, `强调色预设应至少 5 个，实际 ${presets.length}`);
+    presets[3].click();
     await settle(60);
-    const accent = window.document.getElementById('cfg-accent');
+    assert.equal(doc.querySelectorAll('#appearance-presets [data-preset].on').length, 1, '色板同时只有一个选中');
+    assert.equal(presets[3].classList.contains('on'), true);
+
+    // ③ 自定义强调色：文本框输入即时生效
+    const accent = doc.getElementById('cfg-accent');
     accent.value = '#ff8800';
     accent.dispatchEvent(new window.Event('input', { bubbles: true }));
-    window.document.getElementById('cfg-radius').value = '1.3';
-    window.document.getElementById('cfg-density').value = 'roomy';
-    window.document.getElementById('cfg-density').dispatchEvent(new window.Event('change', { bubbles: true }));
-    const rootVars = window.document.documentElement.style;
     assert.equal(rootVars.getPropertyValue('--accent'), '#ff8800', '自定义强调色要立刻套到 :root');
-    assert.equal(window.document.documentElement.dataset.density, 'roomy', '密度立刻生效');
-    assert.equal(rootVars.getPropertyValue('--r-scale'), '1.3', '圆角倍率立刻生效');
+    assert.equal(doc.querySelectorAll('#appearance-presets [data-preset].on').length, 0, '有自定义色时预设全部取消选中');
 
+    // ④ 圆角：改档位（分段控件）→ --r-scale 跟着变
+    const cozy = doc.querySelector('#appearance-radius .seg-item[data-v="cozy"]');
+    assert.ok(cozy, '圆角要有「舒适」档');
+    cozy.click();
+    assert.equal(rootVars.getPropertyValue('--r-scale'), '1.2', '圆角倍率立刻生效');
+
+    // ⑤ 显示密度：改档位 → data-density 跟着变
+    doc.querySelector('#appearance-density .seg-item[data-v="roomy"]').click();
+    assert.equal(doc.documentElement.dataset.density, 'roomy', '密度立刻生效');
+
+    // ⑥ 主题微调：选一个颜色 → 该变量落到 <html> 上
+    const bgTweak = doc.querySelector('#appearance-tweaks [data-tweak="--bg"]');
+    assert.ok(bgTweak, '主题微调要有 --bg 一行');
+    bgTweak.value = '#123456';
+    bgTweak.dispatchEvent(new window.Event('input', { bubbles: true }));
+    assert.equal(rootVars.getPropertyValue('--bg'), '#123456', '主题微调要覆盖到变量');
+    // 重置 → 把内联属性摘掉（控制权还给色板），并把值恢复成"默认"字面
+    doc.querySelector('#appearance-tweaks [data-tweak-reset="--bg"]').click();
+    assert.equal(rootVars.getPropertyValue('--bg'), '', '重置要把内联变量摘掉');
+    assert.equal(doc.querySelector('#appearance-tweaks [data-tweak-hex="--bg"]').textContent, '默认');
+
+    // ⑦ 无障碍开关：是否落到 data-motion
+    const noMotion = doc.getElementById('cfg-nomotion');
+    noMotion.checked = true;
+    noMotion.dispatchEvent(new window.Event('change', { bubbles: true }));
+    assert.equal(doc.documentElement.dataset.motion, 'off', '关闭全部动效要落到 data-motion');
+
+    // ⑧ 保存：所有轴都要进 patch.ui
     const posts = [];
     window.fetch = async (url, options = {}) => {
       posts.push({ url: String(url), method: options?.method || 'GET', body: options?.body });
       return { ok: true, status: 200, json: async () => ({ config: {} }) };
     };
-    window.document.querySelector('#save-cfg-btn').click();
-    await settle(150);
+    doc.querySelector('#save-cfg-btn').click();
+    await settle(200);
     const save = posts.find((p) => p.url.includes('/api/config') && p.method === 'POST');
     assert.ok(save, '点保存必须 POST /api/config');
     const patch = JSON.parse(save.body || '{}');
     assert.equal(patch.ui?.accent, '#ff8800', '自定义强调色要进 patch.ui');
-    assert.equal(patch.ui?.radius, 1.3, '圆角倍率要进 patch.ui');
+    assert.equal(patch.ui?.radius, 1.2, '圆角倍率要进 patch.ui');
     assert.equal(patch.ui?.density, 'roomy', '密度要进 patch.ui');
-    assert.equal(patch.ui?.preset, presets[2].dataset.preset, '选中的预设 id 要进 patch.ui');
+    assert.equal(patch.ui?.accentPreset, presets[3].dataset.preset, '选中的预设 id 要进 patch.ui');
+    assert.equal(patch.ui?.noMotion, true, '无障碍开关要进 patch.ui');
+    assert.equal(patch.ui?.theme, doc.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark',
+      '明暗要存在老字段 ui.theme 上（首屏内联脚本读的就是它）');
+    assert.equal('mode' in (patch.ui || {}), false, '不该再多出一个 ui.mode（两个真源）');
+    assert.equal(patch.ui?.tweaks && typeof patch.ui.tweaks, 'object', '主题微调要进 patch.ui');
   } finally { window.happyDOM?.abort?.(); }
 });
 

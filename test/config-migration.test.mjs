@@ -25,7 +25,10 @@ process.on('exit', () => {
 });
 const CONFIG_URL = pathToFileURL(path.join(REPO, 'src', 'core', 'config.js')).href;
 
-/** 写一份 config.json → 新起一个 Node 进程加载它 → 取回 store（可选再跑一段脚本并取回第二次）。 */
+/**
+ * 写一份 config.json → 新起一个 Node 进程加载它 → 取回 store（可选再跑一段脚本并取回第二次）。
+ * 另回传 `full`（整份配置）：store 只是其中一段，"外观"那类根级段落要用它。
+ */
 function loadStoreInNewProcess(config, extraScript = '') {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-config-migrate-'));
   tempDirs.add(dir);   // 用例自己造的临时目录自己清（约定见 test/README.md）
@@ -36,7 +39,7 @@ function loadStoreInNewProcess(config, extraScript = '') {
     const { getConfig, updateConfig } = await import(${JSON.stringify(CONFIG_URL)});
     const first = structuredClone(getConfig().store);
     ${extraScript}
-    console.log(JSON.stringify({ first, after: getConfig().store, file: ${JSON.stringify(file)} }));
+    console.log(JSON.stringify({ first, after: getConfig().store, full: getConfig(), file: ${JSON.stringify(file)} }));
   `;
   const out = execFileSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
   const parsed = JSON.parse(out.trim().split('\n').pop());
@@ -272,4 +275,41 @@ test('平台能力：换头像额度从老键搬过来时夹到 1~200（0.5 不�
     platform: { quotas: { avatarsPerDay: 9999 } }, api: { apiKey: 'keep-me' }
   }));
   assert.equal(huge.config.platform.quotas.avatarsPerWeek, 200, '上界仍夹到 200');
+});
+
+// 外观 v2 → v3（2026-10-08）：v2 只有"主题配色"（ui.preset）一个抽象，v3 拆成"表面色板"与
+// "强调色"两条轴。老值要按色相搬到 accentPreset，并且把 preset 删掉 —— 留着它就有两个真源
+// （界面读 accentPreset，存档里还躺着一个 preset，而保存路径根本不写 preset，它会永远留在那）。
+test('外观 v2 → v3：旧的主题配色 id 搬进 accentPreset，preset 字段被清掉', () => {
+  const legacy = loadStoreInNewProcess({ ui: { preset: 'mint', theme: 'light' } });
+  assert.equal(legacy.full.ui.accentPreset, 'emerald', 'mint 应按色相搬成 emerald');
+  assert.equal('preset' in legacy.full.ui, false, 'preset 要删掉，避免两个真源');
+  assert.equal(legacy.full.ui.theme, 'light', '明暗沿用老字段 ui.theme，不能被迁移搞丢');
+
+  // 认不出的旧值：回落到默认强调色，但仍然要把 preset 清掉
+  const unknown = loadStoreInNewProcess({ ui: { preset: '不存在' } });
+  assert.equal(unknown.full.ui.accentPreset, 'indigo');
+  assert.equal('preset' in unknown.full.ui, false);
+
+  // 已经是 v3 的配置原样保留（迁移不能反过来覆盖新版字段）
+  const modern = loadStoreInNewProcess({ ui: { accentPreset: 'rose', scheme: 'nord', preset: 'mint' } });
+  assert.equal(modern.full.ui.accentPreset, 'rose', '新版字段优先，不被旧 preset 覆盖');
+  assert.equal('preset' in modern.full.ui, false);
+});
+
+test('外观 v3：新版键在缺省时由默认值补齐（老配置升上来不会缺项）', () => {
+  const { full } = loadStoreInNewProcess({ ui: { theme: 'dark' } });
+  const first = { ui: full.ui };
+  for (const [key, want] of Object.entries({
+    darkIntensity: 'soft', scheme: 'default', accentPreset: 'indigo', accent: '',
+    accentScope: 'global', sidebarStyle: 'follow', background: 'none', font: 'default',
+    radius: 1, zoom: 1, density: 'cozy', contrast: 'normal'
+  })) {
+    assert.deepEqual(first.ui[key], want, `ui.${key} 缺省值不对`);
+  }
+  assert.equal(first.ui.showBadges, true);
+  assert.equal(first.ui.showTopbarTheme, true);
+  assert.equal(first.ui.reduceMotion, false);
+  assert.equal(first.ui.noMotion, false);
+  assert.deepEqual(first.ui.tweaks, {});
 });

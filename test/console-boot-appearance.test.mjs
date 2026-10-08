@@ -1,0 +1,125 @@
+// 首屏外观预置（ui/index.html 里那段内联脚本）与模块的**一致性**。
+//
+// 为什么需要这条：外观必须在 CSS 生效前就套好，否则会"先按默认色画一版、启动完成再换"——
+// 那一下换色就是用户看到的"闪"。要做到这点只有一条路：把预置逻辑放进 <head> 的内联脚本
+// （ES module 是 defer 的，太晚）。于是同一件事有了两处实现，其中唯一带逻辑的是
+// "压在强调色上的文字该黑还是白"（--accent-fg）。
+//
+// 这里的做法：把 index.html 里那段脚本真的抽出来、喂给一个假 DOM 跑起来，然后
+//   ① 逐色核对它算出的 --accent-fg 与 ui/core/appearance.js 的 accentForeground 完全一致；
+//   ② 核对它设置的 data-* 属性名覆盖了 appearanceAttrs() 的每一个键（少一个就是"某一轴
+//      在首屏不生效、要等模块跑起来才纠正"，也就是一次闪）。
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { test } from 'node:test';
+
+const { ACCENTS, accentForeground, appearanceAttrs, resolveAppearance } =
+  await import('../ui/core/appearance.js');
+
+const HTML = fs.readFileSync(path.resolve('ui/index.html'), 'utf8');
+
+/** 取出含 --accent-fg 的那段内联脚本（首屏主题 + 外观预置）。 */
+function bootScript() {
+  const blocks = [...HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+  const found = blocks.filter((b) => b.includes('--accent-fg'));
+  assert.equal(found.length, 1, `首屏外观预置脚本应当只有一段，实际 ${found.length} 段`);
+  return found[0];
+}
+
+/** 在假 DOM 里跑一遍那段脚本，回传它写了哪些内联变量与 data-* 属性。 */
+function runBoot(patch, themePref = 'dark') {
+  const vars = new Map();
+  const attrs = new Map();
+  const document = {
+    documentElement: {
+      style: {
+        setProperty: (k, v) => vars.set(k, String(v)),
+        getPropertyValue: (k) => vars.get(k) || ''
+      },
+      attrs,
+      setAttribute: (k, v) => attrs.set(k, String(v)),
+      getAttribute: (k) => (attrs.has(k) ? attrs.get(k) : null),
+      removeAttribute: (k) => attrs.delete(k)
+    }
+  };
+  const store = new Map([
+    ['qqa-theme', themePref],
+    ['qqa-appearance', JSON.stringify(patch)]
+  ]);
+  const localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
+  const window = { matchMedia: () => ({ matches: false }), addEventListener() {} };
+  // 脚本自带 try/catch 会吞异常，所以这里必须先确认它真的跑到了最后一行
+  const fn = new Function('document', 'window', 'localStorage', 'setTimeout', `${bootScript()}\n;return true;`);
+  assert.equal(fn(document, window, localStorage, () => 0), true, '首屏脚本应当整段跑完');
+  return { vars, attrs };
+}
+
+test('首屏脚本与模块对 --accent-fg 的判断逐色一致（唯一带逻辑的一处）', () => {
+  const colors = [
+    ...ACCENTS.map((a) => a.hex),
+    '#ffffff', '#000000', '#0b1220', '#f7b955', '#4c8dff', '#2f6fe4',
+    '#ff8800', '#00ff00', '#7f7f7f', '#010203', '#fefefe'
+  ];
+  for (const hex of colors) {
+    const { vars } = runBoot({ accent: hex });
+    assert.equal(
+      vars.get('--accent-fg'), accentForeground(hex),
+      `首屏脚本对 ${hex} 判出的字色与 appearance.js 不一致（两处实现漂了）`
+    );
+  }
+  // 自定义色非法 / 缺省时两边都要回默认蓝的白字
+  assert.equal(runBoot({ accent: 'not-a-color' }).vars.get('--accent-fg'), accentForeground('#4c8dff'));
+  assert.equal(runBoot({}).vars.get('--accent-fg'), accentForeground('#4c8dff'));
+});
+
+test('首屏脚本覆盖 appearanceAttrs 的每一个属性（少一个就是某一轴首屏不生效）', () => {
+  // 每一项都取非默认值，逼出所有非空属性
+  const patch = {
+    mode: 'light', scheme: 'nord', darkIntensity: 'oled', accentPreset: 'amber', accent: '',
+    accentScope: 'sidebar', sidebarStyle: 'accent', background: 'gradient', font: 'serif',
+    density: 'compact', contrast: 'high', reduceMotion: true, showBadges: false, showTopbarTheme: false
+  };
+  const { attrs } = runBoot(patch);
+  const expected = appearanceAttrs(resolveAppearance(patch));
+  for (const [key, value] of Object.entries(expected)) {
+    if (!value) continue;
+    assert.equal(attrs.get(`data-${key}`), value, `首屏脚本漏设（或设错）data-${key}`);
+  }
+  // 反向：脚本不该自己发明属性名
+  for (const key of attrs.keys()) {
+    assert.ok(key === 'data-theme' || `data-${key.slice(5)}` in Object.fromEntries(
+      Object.keys(expected).map((k) => [`data-${k}`, 1])
+    ), `首屏脚本设了一个模块不认识的属性：${key}`);
+  }
+});
+
+test('首屏脚本只认主题微调白名单，不把 localStorage 里的怪键写进样式', () => {
+  const { vars } = runBoot({
+    tweaks: { '--bg': '#123456', '--evil': '#000000', '--accent-soft': 'red', '--text': 'not-a-color', '--muted': '#abcdef' }
+  });
+  assert.equal(vars.get('--bg'), '#123456');
+  assert.equal(vars.get('--muted'), '#abcdef');
+  assert.equal(vars.has('--evil'), false, '非白名单变量不许注入');
+  assert.equal(vars.has('--accent-soft'), false, '派生色变量由 CSS 现算，不该被存档覆盖');
+  assert.equal(vars.has('--text'), false, '不是合法颜色的值不许注入');
+});
+
+test('首屏脚本：应用范围=仅侧栏时全局仍用默认蓝（与模块同口径）', () => {
+  const sidebarOnly = runBoot({ accent: '#f7b955', accentScope: 'sidebar' }).vars;
+  assert.equal(sidebarOnly.get('--accent'), '#4c8dff');
+  assert.equal(sidebarOnly.get('--accent-side'), '#f7b955');
+  const global = runBoot({ accent: '#f7b955' }).vars;
+  assert.equal(global.get('--accent'), '#f7b955');
+  assert.equal(global.get('--accent-side'), '#f7b955');
+});
+
+test('首屏脚本的取值与模块 appearanceVars 对齐（同一份 patch，两边给同样的值）', async () => {
+  const { appearanceVars } = await import('../ui/core/appearance.js');
+  const patch = { accent: '#ff8800', radius: 1.2, zoom: 0.85, bgColor: '#010203', bgFrom: '#111111', bgTo: '#222222', bgAngle: 45 };
+  const boot = runBoot(patch).vars;
+  const mod = appearanceVars(resolveAppearance(patch));
+  for (const key of ['--accent', '--accent-side', '--accent-fg', '--r-scale', '--zoom', '--bg-solid', '--bg-from', '--bg-to', '--bg-angle']) {
+    assert.equal(boot.get(key), mod[key], `${key} 两处不一致：首屏 ${boot.get(key)} vs 模块 ${mod[key]}`);
+  }
+});

@@ -5,8 +5,9 @@
 'use strict';
 
 
-import { getThemePref } from '../app.js';
+import { currentAppearance } from '../app.js';
 import { api } from '../core/api.js';
+import { appearancePatch } from '../core/appearance.js';
 import { ASR_SERVICES } from '../core/constants.js';
 import {
   identityPilotSettingsPatch, setStatusLabel, syncGraduatedFeatureNavigation
@@ -23,11 +24,8 @@ import { ALL_GATE_KEYS, QUOTA_ROWS, gateCheckboxId, gateDefaultOn, hydratePlatfo
 import { currentPersonaId } from './persona.js';
 import { captureTimeControlRule } from './settings-bind.js';
 import { syncThinkingUi } from './settings.js';
-/** 数值夹紧：外观滑条的值不许越界（手改 DOM / 旧存档都可能越界）。 */
-function clampNum(raw, lo, hi, fallback) {
-  const n = Number(String(raw ?? '').trim());
-  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
-}
+// 外观的数值夹紧搬到 ui/core/appearance.js 的 resolveAppearance —— 它已经是那条唯一入口，
+// 这里再夹一遍等于同一个规则写两处，撤掉（原来只有圆角/缩放两处用它）。
 
 async function saveConfig({ quiet = false } = {}) {
   const c = state.config;
@@ -799,23 +797,21 @@ async function saveConfig({ quiet = false } = {}) {
     patch.platform = platform;
   }
 
-  if (sec === 'desktop') {
+  if (sec === 'desktop' || sec === 'appearance') {
+    // 外观那十来项都在"点了就生效"，这里只负责把它们持久化。取值一律走 appearancePatch：
+    // 它是 ui/core/appearance.js 里那份"模型 → 可存对象"的唯一映射，加一个轴只改那一处，
+    // 免得出现"界面能调、保存丢了"（这个坑本轮之前踩过：面板挂在别的 section 里就全存不下去）。
+    const appearanceNow = appearancePatch(currentAppearance());
     patch.ui = {
       ...(c.ui || {}),
-      // 主题在点选项时就已应用并写入 localStorage，这里把它一并存到后端以便跨设备保留
-      theme: getThemePref(),
-      // 外观（预设/强调色/圆角/缩放/密度）：也都是"点了就生效"，这里负责持久化
-      preset: String(val('#cfg-preset', c.ui?.preset || 'snow')).trim(),
-      accent: String(val('#cfg-accent', c.ui?.accent || '')).trim(),
-      radius: clampNum(val('#cfg-radius', c.ui?.radius ?? 1), 0.6, 1.4, 1),
-      zoom: clampNum(val('#cfg-zoom', c.ui?.zoom ?? 1), 0.85, 1.2, 1),
-      density: ['compact', 'cozy', 'roomy'].includes(String(val('#cfg-density', c.ui?.density || 'cozy')).trim())
-        ? String(val('#cfg-density', 'cozy')).trim()
-        : 'cozy',
+      ...appearanceNow,
+      // 明暗落在 ui.theme 上（老字段，服务端与首屏内联脚本都在用），不是 ui.mode
+      theme: appearanceNow.mode,
       showVision: chk('#cfg-showvision', c.ui?.showVision !== false),
       // 兜底与运行期 refreshIntervalMs 一样夹到 >=1000：原来不夹，界面显示 500、实际按 15000 跑
       refreshMs: Math.max(1000, Number(val('#cfg-refreshms', c.ui?.refreshMs ?? 15000)) || 15000)
     };
+    delete patch.ui.mode;
     patch.memberNotes = {
       ...(c.memberNotes || {})
     };

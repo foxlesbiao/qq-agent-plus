@@ -6,13 +6,12 @@
 
 
 import {
-  applyAppearance, closeModelModal, currentThinkingRaw, getThemePref, loadSettings,
-  modelModalShell, refreshStatus, renderExperimentalSettingsSection, renderSettings, renderThinkingSeg,
-  thinkingStops
+  closeModelModal, currentThinkingRaw, loadSettings, modelModalShell, refreshStatus,
+  renderExperimentalSettingsSection, renderSettings, renderThinkingSeg, thinkingStops
 } from '../app.js';
 import { api } from '../core/api.js';
 import {
-  MODEL_SERVICES_UI, THEME_ICON, THEME_LABEL, THEME_VALUES, TIME_DAYS, TIME_RULE_LABELS
+  MODEL_SERVICES_UI, THEME_VALUES, TIME_DAYS, TIME_RULE_LABELS
 } from '../core/constants.js';
 import { askForConfirmation, extraBodyText, splitRowsHtml } from '../core/dom-util.js';
 import { $, $$, esc } from '../core/dom.js';
@@ -29,7 +28,8 @@ import { renderPersonaSection } from './persona.js';
 import { hydratePlatformGates, hydratePlatformVoiceSelect, renderPlatformSection } from './platform.js';
 import { bindSnowlumaActions, hydrateSnowlumaPanel } from './snowluma.js';
 import { applyIcons } from '../core/icons.js';
-import { DENSITIES, PRESETS, resolveAppearance } from '../core/appearance.js';
+import { enhanceSeg } from '../core/segment.js';
+import { bindAppearanceControls, renderAppearanceBlock } from './settings-appearance.js';
 import { loadSessions } from './sessions.js';
 import { bindCrossSectionControls, bindSettingsEvents, isSplitThinking } from './settings-bind.js';
 import { renderAsrSection } from './settings-voice.js';
@@ -72,7 +72,7 @@ function renderSettingsSidebar() {
     ['模型与服务', [['api', '模型 API'], ['search', '搜索服务'], ['asr', '语音转文字'], ['token-saver', '省 Token']]],
     ['自动行为', [['moments', '每日动态'], ['qzone-interactions', '动态互动'], ['reminders', '定时提醒'], ['groupGame', '群游戏'], ['time-control', '时间控制'], ['experiments', '实验功能']]],
     ['平台', [['platform', '平台能力'], ['onebot', 'OneBot']]],
-    ['系统', [['desktop', '系统']]]
+    ['系统', [['appearance', '外观'], ['desktop', '系统']]]
   ];
   sidebar.innerHTML = `
     <div class="settings-runstate">
@@ -103,6 +103,8 @@ function renderSettingsImpl() {
     ${renderSettingsSection(c)}`;
   // 主题选择器等静态节点上的 data-icon 在这里注入 SVG（幂等）
   applyIcons(box);
+  // 分段控件（思考档位、外观页的十来组）：插滑块并定位到当前档
+  enhanceSeg(box);
   bindAppearanceControls();
   bindSettingsEvents(c);
   bindCrossSectionControls();
@@ -133,6 +135,7 @@ function renderSettingsSection(c) {
     allow: () => renderAllowSection(c),
     chat: () => renderChatSection(c),
     platform: () => renderPlatformSection(c),
+    appearance: () => renderAppearanceBlock(c),
     desktop: () => renderDesktopSection(c),
     onebot: () => renderOnebotSection(c)
   };
@@ -773,18 +776,7 @@ function renderDesktopSection(c) {
       <button type="button" class="btn btn-small" id="change-console-token-btn">更新控制台 Token</button>
       <span class="hint" id="console-token-result">更新后旧 Token 和其他已登录会话立即失效。</span>
     </div>
-    <h3>外观</h3>
-    ${renderAppearanceBlock(c)}
     <h3>界面</h3>
-    <div class="field"><label>主题</label>
-      <div class="theme-picker" id="theme-picker">
-        ${THEME_VALUES.map((t) => `
-          <div class="theme-option${getThemePref() === t ? ' on' : ''}" data-theme-opt="${t}" role="button" tabindex="0">
-            <span class="t-ico" data-icon="${esc(THEME_ICON[t])}"></span>
-            <span>${THEME_LABEL[t]}</span>
-          </div>`).join('')}
-      </div>
-    </div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-showvision" ${c.ui?.showVision !== false ? 'checked' : ''} />
       <label for="cfg-showvision">模型目录显示“支持图片输入/不支持图片输入”徽标</label></div>
     <div class="field"><label>界面刷新间隔（毫秒）</label><input type="number" id="cfg-refreshms" min="1000" step="1000" value="${esc(c.ui?.refreshMs ?? 15000)}" /></div>`;
@@ -843,81 +835,6 @@ function renderOnebotSection(c) {
       <label for="cfg-snowluma-auto">自动更新协议端（落后于项目基线就自动升级，每 6 小时检查一次；失败自动回滚）</label></div>
     <div class="hint">升级只改协议端目录 .env 里的镜像 tag 再重建容器：端口与数据卷都不动，所以 <b>QQ 登录态保留</b>；
       更新期间机器人会短暂离线（约 10~30 秒）。协议端低于 1.14.20 时，表情包在 QQ 里会显示成图片。</div>`;
-}
-
-/**
- * 外观块：主题配色预设 / 自定义强调色 / 圆角 / 缩放 / 密度。
- * 全部"点了就生效"（不用点保存），保存设置时再持久化到 config.ui（跨设备）。
- */
-function renderAppearanceBlock(c) {
-  const cur = resolveAppearance(c.ui || {});
-  const densityLabel = { compact: '紧凑', cozy: '舒适', roomy: '宽松' };
-  return `
-    <div class="field"><label>主题配色</label>
-      <div class="preset-row" id="appearance-presets">
-        ${PRESETS.map((p) => `
-          <button type="button" class="preset${cur.preset === p.id && !cur.customAccent ? ' on' : ''}" data-preset="${esc(p.id)}" title="${esc(p.label)} ${esc(p.accent)}">
-            <span class="preset-dot" style="background:${esc(p.accent)}"></span><span>${esc(p.label)}</span>
-          </button>`).join('')}
-      </div>
-      <input type="hidden" id="cfg-preset" value="${esc(cur.preset)}" />
-      <div class="hint">只换强调色（按钮 / 选中态 / 图表柱）；明暗由上面的「主题」决定。</div>
-    </div>
-    <div class="field-row" style="align-items:flex-start">
-      <div class="field"><label>自定义强调色</label>
-        <input type="text" id="cfg-accent" placeholder="#4c8dff（留空 = 用预设）" value="${esc(c.ui?.accent || '')}" style="width:150px" /></div>
-      <div class="field"><label>圆角 <span class="muted" id="appearance-radius-now">${cur.radius.toFixed(1)}×</span></label>
-        <input type="range" id="cfg-radius" min="0.6" max="1.4" step="0.1" value="${cur.radius}" style="width:150px" /></div>
-      <div class="field"><label>界面缩放 <span class="muted" id="appearance-zoom-now">${cur.zoom.toFixed(2)}×</span></label>
-        <input type="range" id="cfg-zoom" min="0.85" max="1.2" step="0.05" value="${cur.zoom}" style="width:150px" /></div>
-      <div class="field"><label>密度</label>
-        <select id="cfg-density">${DENSITIES.map((d) => `<option value="${d}" ${cur.density === d ? 'selected' : ''}>${densityLabel[d]}</option>`).join('')}</select></div>
-    </div>`;
-}
-
-/** 外观控件的交互：改一个就立刻套上（保存时再持久化）。 */
-function bindAppearanceControls() {
-  const box = document.getElementById('appearance-presets');
-  if (!box) return;   // 不在这一页
-  const readUI = () => ({
-    preset: String(document.getElementById('cfg-preset')?.value || 'snow'),
-    accent: String(document.getElementById('cfg-accent')?.value || '').trim(),
-    radius: Number(document.getElementById('cfg-radius')?.value || 1),
-    zoom: Number(document.getElementById('cfg-zoom')?.value || 1),
-    density: String(document.getElementById('cfg-density')?.value || 'cozy')
-  });
-  const syncLabels = () => {
-    const ui = readUI();
-    const r = document.getElementById('appearance-radius-now');
-    const z = document.getElementById('appearance-zoom-now');
-    if (r) r.textContent = `${Number(ui.radius).toFixed(1)}×`;
-    if (z) z.textContent = `${Number(ui.zoom).toFixed(2)}×`;
-    const app = resolveAppearance(ui);
-    for (const el of box.querySelectorAll('[data-preset]')) {
-      el.classList.toggle('on', el.dataset.preset === app.preset && !app.customAccent);
-    }
-  };
-  const apply = () => { applyAppearance(readUI()); syncLabels(); };
-
-  for (const el of box.querySelectorAll('[data-preset]')) {
-    el.addEventListener('click', () => {
-      const hidden = document.getElementById('cfg-preset');
-      if (hidden) hidden.value = el.dataset.preset || 'snow';
-      const accent = document.getElementById('cfg-accent');
-      // 选预设 = 明确放弃自定义色（否则自定义色会一直压着预设）
-      if (accent) accent.value = '';
-      apply();
-    });
-  }
-  for (const id of ['cfg-accent', 'cfg-radius', 'cfg-zoom']) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    // input 事件：滑条拖动/输入时即时预览；change 再补一次（有些浏览器只在 change 触发）
-    el.addEventListener('input', apply);
-    el.addEventListener('change', apply);
-  }
-  document.getElementById('cfg-density')?.addEventListener('change', apply);
-  syncLabels();
 }
 
 /** 选择模型：左提供商 / 右模型，点击模型后保存到当前 api 配置并关闭。 */

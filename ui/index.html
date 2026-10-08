@@ -37,6 +37,60 @@
       } catch (e) {
         document.documentElement.setAttribute('data-theme', 'dark');
       }
+
+      /* 外观预置：把上次存的外观（形状 = ui/core/appearance.js 的 appearancePatch）在样式生效前
+         套一遍，免得"先按默认色画一版、启动完成再换"——那一下换色就是用户看到的"闪"。
+         这里刻意只做"抄值"：强调色的柔和底 / 描边 / 焦点环由 CSS 的 color-mix 从 --accent 现算，
+         字体栈与背景拼装也都在 CSS，这段只填少数几个值。
+         唯一要一小段逻辑的是 --accent-fg（压在强调色上的文字该黑还是白），它必须与
+         appearance.js 的 readableOn 给出同一答案 —— test/console-boot-appearance.test.mjs 逐色核对。
+         整段是锦上添花：任何异常都吞掉，页面照常按默认色起来。 */
+      try {
+        var root = document.documentElement;
+        var patch = JSON.parse(localStorage.getItem('qqa-appearance') || '{}') || {};
+        var DEFAULT_ACCENT = '#4c8dff';
+        var FG_THRESHOLD = 0.54;   // 与 appearance.js 的 readableOn 阈值一致
+        function lin(c) { return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+        function accentFg(hex) {
+          var m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+          if (!m) return '#ffffff';
+          var n = parseInt(m[1], 16);
+          var lum = 0.2126 * lin((n >> 16 & 255) / 255) + 0.7152 * lin((n >> 8 & 255) / 255) + 0.0722 * lin((n & 255) / 255);
+          return lum > FG_THRESHOLD ? '#0b1220' : '#ffffff';
+        }
+        var accent = /^#?[0-9a-f]{6}$/i.test(String(patch.accent || '')) ? patch.accent : DEFAULT_ACCENT;
+        var globalAccent = patch.accentScope === 'sidebar' ? DEFAULT_ACCENT : accent;
+        var st = root.style;
+        st.setProperty('--accent', globalAccent);
+        st.setProperty('--accent-side', accent);
+        st.setProperty('--accent-fg', accentFg(globalAccent));
+        st.setProperty('--r-scale', String(Number(patch.radius) || 1));
+        st.setProperty('--zoom', String(Number(patch.zoom) || 1));
+        if (typeof patch.bgColor === 'string') st.setProperty('--bg-solid', patch.bgColor);
+        if (typeof patch.bgFrom === 'string') st.setProperty('--bg-from', patch.bgFrom);
+        if (typeof patch.bgTo === 'string') st.setProperty('--bg-to', patch.bgTo);
+        st.setProperty('--bg-angle', (Number(patch.bgAngle) || 135) + 'deg');
+        var tweaks = patch.tweaks && typeof patch.tweaks === 'object' ? patch.tweaks : {};
+        for (var tk in tweaks) {
+          // 白名单：localStorage 里的东西不可信，只认主题微调那六个变量
+          if (!/^--(bg|bg-2|bg-3|border|text|muted)$/.test(tk)) continue;
+          if (/^#[0-9a-f]{6}$/i.test(String(tweaks[tk]))) st.setProperty(tk, tweaks[tk]);
+        }
+        var attrs = {
+          scheme: patch.scheme,
+          'dark-intensity': patch.darkIntensity,
+          'accent-scope': patch.accentScope,
+          'sidebar-style': patch.sidebarStyle,
+          background: patch.background,
+          font: patch.font,
+          density: patch.density,
+          contrast: patch.contrast === 'high' ? 'high' : '',
+          motion: patch.noMotion === true ? 'off' : (patch.reduceMotion === true ? 'reduced' : ''),
+          'hide-badges': patch.showBadges === false ? '1' : '',
+          'hide-theme-btn': patch.showTopbarTheme === false ? '1' : ''
+        };
+        for (var at in attrs) { if (attrs[at]) root.setAttribute('data-' + at, attrs[at]); }
+      } catch (e) { /* 外观预置失败就用默认色起来，不影响可用性 */ }
     })();
   </script>
 </head>
@@ -279,6 +333,8 @@
   <script type="module" src="/i18n/zh-CN.js"></script>
   <script type="module" src="/core/icons.js"></script>
   <script type="module" src="/core/appearance.js"></script>
+  <script type="module" src="/core/theme-transition.js"></script>
+  <script type="module" src="/core/segment.js"></script>
   <script type="module" src="/core/registry.js"></script>
   <script type="module" src="/core/dom.js"></script>
   <script type="module" src="/core/api.js"></script>
@@ -301,6 +357,7 @@
   <script type="module" src="/pages/platform.js"></script>
   <script type="module" src="/pages/snowluma.js"></script>
   <!-- 设置域（第二轮拆出；app.js 的 loadSettings/bindSettingsEvents/saveConfig 链全靠它们） -->
+  <script type="module" src="/pages/settings-appearance.js"></script>
   <script type="module" src="/pages/settings.js"></script>
   <script type="module" src="/pages/settings-voice.js"></script>
   <script type="module" src="/pages/key-toggles.js"></script>

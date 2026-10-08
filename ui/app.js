@@ -26,7 +26,8 @@ import {
 } from './core/format.js';
 import { QARegistry } from './core/registry.js';
 import { applyIcons, iconSvg } from './core/icons.js';
-import { appearanceVars, resolveAppearance } from './core/appearance.js';
+import { appearanceAttrs, appearancePatch, appearanceVars, resolveAppearance } from './core/appearance.js';
+import { applyWithReveal } from './core/theme-transition.js';
 import { pendingSessionDetail, refreshIntervalMs, startUpdateProgressTicker, state } from './core/state.js';
 
 // 导航/主题等静态节点上的 data-icon 在启动时统一注入 SVG（幂等，可重复调用）
@@ -98,8 +99,8 @@ function applyTheme(pref) {
 }
 
 /**
- * 外观设置（预设/强调色/圆角/缩放/密度）：localStorage 先落一次"立刻生效"，
- * 拉到 config.ui 之后再以服务端为准覆盖一次（跨设备同步）。
+ * 外观设置（明暗 / 色板 / 强调色 / 背景 / 排版 / 微调 / 顶栏 / 无障碍）：localStorage 先落一次
+ * "立刻生效"，拉到 config.ui 之后再以服务端为准覆盖一次（跨设备同步）。
  * 都失效时用默认值 —— 外观绝不该让控制台起不来。
  */
 function getAppearancePref() {
@@ -110,21 +111,56 @@ function getAppearancePref() {
   return {};
 }
 
+/**
+ * 把一份外观配置套到 <html> 上。
+ * 两条通道：CSS 变量走内联样式（强调色的派生色要算，只能给值），其余轴走 data-* 属性
+ * （色板 / 深色强度 / 侧栏样式 / 背景 / 字体 / 密度 / 动效 / 对比度）—— 属性能让 CSS
+ * 选择器直接命中，省得每个轴都往内联样式里塞变量。
+ * 变量值为 null 表示"移除这条内联属性"：主题微调的「重置」就是靠它把控制权还给色板。
+ * data-theme 交给 applyTheme（它还要跟着"跟随系统"换按钮图标），这里不重复设。
+ */
 function applyAppearance(pref = {}) {
   const app = resolveAppearance(pref);
   const root = document.documentElement;
-  for (const [k, v] of Object.entries(appearanceVars(app))) root.style.setProperty(k, v);
-  root.dataset.density = app.density;
-  try { localStorage.setItem('qqa-appearance', JSON.stringify(app)); } catch { /* 忽略 */ }
+  for (const [k, v] of Object.entries(appearanceVars(app))) {
+    if (v === null) root.style.removeProperty(k);
+    else root.style.setProperty(k, v);
+  }
+  for (const [k, v] of Object.entries(appearanceAttrs(app))) {
+    if (v) root.setAttribute(`data-${k}`, v);
+    else root.removeAttribute(`data-${k}`);
+  }
+  applyTheme(app.mode);
+  try { localStorage.setItem('qqa-appearance', JSON.stringify(appearancePatch(app))); } catch { /* 忽略 */ }
   state.appearance = app;
   return app;
 }
 
-/** 点击按钮：暗 → 亮 → 跟随系统 → 暗。 */
-function cycleTheme() {
+/** 当前生效的外观（还没算过就先从 localStorage 算一份）。 */
+function currentAppearance() {
+  return state.appearance || resolveAppearance(getAppearancePref());
+}
+
+/**
+ * 改外观：合并 → 套用 → 存本机（不发请求）。
+ * 外观遵循设置页的统一契约"点了就生效，点保存才落服务器"，所以这里不 POST ——
+ * 否则拖一下滑条就是一串请求。`reveal` 只给离散的颜色/明暗变更用：换主题、换强调色、
+ * 换色板走 View Transitions 的圆形波纹；连续型控件（滑条）不要开，否则拖一下就闪一次。
+ */
+function setAppearance(patch = {}, ev = null, { reveal = false } = {}) {
+  const next = { ...appearancePatch(currentAppearance()), ...patch };
+  const run = () => applyAppearance(next);
+  if (reveal) applyWithReveal(run, ev);
+  else run();
+  return next;
+}
+
+/** 点击顶栏按钮：暗 → 亮 → 跟随系统 → 暗。波纹从按钮处铺开。 */
+function cycleTheme(ev) {
   const order = THEME_VALUES;
-  const next = order[(order.indexOf(getThemePref()) + 1) % order.length];
-  applyTheme(next);
+  const cur = currentAppearance().mode;
+  const next = order[(order.indexOf(cur) + 1) % order.length];
+  setAppearance({ mode: next }, ev, { reveal: true });
   // 尽力同步到后端，失败不影响本地使用
   api('/api/config', { method: 'POST', body: JSON.stringify({ ui: { theme: next } }) })
     .catch(() => { /* 后端不可达时静默：localStorage 已经生效 */ });
@@ -1201,8 +1237,9 @@ else document.addEventListener('DOMContentLoaded', init, { once: true });
 
 
 export {
-  applyAppearance, applyTheme, closeModelModal, currentThinkingRaw, getAppearancePref, getThemePref, loadFriendFeaturePage,
+  applyAppearance, applyTheme, closeModelModal, currentAppearance, currentThinkingRaw,
+  getAppearancePref, getThemePref, loadFriendFeaturePage,
   loadIdentityFeaturePage, loadIncidentFeaturePage, loadSettings, modelModalShell, refreshStatus,
   renderBanner, renderControlHub, renderExperimentalSettingsSection, renderLifecycleOverview,
-  renderSettings, renderThinkingSeg, switchTab, thinkingStops, updateProgressElapsed
+  renderSettings, renderThinkingSeg, setAppearance, switchTab, thinkingStops, updateProgressElapsed
 };

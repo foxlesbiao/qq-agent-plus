@@ -5,6 +5,7 @@
 // instead of watching every DOM mutation: message/status refreshes must not
 // repeatedly delete and recreate controls.
 
+import { applyIcons } from './core/icons.js';
 import { QARegistry } from './core/registry.js';
 import { state } from './core/state.js';
 import { api } from './core/api.js';
@@ -159,18 +160,27 @@ import { api } from './core/api.js';
     syncAdminInputs();
   }
 
+  /**
+   * 改导航项的文字，但**不碰图标**。
+   * 原来这里直接写 `el.textContent = '…'`，会把 applyIcons 注入的 `<span class="ico">` 一起抹掉 ——
+   * 「人物印象」与「异常处理」两项因此在每次启动后都变成没有图标的导航项
+   * （2026-10-08 真机实测：12 个 tab 里就这两项 hasSvg=false）。所以只替换文字节点，
+   * 并顺手补一次 applyIcons（幂等）兜底"图标还没注入就先跑了这条"的顺序问题。
+   */
+  function setNavLabel(el, label) {
+    el.classList.remove('hidden');
+    const textNode = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.nodeValue.trim());
+    if (!textNode) el.appendChild(document.createTextNode(label));
+    else if (textNode.nodeValue.trim() !== label) textNode.nodeValue = label;
+    applyIcons(el);
+  }
+
   function normalizeNavigation() {
-    document.querySelectorAll('[data-feature-nav="identity"]').forEach((el) => {
-      el.classList.remove('hidden');
-      el.textContent = '人物印象';
-    });
+    document.querySelectorAll('[data-feature-nav="identity"]').forEach((el) => setNavLabel(el, '人物印象'));
     document.querySelectorAll('[data-feature-nav="auto-friend"]').forEach((el) => {
       el.classList.remove('hidden');
     });
-    document.querySelectorAll('[data-feature-nav="incidents"]').forEach((el) => {
-      el.classList.remove('hidden');
-      el.textContent = '异常处理';
-    });
+    document.querySelectorAll('[data-feature-nav="incidents"]').forEach((el) => setNavLabel(el, '异常处理'));
     document.querySelectorAll('[data-feature-nav="slang"], #view-slang')
       .forEach((el) => el.remove());
   }
