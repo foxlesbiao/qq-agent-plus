@@ -62,7 +62,15 @@ STACK_ROOT/
   deployment-access.txt   generated URLs and credentials (0600)
 ```
 
-The SnowLuma image is pinned to the tested `v1.14.15` release by default.
+The SnowLuma image is pinned to the tested `v1.14.22` release by default. If you already
+deployed an older protocol image, you do not need to edit compose files by hand: the console's
+**Settings → OneBot → 协议端（SnowLuma）** panel shows the running version and can update it
+(changes `SNOWLUMA_IMAGE` in `.env`, then `compose pull && up -d`; volumes are untouched so the
+QQ login survives; a failed update rolls back automatically). The same is available on the CLI:
+`node src/ops.js snowluma-version` and `node src/ops.js snowluma-update [--to IMAGE] [--dry-run]`.
+
+Protocol versions below `1.14.20` still work, but stickers sent as "emoji style" render as plain
+images in QQ (`sub_type` support landed in SnowLuma `1.14.20`, see issue #468).
 Download or container startup failures stop the installation with an error.
 One shared OneBot token is written to SnowLuma's global template, every existing
 per-account config and QQ Agent's configuration. Existing installations retain
@@ -97,7 +105,7 @@ after printing a hint. Any of these three routes works:
 # 1) Retry through a registry mirror you trust (e.g. your cloud vendor's)
 QQ_AGENT_IMAGE_MIRROR=<mirror-host> bash deploy-all.sh
 bash deploy-all.sh --image-mirror <mirror-host>            # same thing
-bash deploy-all.sh --image <mirror-host>/motricseven7/snowluma:v1.14.15
+bash deploy-all.sh --image <mirror-host>/motricseven7/snowluma:v1.14.22
 
 # 2) Configure a global accelerator once (Docker then uses it for every pull)
 sudo tee /etc/docker/daemon.json <<'JSON'
@@ -106,8 +114,8 @@ JSON
 sudo systemctl restart docker
 
 # 3) Pull elsewhere and carry the image over
-docker pull motricseven7/snowluma:v1.14.15
-docker save motricseven7/snowluma:v1.14.15 | gzip > snowluma.tgz
+docker pull motricseven7/snowluma:v1.14.22
+docker save motricseven7/snowluma:v1.14.22 | gzip > snowluma.tgz
 gunzip -c snowluma.tgz | docker load      # on the target host
 ```
 

@@ -808,6 +808,14 @@ async function saveConfig({ quiet = false } = {}) {
   }
 
   if (sec === 'onebot') {
+    // 协议端自动更新开关（属于 autoUpdate 段；同一个区块里还有 agent 自己的自动更新设置）
+    patch.autoUpdate = {
+      ...(c.autoUpdate || {}),
+      snowluma: {
+        ...(c.autoUpdate?.snowluma || {}),
+        enabled: chk('#cfg-snowluma-auto', c.autoUpdate?.snowluma?.enabled === true)
+      }
+    };
     // 这两个令牌的"保持不变"是**留空**（服务端不认 ****** 这个哨兵，真提交会把令牌
     // 改成字面量 ******），所以掩码一律当"没改"。控制台的「显示/隐藏」在隐藏时
     // 已把输入框还原成空，这里再兜一层，防别的路径把掩码留在框里。

@@ -6,6 +6,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { openDatabase } from './sqlite.js';
 import { budgetStatus } from './budget.js';
+import {
+  SNOWLUMA_BASELINE_IMAGE, SNOWLUMA_MIN_RECOMMENDED, readComposeEnv, parseImage, compareVersions
+} from './snowluma-update.js';
 
 const OUTBOUND_STALE_MS = 6 * 60 * 60 * 1000;   // 入站静默窗口：6 小时没人说话＝静默期（原名出站水位，
                                                 // 2026-10-02 判据改版后只用于比较入站时间）
@@ -72,6 +75,7 @@ export async function runHealthCheck(opts = {}) {
     consolePort = 3210,
     onebotHttpPort = 3390,
     onebotToken = '',
+    snowlumaDir = '',
     outboundStaleMs = OUTBOUND_STALE_MS,
     notify = null,
     fetchImpl = globalThis.fetch,
@@ -103,6 +107,27 @@ export async function runHealthCheck(opts = {}) {
     add('onebot-status', res.ok && data?.status === 'ok', res.ok ? `retcode=${data?.retcode ?? '?'}` : `HTTP ${res.status}`);
   } catch (error) {
     add('onebot-status', false, error?.message ?? String(error));
+  }
+
+  // ②b 协议端（SnowLuma）版本：只读 compose 项目的 .env（不 exec docker，巡检要便宜且无副作用）。
+  // 低于推荐版本**不算不健康**（机器人照常工作，只是贴纸会显示成图片），所以 ok=true + 在
+  // detail 里把"该升级"说清楚 —— 控制台「设置 → OneBot」页可以一键更新。
+  try {
+    if (!snowlumaDir) add('protocol-version', true, '未配置协议端目录（跳过）');
+    else {
+      const env = readComposeEnv(snowlumaDir);
+      const version = parseImage(env.image).version;
+      if (!env.exists) add('protocol-version', true, '没找到协议端 compose 项目（跳过）');
+      else if (!version) add('protocol-version', true, `镜像 tag 认不出：${env.image || '(空)'}`);
+      else if (compareVersions(version, SNOWLUMA_MIN_RECOMMENDED) < 0) {
+        add('protocol-version', true,
+          `${version} 低于推荐 ${SNOWLUMA_MIN_RECOMMENDED}（贴纸会显示成图片）；控制台可一键更新到 ${parseImage(SNOWLUMA_BASELINE_IMAGE).version}`);
+      } else {
+        add('protocol-version', true, `${version}（镜像 ${env.image}）`);
+      }
+    }
+  } catch (error) {
+    add('protocol-version', true, `跳过：${error?.message ?? error}`);
   }
 
   // ③ 入站处理水位：判据是"**到期的入站消息有没有被处理**"，而不是"入站新 → 出站必须新"，

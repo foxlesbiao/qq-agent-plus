@@ -23,6 +23,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { openDatabase } from './core/sqlite.js';
 import { runHealthCheck } from './core/health-check.js';
+import { SNOWLUMA_BASELINE_IMAGE, createSnowlumaUpdater } from './core/snowluma-update.js';
 import { readOwnerUin, sendOwnerText } from './core/notify-owner.js';
 import { pruneAudit } from './core/audit-log.js';
 import { resolveModelPrice, modelLabel, setRemotePrices, setChannelPrices } from './pricing/model-prices.js';
@@ -96,6 +97,8 @@ function config(overrides = {}) {
     guardUser: envStr('QQ_AGENT_GUARD_USER', envStr('QQ_AGENT_USER', currentUser())),
     keep: intEnv('QQ_AGENT_KEEP', 4),
     snowlumaContainer: envStr('QQ_AGENT_SNOWLUMA_CONTAINER', 'qq-agent-snowluma'),
+    // 协议端 compose 项目（.env + docker-compose.yml 所在地）：一键更新与版本检查都读这里
+    snowlumaDir: envStr('QQ_AGENT_SNOWLUMA_DIR', path.join(rootDir, 'snowluma')),
     node: envStr('QQ_AGENT_NODE', ''),
     log: envStr('QQ_AGENT_LOG', path.join(os.homedir(), 'qq-agent-undefined-calls.log'))
   };
@@ -1587,7 +1590,7 @@ async function cmdDeploy(args) {
   if (wantsHelp(args)) { say(HELP.deploy); return 0; }
   const cfg = config({ dir: optValue(args, '--root-dir', null) });
   const srcDir = path.resolve(optValue(args, '--dir', envStr('QQ_AGENT_SRC_DIR', path.join(os.homedir(), 'qq-agent-src'))));
-  const image = envStr('SNOWLUMA_IMAGE', 'motricseven7/snowluma:v1.14.15');
+  const image = envStr('SNOWLUMA_IMAGE', SNOWLUMA_BASELINE_IMAGE);
   const obHttp = envStr('QQ_AGENT_ONEBOT_HTTP_PORT', '3390');
   const obWs = envStr('QQ_AGENT_ONEBOT_WS_PORT', '3391');
   const baseUrl = envStr('QQ_AGENT_MODEL_BASE_URL');
@@ -1813,6 +1816,75 @@ async function cmdConsole(args) {
   });
 }
 
+// ───────────────────────── 协议端（SnowLuma）版本与更新子命令 ─────────────────────────
+// 这两个命令是"控制台一键更新协议端"的同一实现（控制台走 core/snowluma-update.js 的
+// SnowlumaUpdater，命令行走这里），运维排查时可以直接在服务器上跑。
+function makeSnowlumaUpdater(args) {
+  const cfg = config({ dir: optValue(args, '--root-dir', null) });
+  return {
+    cfg,
+    updater: createSnowlumaUpdater({
+      composeDir: cfg.snowlumaDir,
+      container: cfg.snowlumaContainer,
+      webuiPort: Number(cfg.webuiPort) || 5099,
+      log: (line) => infoWarn(line)
+    })
+  };
+}
+
+function cmdSnowlumaVersion(args) {
+  if (wantsHelp(args)) { say(HELP['snowluma-version']); return 0; }
+  const { updater } = makeSnowlumaUpdater(args);
+  const st = updater.status();
+  if (!st.installed) {
+    badWarn(`没找到协议端 compose 项目：${st.composeDir}/.env 不存在（这台机器可能没装协议端）`);
+    return 1;
+  }
+  say(`协议端 compose 目录: ${st.composeDir}`);
+  say(`容器: ${st.container}（${st.running ? '运行中' : `状态 ${st.runningState || '未知'}`}）`);
+  say(`当前镜像: ${st.currentImage || '(未知)'}${st.currentVersion ? `（版本 ${st.currentVersion}）` : ''}`);
+  say(`目标镜像: ${st.targetImage || '(未知)'}${st.targetVersion ? `（版本 ${st.targetVersion}）` : ''}`);
+  if (st.outdated) {
+    badWarn(`协议端落后于项目基线 ${st.targetVersion}：控制台「设置 → OneBot」页可一键更新（或跑 snowluma-update）`);
+  } else if (st.belowRecommended) {
+    badWarn(`协议端低于推荐版本 ${st.minRecommended}（贴纸会显示成图片）—— 建议升级`);
+  } else {
+    okWarn('协议端版本不落后');
+  }
+  return 0;
+}
+
+async function cmdSnowlumaUpdate(args) {
+  if (wantsHelp(args)) { say(HELP['snowluma-update']); return 0; }
+  const { updater } = makeSnowlumaUpdater(args);
+  const to = optValue(args, '--to', '');
+  const dryRun = hasFlag(args, '--dry-run');
+  const st = updater.status();
+  if (!st.installed) {
+    badWarn(`没找到协议端 compose 项目：${st.composeDir}/.env 不存在`);
+    return 1;
+  }
+  if (dryRun) {
+    const plan = await updater.update({ to, dryRun: true });
+    say(`[dry-run] ${plan.envChange}`);
+    say(`[dry-run] 步骤: ${(plan.steps || []).map((s) => `${s.cmd} ${s.args.join(' ')}`).join(' → ')}`);
+    say('（dry-run 不写 .env、不动容器）');
+    return 0;
+  }
+  if (!st.outdated && !to) {
+    okWarn(`协议端已经是最新（${st.currentVersion}），无需更新。要强制重建就带 --to ${st.currentImage}`);
+  }
+  infoWarn(`开始更新协议端：${st.currentVersion || st.currentImage} → ${to || st.targetVersion || st.targetImage}`);
+  const res = await updater.update({ to });
+  for (const line of res.log || []) say(`  · ${line}`);
+  if (res.ok) {
+    okWarn(`协议端已更新到 ${res.to}（等待就绪 ${Math.round((res.waitedMs || 0) / 1000)}s；备份 ${res.backupDir}）`);
+    return 0;
+  }
+  badWarn(`更新失败：${res.error}${res.rolledBack ? '（已自动回滚到旧镜像）' : res.restored ? '（.env 已还原）' : ''}`);
+  return 1;
+}
+
 // ─────────────────────────── health-check 子命令（改进方案 C8/#7） ───────────────────────────
 async function cmdHealthCheck(args) {
   if (wantsHelp(args)) { say(HELP['health-check']); return 0; }
@@ -1833,6 +1905,7 @@ async function cmdHealthCheck(args) {
     consolePort: Number(cfg.server?.port) || Number(cfgBase.consolePort) || 3210,
     onebotHttpPort,
     onebotToken,
+    snowlumaDir: cfgBase.snowlumaDir,
     // 破坏性操作显式确认的同一口径：--confirm 才允许真的发 QQ 通知，--print/无参只巡检
     notify: hasFlag(args, '--confirm') && ownerUin
       ? (text) => sendOwnerText({ httpPort: onebotHttpPort, token: onebotToken, ownerUin, text })
@@ -2034,6 +2107,13 @@ function cmdAuditPrune(args) {
 // ───────────────────────────────── 帮助 ─────────────────────────────────
 
 const HELP = {
+  'snowluma-version': `用法: node src/ops.js snowluma-version [--root-dir 目录]
+看协议端（SnowLuma）当前镜像与版本、项目基线版本、是否落后。
+读数来自 <root-dir>/snowluma/.env 与 docker inspect（不需要停服务）。`,
+  'snowluma-update': `用法: node src/ops.js snowluma-update [--to 镜像] [--dry-run]
+把协议端镜像更新到项目基线（或 --to 指定的镜像）：备份 .env/compose → 改 SNOWLUMA_IMAGE
+→ docker compose pull → up -d → 等就绪。拉取失败只还原 .env；起不来会自动回滚到旧镜像。
+数据卷不动，所以 QQ 登录态保留。--dry-run 只打印计划。`,
   'health-check': `用法: node src/ops.js health-check [--confirm]
 
 一次性健康巡检并输出 JSON（退出码 0=健康 / 1=有失败项）。检查：控制台 /healthz、
@@ -2213,6 +2293,8 @@ function printMainHelp() {
   say('  console         SSH 隧道 + 打开控制台（Windows/macOS/Linux）');
   say('  install-timers  生成并安装 systemd user 定时器（需 --confirm）');
   say('  health-check    健康巡检（控制台/协议端/入站水位/磁盘/更新状态）；退出码 0=健康');
+  say('  snowluma-version 看协议端（SnowLuma）镜像版本与是否落后于项目基线');
+  say('  snowluma-update  更新协议端镜像（改 .env + compose pull/up -d，失败自动回滚）');
   say('  help            显示本帮助');
   say();
   say('环境变量与常用示例见 docs/OPS.md。');
@@ -2234,7 +2316,9 @@ const COMMANDS = {
   deploy: { run: cmdDeploy, help: HELP.deploy },
   console: { run: cmdConsole, help: HELP.console },
   'install-timers': { run: cmdInstallTimers, help: HELP['install-timers'] },
-  'health-check': { run: cmdHealthCheck, help: HELP['health-check'] }
+  'health-check': { run: cmdHealthCheck, help: HELP['health-check'] },
+  'snowluma-version': { run: cmdSnowlumaVersion, help: HELP['snowluma-version'] },
+  'snowluma-update': { run: cmdSnowlumaUpdate, help: HELP['snowluma-update'] }
 };
 
 async function main() {

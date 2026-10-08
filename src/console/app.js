@@ -63,6 +63,7 @@ import {
   platformQuotaUsage
 } from '../tools/tools-core.js';
 import { integrationStatus, updateSnowLumaPassword } from './integrations.js';
+import { createSnowlumaUpdater } from '../core/snowluma-update.js';
 import { AutoUpdateManager, autoUpdatePending, readAutoUpdateState } from '../auto-update.js';
 import { checkForUpdate, ignoreVersion } from '../update-notice.js';
 
@@ -515,6 +516,16 @@ export function createApp({
   let incidentPilot = null;
   let incidentPilotError = '';
   let autoUpdate = null;
+  // 协议端（SnowLuma）更新器：控制台一键更新 + 可选的自动更新都用它。
+  // compose 目录/容器名来自环境（QQ_AGENT_SNOWLUMA_DIR / QQ_AGENT_SNOWLUMA_CONTAINER），
+  // 与 deploy-all.sh 落盘的布局一致；目录不存在时所有接口都如实返回"没装协议端"。
+  const snowlumaDir = String(process.env.QQ_AGENT_SNOWLUMA_DIR || path.join(path.dirname(DATA_DIR), 'snowluma'));
+  let snowlumaUpdater = createSnowlumaUpdater({
+    composeDir: snowlumaDir,
+    container: String(process.env.QQ_AGENT_SNOWLUMA_CONTAINER || 'qq-agent-snowluma'),
+    webuiPort: Number(process.env.QQ_AGENT_WEBUI_PORT) || 5099,
+    log: (line) => log(line)
+  });
   const moduleLog = (source) => (...args) => {
     log(...args);
     // 只有调用方显式传了 Error 实例才进异常面板。此前对纯文本日志合成 Error 并记成
@@ -879,6 +890,30 @@ export function createApp({
     }
   }
   let timeControlTimer = null;
+  let snowlumaAutoTimer = null;
+  // 协议端自动更新：默认关（config.autoUpdate.snowluma.enabled）。打开后每 6 小时比一次镜像，
+  // 落后于项目基线就自动更新 —— 更新只改 .env + compose pull/up，数据卷不动（登录态保留），
+  // 失败会自动回滚到旧镜像。boot 后延迟 2 分钟再首检（别跟启动抢 IO）。
+  const SNOWLUMA_AUTO_INTERVAL_MS = 6 * 3600_000;
+  async function snowlumaAutoCheck({ first = false } = {}) {
+    try {
+      const cfgNow = getConfig();
+      if (cfgNow.autoUpdate?.snowluma?.enabled !== true) return;
+      const st = snowlumaUpdater.status();
+      if (!st.installed || !st.outdated || st.busy) return;
+      log(`[snowluma] 自动更新协议端：${st.currentVersion || st.currentImage} → ${st.targetVersion || st.targetImage}`);
+      const res = await snowlumaUpdater.update({ to: String(cfgNow.autoUpdate?.snowluma?.image || '') });
+      if (res.ok) log(`[snowluma] 自动更新完成：${res.to}（等待就绪 ${Math.round((res.waitedMs || 0) / 1000)}s）`);
+      else log(`[snowluma] 自动更新失败：${res.error}${res.rolledBack ? '（已自动回滚）' : ''}`);
+    } catch (error) {
+      log(`[snowluma] 自动更新异常：${error?.message ?? error}`);
+    } finally {
+      clearTimeout(snowlumaAutoTimer);
+      snowlumaAutoTimer = setTimeout(() => { snowlumaAutoCheck(); },
+        first ? SNOWLUMA_AUTO_INTERVAL_MS : SNOWLUMA_AUTO_INTERVAL_MS);
+    }
+  }
+
   function refreshTimeControl() {
     clearTimeout(timeControlTimer);
     if (getConfig().timeControl?.enabled !== true) {
@@ -1800,6 +1835,29 @@ export function createApp({
 
   router.add('GET', '/api/integrations/status', async (req, res) => json(res, 200, await integrationStatus()));
   router.add('GET', '/api/auto-update/status', async (req, res) => json(res, 200, autoUpdate.status()));
+  // 协议端（SnowLuma）版本 / 更新 / 回滚：控制台「设置 → OneBot」页用
+  router.add('GET', '/api/snowluma/version', async (req, res) => {
+    const st = snowlumaUpdater.status();
+    const auto = getConfig().autoUpdate?.snowluma || {};
+    return json(res, 200, { ...st, auto: { enabled: auto.enabled === true, image: String(auto.image || '') } });
+  });
+  router.add('POST', '/api/snowluma/update', async (req, res) => {
+    const body = await readBody(req).catch(() => ({}));
+    const to = String(body?.to || getConfig().autoUpdate?.snowluma?.image || '').trim();
+    const result = await snowlumaUpdater.update({ to, dryRun: body?.dryRun === true });
+    auditWrite('snowluma-update', result.to || 'protocol', {
+      req, ok: result.ok !== false, error: result.error || '',
+      changed: { from: result.from, to: result.to, rolledBack: result.rolledBack === true }
+    });
+    return json(res, result.ok ? 200 : 500, result);
+  });
+  router.add('POST', '/api/snowluma/rollback', async (req, res) => {
+    const result = await snowlumaUpdater.rollback();
+    auditWrite('snowluma-rollback', result.to || 'protocol', {
+      req, ok: result.ok !== false, error: result.error || ''
+    });
+    return json(res, result.ok ? 200 : 500, result);
+  });
   router.add('GET', '/api/channel-prices', async (req, res) => json(res, 200, { ok: true, feeds: channelPriceStatus() }));
   router.add('GET', '/api/model-prices', async (req, res, params, url) => json(res, 200, modelPricesPayload(url.searchParams.get('model'))));
   router.add('GET', '/api/vision/results', async (req, res) => json(res, 200, { results: { ...builtinVisionResults(currentProviders()), ...visionResults() }, scanning: visionScan.running }));
@@ -4345,6 +4403,10 @@ export function createApp({
     orchestrator.startScheduledWakeTicker();
     autoUpdate.start();
     log(`控制台已就绪：http://${serverCfg.host}:${port} (${getConfig().runtime.mode})`);
+    // 协议端自动更新：首检延迟 2 分钟（别跟启动抢 IO），之后每 6 小时一轮；开关默认关
+    clearTimeout(snowlumaAutoTimer);
+    snowlumaAutoTimer = setTimeout(() => { snowlumaAutoCheck({ first: true }); }, 120_000);
+    snowlumaAutoTimer.unref?.();
     log(`OneBot: ws=${getConfig().onebot?.wsUrl} http=${getConfig().onebot?.httpUrl}`);
     log(`模型: ${getConfig().api.model || '（未设置，请在设置里选择）'} @ ${getConfig().api.baseUrl}`);
     return port;
@@ -4363,6 +4425,7 @@ export function createApp({
     }
     clearTimeout(timeControlTimer);
     clearInterval(sseHeartbeat);
+    clearTimeout(snowlumaAutoTimer);
     releaseTimeControl();
     dailyMoments.stop();
     dailyMoments.abort();
@@ -4414,6 +4477,10 @@ export function createApp({
     qzoneInteractions,
     assetObserver,
     autoUpdate,
+    // 用 getter/setter（而不是普通属性）：测试与运维可以整体替换更新器，
+    // 路由闭包读的就是同一个变量（app.onebot 那类注入点同理）
+    get snowlumaUpdater() { return snowlumaUpdater; },
+    set snowlumaUpdater(next) { snowlumaUpdater = next; },
     get incidentPilot() { return incidentPilot; },
     incidentPilotStatus,
     captureIncident(error, context = {}) {

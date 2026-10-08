@@ -345,7 +345,12 @@ export const DEFAULT_CONFIG = {
     ownerUin: '',
     repository: 'https://github.com/sakurawwwxh/qq-agent-plus.git',
     branch: 'main',
-    intervalHours: 6
+    intervalHours: 6,
+    // 协议端（SnowLuma）镜像的自动更新：默认关（它会重启协议端容器，虽然数据卷不动、
+    // 登录态保留，但仍应显式打开）。打开后控制台进程每 6 小时比一次镜像版本，
+    // 落后于项目基线就自动更新；失败会自动回滚到旧镜像。
+    // image 留空 = 用项目基线（并沿用当前镜像的国内镜像站前缀）。
+    snowluma: { enabled: false, image: '' }
   },
   // 群日报：每天定时把"昨天群里聊了啥"汇总成一条发到指定群。
   // 白名单制（chats 为空则不发任何群）；默认关。

@@ -26,6 +26,7 @@ import {
 } from './moments.js';
 import { renderPersonaSection } from './persona.js';
 import { hydratePlatformGates, hydratePlatformVoiceSelect, renderPlatformSection } from './platform.js';
+import { bindSnowlumaActions, hydrateSnowlumaPanel } from './snowluma.js';
 import { loadSessions } from './sessions.js';
 import { bindCrossSectionControls, bindSettingsEvents, isSplitThinking } from './settings-bind.js';
 import { renderAsrSection } from './settings-voice.js';
@@ -109,6 +110,9 @@ function renderSettingsImpl() {
   // （不在这一页时各自 no-op）
   hydratePlatformVoiceSelect();
   hydratePlatformGates();
+  // OneBot 页的「协议端（SnowLuma）」面板：读版本 + 绑按钮（不在这一页时各自 no-op）
+  hydrateSnowlumaPanel();
+  bindSnowlumaActions();
 }
 
 function renderSettingsSection(c) {
@@ -822,7 +826,21 @@ function renderOnebotSection(c) {
         填 0 = 一律只补记录。默认 30 分钟。</div></div>
     </div>
     <div id="onebot-status-line">${onebotStatusLineHtml()}</div>
-    <div class="hint">改完 OneBot 地址、令牌或心跳策略后，执行 <code>manage.sh restart</code> 生效（连接只在启动时建立一次，改完不重启还是旧配置）。</div>`;
+    <div class="hint">改完 OneBot 地址、令牌或心跳策略后，执行 <code>manage.sh restart</code> 生效（连接只在启动时建立一次，改完不重启还是旧配置）。</div>
+
+    <div class="settings-divider"></div>
+    <h3>协议端（SnowLuma）</h3>
+    <div id="snowluma-version-box" class="hint">正在读取协议端版本…</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 6px">
+      <button type="button" class="btn btn-small" id="snowluma-check-btn">重新检查</button>
+      <button type="button" class="btn btn-primary btn-small" id="snowluma-update-btn">更新协议端</button>
+      <button type="button" class="btn btn-small" id="snowluma-rollback-btn">回滚到上一版</button>
+      <span class="hint muted" id="snowluma-action-note" style="margin:0"></span>
+    </div>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-snowluma-auto" ${c.autoUpdate?.snowluma?.enabled === true ? 'checked' : ''} />
+      <label for="cfg-snowluma-auto">自动更新协议端（落后于项目基线就自动升级，每 6 小时检查一次；失败自动回滚）</label></div>
+    <div class="hint">升级只改协议端目录 .env 里的镜像 tag 再重建容器：端口与数据卷都不动，所以 <b>QQ 登录态保留</b>；
+      更新期间机器人会短暂离线（约 10~30 秒）。协议端低于 1.14.20 时，表情包在 QQ 里会显示成图片。</div>`;
 }
 
 /** 选择模型：左提供商 / 右模型，点击模型后保存到当前 api 配置并关闭。 */

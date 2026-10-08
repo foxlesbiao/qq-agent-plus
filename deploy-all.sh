@@ -16,7 +16,7 @@ ONEBOT_HTTP_PORT_SET=false
 ONEBOT_WS_PORT_SET=false
 SERVICE="qq-agent-linux"
 SERVICE_SET=false
-IMAGE="${SNOWLUMA_IMAGE:-motricseven7/snowluma:v1.14.15}"
+IMAGE="${SNOWLUMA_IMAGE:-motricseven7/snowluma:v1.14.22}"
 IMAGE_SET=false
 IMAGE_MIRROR_ARG=""
 # 这两个是用户会按机器情况调的旋钮（显存紧张时改 SNOWLUMA_SCREEN、排查时改日志级别），
@@ -54,7 +54,7 @@ Options:
   --onebot-http-port PORT     Local-only OneBot HTTP port (default: 3000)
   --onebot-ws-port PORT       Local-only OneBot WebSocket port (default: 3001)
   --service NAME              systemd user service (default: qq-agent-linux)
-  --image IMAGE               SnowLuma image (default: tested v1.14.15)
+  --image IMAGE               SnowLuma image (default: tested v1.14.22)
   --image-mirror HOST         Retry the pull through a registry mirror when Docker
                               Hub is unreachable (mainland China), e.g.
                               --image-mirror docker.m.daocloud.io
@@ -457,7 +457,7 @@ if [[ "$EXISTING_STACK" == true ]]; then
     SERVICE="$(env_value "$ENV_FILE" QQ_AGENT_SERVICE)"; SERVICE="${SERVICE:-qq-agent-linux}"
   fi
   if [[ "$IMAGE_SET" != true ]]; then
-    IMAGE="$(env_value "$ENV_FILE" SNOWLUMA_IMAGE)"; IMAGE="${IMAGE:-motricseven7/snowluma:v1.14.15}"
+    IMAGE="$(env_value "$ENV_FILE" SNOWLUMA_IMAGE)"; IMAGE="${IMAGE:-motricseven7/snowluma:v1.14.22}"
   fi
   if [[ "$AGENT_PORT_SET" != true ]]; then
     AGENT_PORT="$(env_value "$ENV_FILE" AGENT_PORT)"; AGENT_PORT="${AGENT_PORT:-3210}"
@@ -714,7 +714,7 @@ image_pull_hint() {
   1) 换镜像站重跑（<mirror> 换成你信得过的加速器地址，例如云厂商给的那个）：
        QQ_AGENT_IMAGE_MIRROR=<mirror> bash deploy-all.sh
      或直接给完整地址：
-       bash deploy-all.sh --image <mirror>/motricseven7/snowluma:v1.14.15
+       bash deploy-all.sh --image <mirror>/motricseven7/snowluma:v1.14.22
 
   2) 给 Docker 配全局加速器（配一次，之后所有拉取都走它）：
        sudo tee /etc/docker/daemon.json <<'JSON'
@@ -723,8 +723,8 @@ image_pull_hint() {
        sudo systemctl restart docker
 
   3) 在能联网的机器上拉好再带过来：
-       docker pull motricseven7/snowluma:v1.14.15
-       docker save motricseven7/snowluma:v1.14.15 | gzip > snowluma.tgz
+       docker pull motricseven7/snowluma:v1.14.22
+       docker save motricseven7/snowluma:v1.14.22 | gzip > snowluma.tgz
        gunzip -c snowluma.tgz | docker load     # 在目标机上执行
 
 镜像站由第三方提供，脚本不会替你默认选任何一家。
