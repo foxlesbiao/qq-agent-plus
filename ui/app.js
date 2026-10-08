@@ -114,6 +114,9 @@ async function bootLoop() {
   }
   hideLoading();
   refreshStatus();
+  // 首屏：默认落在「总览」——这里要显式拉一次（switchTab 只在点击时触发，
+  // 启动时 DOM 上已经标好 active 类，不会自己加载）
+  if (state.tab === 'overview') loadOverview();
   if (state.tab === 'sessions') loadSessions();
   if (state.tab === 'memory') loadMemoryView();
 }
