@@ -3124,13 +3124,20 @@ input[type=checkbox], input[type=radio] {
 #cfg-model-pick { max-width: 560px; }
 
 /* ── 主题切换的平滑过渡与状态条对齐（消除"闪"与横向位移）──
-   主题在启动时可能被后端配置调整一次；直接换色会"啪"地一下，这里给常用表面加上
-   0.2s 过渡。状态条右对齐：文字从"模型：-"变成完整信息时会变长，右对齐让增长向左
-   展开，位置更稳。 */
+   主题在启动时可能被后端配置调整一次；直接换色会"啪"地一下，这里给常用表面加过渡。
+   状态条右对齐：文字从"模型：-"变成完整信息时会变长，右对齐让增长向左展开，位置更稳。
+
+   ⚠️ 2026-10-08 修正：这里原来写死 `0.2s ease`，把动效 token（180ms + 自定义曲线）
+   整个架空了 —— 实测所有控件的计算值都是 `0.2s ease`，所以"看起来像浏览器默认过渡"。
+   现在改走 token（--dur-interaction / --ease-in-out）。 */
 body, #sidebar, #topbar, #tabs, .view, .list-pane, .detail-pane, .chat-item, .session-item,
 .btn, .icon-btn, input, select, textarea, .control-section, .usage-card,
 .tool-card, .price-card, .modal, .banner, .empty-hint, .tab, table, th, td {
-  transition: background-color .2s ease, color .2s ease, border-color .2s ease, box-shadow .2s ease;
+  transition:
+    background-color var(--dur-interaction) var(--ease-in-out),
+    color var(--dur-interaction) var(--ease-in-out),
+    border-color var(--dur-interaction) var(--ease-in-out),
+    box-shadow var(--dur-interaction) var(--ease-in-out);
 }
 #topbar { justify-content: flex-end; }
 .top-status { justify-content: flex-end; }
@@ -3573,3 +3580,56 @@ select { padding-right: 8px; }
 
 /* 选中文字用强调色柔和底（细节，但"手感"就是这些攒出来的） */
 ::selection { background: var(--accent-soft); }
+
+
+/* ══════════════════════════════════════════════════════════════
+   交互反馈 v2（2026-10-08）：按参照控制台实测的"每个可交互元素都有过渡"补齐
+   ══════════════════════════════════════════════════════════════
+   实测它：导航 / 按钮 / 链接 / chip **全部**带 `0.15s cubic-bezier(.4,0,.2,1)`
+   （color/background/border/shadow/transform），弹层有 enter/exit 关键帧、日志行有
+   log-row-in、状态点是 animate-pulse。我们那边：只有 .btn/.tab/.session-item 等少数
+   有过渡（且被上面那条兜底改成了 0.2s ease），chip / 圆点 / 菜单项 / 表格行 / 卡片
+   子元素都没有 —— 手感差就差在这里。
+
+   规则：① 能点的东西统一 150ms + 标准曲线（--ease-in-out）；
+        ② 键盘高频动作（Tabs/开关）不加位移，只做颜色；
+        ③ 位移只在 hover/按下这类"人在操作"的时刻出现，且 ≤2px。
+*/
+:root {
+  --dur-interaction: 150ms;   /* 与参照实现同一个量级（0.15s） */
+}
+
+.tab, .settings-menu-item, .chip, .status-badge, .unread-pill, .nav-group-label,
+.pick-item, .theme-option, .preset, .mm-prov, .mm-model, .panel-link, .feed li,
+.plat-row, .plat-grid-row, .kv dd a, .incident-actions button, .list-head {
+  transition:
+    color var(--dur-interaction) var(--ease-in-out),
+    background-color var(--dur-interaction) var(--ease-in-out),
+    border-color var(--dur-interaction) var(--ease-in-out),
+    box-shadow var(--dur-interaction) var(--ease-in-out);
+}
+
+/* 数据行：能点的给悬浮底 + 左侧强调条（扫描长表格时不会串行） */
+@media (hover: hover) and (pointer: fine) {
+  .usage-table tbody tr:hover,
+  .archive-table tbody tr:hover,
+  .member-table tbody tr:hover { background: var(--hover); }
+  .settings-menu-item:hover { background: var(--hover); color: var(--text); }
+  .feed li:hover { background: var(--hover); }
+  .plat-row:hover, .plat-grid-row:hover { background: var(--hover); }
+}
+
+/* 「已连接」那种状态点：参考实现是 animate-pulse（2s），我们原来是死点。
+   用既有 breathe 关键帧，但放慢到 2.4s、只到 0.7 透明度 —— 是"活着"的暗示，不是闪烁。 */
+.dot.dot-on { animation: breathe 2.4s var(--ease-in-out) infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .dot.dot-on { animation: none; }
+}
+
+/* 键盘可达性：除了按钮，其它可聚焦控件也要能看出焦点在哪（原来只有 .btn 有） */
+a:focus-visible, [tabindex]:focus-visible, [role='button']:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
