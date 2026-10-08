@@ -60,11 +60,25 @@ echo    QQ Agent 控制台 ....... http://127.0.0.1:%CONSOLE_PORT%
 echo    SnowLuma WebUI ........ http://127.0.0.1:%WEBUI_PORT%
 echo    QQ 远程桌面 / 扫码 .... http://127.0.0.1:%VNC_PORT%
 echo.
+rem ── 从服务器读 SnowLuma / noVNC 的登录凭据 ───────────────────────────────
+rem 只给 URL 不给密码，打开 SnowLuma WebUI 会卡在登录页（那份凭证在服务器上的
+rem deployment-access.txt 里，0600 权限；顺手取一次，省得用户再 ssh 去找）。
+set "CRED_CMD=for f in /mnt/data/qq-agent/deployment-access.txt /data/qq-agent/deployment-access.txt; do if [ -f $f ]; then grep -E '^(SnowLuma password|noVNC password): ' $f; break; fi; done"
+rem ⚠️ 这一段临时关掉 delayed expansion：密码里可能带 ! ，开着会被 cmd 吃掉
+rem （实测踩过：Sl-xxxx!Aa 打印成 Sl-xxxxAa，用户照抄就登不上）
+setlocal disabledelayedexpansion
+for /f "usebackq delims=" %%c in (`ssh -o"BatchMode=yes" -o"ConnectTimeout=10" %SRV% "%CRED_CMD%" 2^>nul`) do (
+  echo    %%c
+  set "GOT_CRED=1"
+)
+if defined GOT_CRED echo    （SnowLuma 登录账号固定 admin，只用密码；第二行是 QQ 扫码/远程桌面密码）
+endlocal
+echo.
 echo 关闭本窗口 = 断开隧道；服务器上的机器人照常运行。
 if "%TOKEN%"=="" (
   echo.
   echo 没自动读到控制台令牌，打开控制台后手动登录即可。令牌取法：
-  echo   ssh %SRV% "cat /mnt/data/qq-agent/data/console-access.txt"
+  echo   ssh %SRV% "cat /data/qq-agent/data/console-access.txt"
 ) else (
   echo 打开控制台时将自动登录（令牌已通过 SSH 现场读取，不落盘）。
 )

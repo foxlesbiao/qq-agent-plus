@@ -1743,6 +1743,26 @@ function openBrowser(url) {
   if (result.missing) noteLine(`（未找到打开浏览器的命令，请手动访问 ${url}）`);
 }
 
+/**
+ * 现场读服务器上的 deployment-access.txt，打印"登进去要用"的凭据。
+ *
+ * 为什么在这里：只给 URL 不给密码，用户打开 SnowLuma WebUI 会卡在登录页 ——
+ * 而那份文件是部署脚本写的（0600），密码只有它和 compose 的 .env 里有。
+ * 读不到就静默跳过（不打扰正常流程），也不打印 OneBot/控制台令牌（控制台里能看/改）。
+ */
+function printRemoteCredentials(target) {
+  const cmd = 'for f in /mnt/data/qq-agent/deployment-access.txt /data/qq-agent/deployment-access.txt; '
+    + 'do if [ -f "$f" ]; then grep -E "^(SnowLuma password|noVNC password): " "$f"; break; fi; done';
+  const res = run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-p', target.port,
+    `${target.user}@${target.host}`, cmd], { timeout: 15000 });
+  const lines = String(res.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return;
+  noteLine('（来自服务器上的 deployment-access.txt）');
+  for (const line of lines) {
+    noteLine(line.startsWith('SnowLuma') ? `  ${line}　← SnowLuma WebUI 登录用（账号固定 admin，只要密码）` : `  ${line}　← QQ 扫码/远程桌面用`);
+  }
+}
+
 async function cmdConsole(args) {
   if (wantsHelp(args)) { say(HELP.console); return 0; }
   const target = sshTarget();
@@ -1768,6 +1788,7 @@ async function cmdConsole(args) {
     noteLine(`QQ Agent 控制台 ....... http://127.0.0.1:${target.consolePort}`);
     noteLine(`SnowLuma WebUI ........ http://127.0.0.1:${target.webuiPort}`);
     noteLine(`QQ 远程桌面 / 扫码 .... http://127.0.0.1:${target.vncPort}`);
+    printRemoteCredentials(target);
     noteLine(`控制台 URL（已带 token 时为免登录）: ${consoleUrl}`);
     return 0;
   }
@@ -1784,6 +1805,7 @@ async function cmdConsole(args) {
   say(`  QQ Agent 控制台 ....... http://127.0.0.1:${target.consolePort}`);
   say(`  SnowLuma WebUI ........ http://127.0.0.1:${target.webuiPort}`);
   say(`  QQ 远程桌面 / 扫码 .... http://127.0.0.1:${target.vncPort}`);
+  printRemoteCredentials(target);
   say();
   say('关闭本窗口 / Ctrl+C = 断开隧道；服务器上的机器人照常运行。');
   if (!target.token) say('（未设置 QQ_AGENT_CONSOLE_TOKEN，打开控制台后需手动登录）');
