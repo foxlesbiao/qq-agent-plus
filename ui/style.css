@@ -44,6 +44,18 @@
   --shadow-lg: 0 12px 40px rgba(0, 0, 0, .45);
 
   --mono: 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+
+  /* 强调色的派生态：柔和底（hover/选中背景）与描边（选中边界）。由 ui/core/appearance.js
+     按当前强调色算好套在 <html> 上；这里是默认蓝，作为 JS 未介入时的兜底。 */
+  --accent-soft: var(--accent-soft);
+  --accent-border: var(--accent-border);
+
+  /* 外观刻度（「系统 → 界面」可调）：圆角倍率 / 界面缩放 / 密度内边距 */
+  --r-scale: 1;
+  --r-sm: calc(8px * var(--r-scale));
+  --r-md: calc(10px * var(--r-scale));
+  --r-lg: calc(14px * var(--r-scale));
+  --zoom: 1;
 }
 
 /* ── 亮色 ── */
@@ -329,8 +341,8 @@ html.boot-show .loading-overlay { opacity: 1; }
 .tab.active .ico { opacity: 1; color: var(--accent); }
 .tab:hover { background: var(--hover); color: var(--text); }
 .tab.active {
-  background: rgba(76, 141, 255, .15);
-  border-color: rgba(76, 141, 255, .34);
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
   color: var(--text);
   font-weight: 600;
 }
@@ -1147,7 +1159,7 @@ html.boot-show .loading-overlay { opacity: 1; }
 }
 .chip.ok { color: var(--green); border-color: rgba(47, 208, 122, .45); background: rgba(47, 208, 122, .08); }
 .chip.warn { color: var(--orange); border-color: rgba(247, 185, 85, .45); background: rgba(247, 185, 85, .08); }
-.chip.star { color: var(--accent); border-color: rgba(76, 141, 255, .45); background: rgba(76, 141, 255, .1); }
+.chip.star { color: var(--accent); border-color: var(--accent-border); background: var(--accent-soft); }
 
 /* 正文视图不自己滚：整页只留 .settings-pane 一个纵向滚轮轴。
    之前这里是 max-height:520px + overflow:auto，卡片正文却有三千多像素，
@@ -1175,7 +1187,7 @@ html.boot-show .loading-overlay { opacity: 1; }
   background: var(--bg); color: var(--text); border: 1px solid var(--accent); border-radius: 8px;
   padding: 9px 11px; font-family: var(--mono); font-size: 12px; line-height: 1.65; outline: none;
 }
-.pd-edit-text:focus { box-shadow: 0 0 0 3px rgba(76, 141, 255, .16); }
+.pd-edit-text:focus { box-shadow: 0 0 0 3px var(--accent-soft); }
 .pd-edit-row { display: flex; align-items: center; gap: 8px; margin-top: 7px; flex-wrap: wrap; }
 .pd-edit-hint { font-size: 11.5px; }
 .pd-sec.collapsed .caret { transform: rotate(-90deg); }
@@ -1187,11 +1199,11 @@ html.boot-show .loading-overlay { opacity: 1; }
 .pd-body code { font-family: var(--mono); font-size: 11.5px; background: var(--bg-3); border-radius: 4px; padding: 1px 4px; }
 .pd-quote {
   margin: 8px 0; padding: 8px 10px; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0;
-  background: rgba(76, 141, 255, .08);
+  background: var(--accent-soft);
 }
 .pd-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 8px; }
 .pd-tag { font-size: 11.5px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-3); }
-.pd-tag.star { border-color: rgba(76, 141, 255, .45); background: rgba(76, 141, 255, .1); }
+.pd-tag.star { border-color: var(--accent-border); background: var(--accent-soft); }
 .pd-tag.bad { border-color: rgba(255, 107, 107, .4); background: rgba(255, 107, 107, .08); color: #ffc9c9; }
 .rule-chip { cursor: pointer; color: var(--muted); font: inherit; font-size: 11.5px; }
 .rule-chip:hover { color: var(--text); border-color: var(--accent); background: var(--hover); }
@@ -2586,8 +2598,8 @@ button.uu-chip:hover { border-color: var(--accent); color: var(--text); }
 .usage-guide {
   margin: 0 0 14px;
   padding: 12px 14px;
-  border: 1px solid rgba(76, 141, 255, .45);
-  background: rgba(76, 141, 255, .07);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-soft);
   border-radius: 10px;
 }
 .ug-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
@@ -2762,7 +2774,7 @@ button.uu-chip:hover { border-color: var(--accent); color: var(--text); }
 /* ── 页面底色与排版 ── */
 body {
   background-image:
-    radial-gradient(1100px 520px at 12% -10%, rgba(76, 141, 255, .10), transparent 60%),
+    radial-gradient(1100px 520px at 12% -10%, var(--accent-soft), transparent 60%),
     radial-gradient(900px 420px at 88% -18%, rgba(47, 208, 122, .07), transparent 62%);
   background-attachment: fixed;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
@@ -2772,8 +2784,8 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 [data-theme='light'] body { background-image: none; }
-::selection { background: rgba(76, 141, 255, .28); }
-:focus-visible { outline: 2px solid rgba(76, 141, 255, .55); outline-offset: 1px; }
+::selection { background: var(--accent-border); }
+:focus-visible { outline: 2px solid var(--accent-border); outline-offset: 1px; }
 
 /* ── 按钮 ── */
 .btn {
@@ -2781,7 +2793,7 @@ body {
   background: var(--bg-3); color: var(--text); font-weight: 550;
   transition: background .15s, border-color .15s, transform .06s, box-shadow .15s;
 }
-.btn:hover { border-color: rgba(76, 141, 255, .55); color: var(--text); background: var(--hover); }
+.btn:hover { border-color: var(--accent-border); color: var(--text); background: var(--hover); }
 .btn:active { transform: translateY(1px); }
 .btn-primary {
   background: linear-gradient(180deg, #5590ff, #3f7ef0); border-color: rgba(255, 255, 255, .14);
@@ -2803,8 +2815,8 @@ input, textarea, select {
   color: var(--text); padding: 7px 10px; transition: border-color .15s, box-shadow .15s;
 }
 input:focus, textarea:focus, select:focus {
-  outline: none; border-color: rgba(76, 141, 255, .6);
-  box-shadow: 0 0 0 3px rgba(76, 141, 255, .18);
+  outline: none; border-color: var(--accent-border);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 input::placeholder, textarea::placeholder { color: var(--faint); }
 #runtime-mode { font-weight: 550; }
@@ -2818,7 +2830,7 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
   background: var(--hover); box-shadow: var(--shadow-sm);
 }
 .chat-item.selected, .session-item.selected, .settings-menu-item.active {
-  background: rgba(76, 141, 255, .10);
+  background: var(--accent-soft);
   border-left: 3px solid var(--accent);
 }
 .chat-item-title, .session-title { font-weight: 600; letter-spacing: .1px; }
@@ -2838,7 +2850,7 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
   background: rgba(47, 208, 122, .09); border-color: rgba(47, 208, 122, .28); color: color-mix(in srgb, var(--green) 80%, var(--text));
 }
 .status-running {
-  background: rgba(76, 141, 255, .09); border-color: rgba(76, 141, 255, .30); color: color-mix(in srgb, var(--accent) 82%, var(--text));
+  background: var(--accent-soft); border-color: var(--accent-border); color: color-mix(in srgb, var(--accent) 82%, var(--text));
 }
 .status-error, .status-aborted {
   background: rgba(255, 107, 107, .09); border-color: rgba(255, 107, 107, .30); color: color-mix(in srgb, var(--red) 82%, var(--text));
@@ -2850,7 +2862,7 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 /* ── 气泡 ── */
 .bubble { border-radius: 14px; box-shadow: var(--shadow-sm); }
 .bubble-assistant { background: var(--bg-3); }
-.bubble-user { background: rgba(76, 141, 255, .13); border: 1px solid rgba(76, 141, 255, .22); }
+.bubble-user { background: var(--accent-soft); border: 1px solid var(--accent-soft); }
 
 /* ── 表格 ── */
 .usage-table, .asset-table, .incident-table, .member-table, .model-rows-table,
@@ -2880,7 +2892,7 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
   border: 1px dashed var(--border); border-radius: 14px; color: var(--muted);
   padding: 22px 18px; background: color-mix(in srgb, var(--bg-2) 60%, transparent);
 }
-.banner { border-radius: 12px; border: 1px solid rgba(76, 141, 255, .35); background: rgba(76, 141, 255, .10); }
+.banner { border-radius: 12px; border: 1px solid var(--accent-border); background: var(--accent-soft); }
 
 /* ── 滚动条 ── */
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
@@ -3380,7 +3392,7 @@ dialog { margin: auto; max-height: 88vh; }
 .bars { display: flex; align-items: flex-end; gap: 10px; height: 96px; padding-top: 4px; }
 .bars-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
 .bars-bar { width: 100%; max-width: 46px; border-radius: 5px 5px 2px 2px; background: var(--bg-3); border: 1px solid var(--border); transition: background .2s ease; }
-.bars-bar.on { background: rgba(76, 141, 255, .32); border-color: rgba(76, 141, 255, .5); }
+.bars-bar.on { background: var(--accent-border); border-color: var(--accent-border); }
 .bars-x { margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); white-space: nowrap; }
 
 .chip.bad { color: var(--red); border-color: rgba(255, 107, 107, .45); background: rgba(255, 107, 107, .08); }
@@ -3397,3 +3409,59 @@ dialog { margin: auto; max-height: 88vh; }
   text-transform: none;
 }
 .settings-menu-group:first-child { margin-top: 2px; }
+
+
+/* ══════════════════════════════════════════════════════════════
+   外观刻度：密度 / 缩放 / 圆角（2026-10-08）
+   ══════════════════════════════════════════════════════════════
+   · 密度：紧凑 / 舒适 / 宽松 —— 只改容器内边距，不动字号（字号交给缩放）
+   · 缩放：#shell 的 zoom（Chromium/Safari/新 Firefox 都支持；老浏览器忽略 =1，不影响可用）
+   · 圆角：组件读 --r-sm/--r-md/--r-lg（都乘 --r-scale），改倍率整机跟着变
+*/
+#shell { zoom: var(--zoom, 1); }
+
+[data-density='compact'] .kpi,
+[data-density='compact'] .panel { padding: 10px 12px 11px; }
+[data-density='compact'] .tab { padding: 6px 10px; }
+[data-density='compact'] .overview-pane { padding: 14px 16px 20px; }
+[data-density='roomy'] .kpi { padding: 16px 18px 17px; }
+[data-density='roomy'] .panel { padding: 17px 19px 18px; }
+[data-density='roomy'] .tab { padding: 10px 12px; }
+[data-density='roomy'] .overview-pane { padding: 24px 28px 32px; }
+[data-density='roomy'] .feed li { padding: 9px 0; }
+
+.tab { border-radius: var(--r-md); }
+.kpi, .panel { border-radius: var(--r-lg); }
+
+/* 顶栏状态区：四个 chip 挤成一排显得吵 —— 去掉边框、只留文字，悬浮时才浮出边界 */
+.top-status .chip { border-color: transparent; background: transparent; color: var(--muted); padding: 3px 8px; }
+.top-status .chip:hover { border-color: var(--border); background: var(--bg-2); color: var(--text); }
+
+/* ══════════════════════════════════════════════════════════════
+   外观设置控件（预设色板 / 强调色 / 圆角 / 缩放 / 密度）
+   ══════════════════════════════════════════════════════════════
+   遵循两条：① 悬浮位移只在"真有鼠标"的设备上生效（触屏 tap 会误触发 hover）；
+   ② 选中态用强调色描边 + 柔和底（--accent-soft/--accent-border），换强调色时整块跟着变。
+*/
+.preset-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 4px; }
+.preset {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 12px 6px 8px;
+  border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg-3); color: var(--text);
+  font: inherit; font-size: 12.5px; cursor: pointer;
+  transition: border-color var(--dur-base) var(--ease-in-out), background-color var(--dur-base) var(--ease-in-out), transform var(--dur-fast) var(--ease-out-quart);
+}
+.preset:active { transform: scale(.97); }
+.preset.on { border-color: var(--accent-border); background: var(--accent-soft); }
+.preset-dot { width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .15); }
+@media (hover: hover) and (pointer: fine) {
+  .preset:hover { border-color: var(--accent-border); }
+  .kpi:hover { transform: translateY(-1px); }
+}
+/* 触屏上取消"悬浮抬升"（tap 会先触发 hover，卡片会跳一下） */
+@media (hover: none) {
+  .kpi:hover { transform: none; }
+}
+/* 滑条：轨道与滑块跟随强调色 */
+input[type='range'] { accent-color: var(--accent); height: 20px; }

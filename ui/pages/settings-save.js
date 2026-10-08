@@ -23,6 +23,12 @@ import { ALL_GATE_KEYS, QUOTA_ROWS, gateCheckboxId, gateDefaultOn, hydratePlatfo
 import { currentPersonaId } from './persona.js';
 import { captureTimeControlRule } from './settings-bind.js';
 import { syncThinkingUi } from './settings.js';
+/** 数值夹紧：外观滑条的值不许越界（手改 DOM / 旧存档都可能越界）。 */
+function clampNum(raw, lo, hi, fallback) {
+  const n = Number(String(raw ?? '').trim());
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
+}
+
 async function saveConfig({ quiet = false } = {}) {
   const c = state.config;
   // 只在当前区块的元素存在时才读取，避免“每个区块保存时读取其他区块元素”导致的 null 报错。
@@ -798,6 +804,14 @@ async function saveConfig({ quiet = false } = {}) {
       ...(c.ui || {}),
       // 主题在点选项时就已应用并写入 localStorage，这里把它一并存到后端以便跨设备保留
       theme: getThemePref(),
+      // 外观（预设/强调色/圆角/缩放/密度）：也都是"点了就生效"，这里负责持久化
+      preset: String(val('#cfg-preset', c.ui?.preset || 'snow')).trim(),
+      accent: String(val('#cfg-accent', c.ui?.accent || '')).trim(),
+      radius: clampNum(val('#cfg-radius', c.ui?.radius ?? 1), 0.6, 1.4, 1),
+      zoom: clampNum(val('#cfg-zoom', c.ui?.zoom ?? 1), 0.85, 1.2, 1),
+      density: ['compact', 'cozy', 'roomy'].includes(String(val('#cfg-density', c.ui?.density || 'cozy')).trim())
+        ? String(val('#cfg-density', 'cozy')).trim()
+        : 'cozy',
       showVision: chk('#cfg-showvision', c.ui?.showVision !== false),
       // 兜底与运行期 refreshIntervalMs 一样夹到 >=1000：原来不夹，界面显示 500、实际按 15000 跑
       refreshMs: Math.max(1000, Number(val('#cfg-refreshms', c.ui?.refreshMs ?? 15000)) || 15000)

@@ -89,6 +89,48 @@ test('真实 DOM 冒烟：加载全部脚本、全部 tab 切换入口不抛', {
   } finally { window.happyDOM?.abort?.(); }
 });
 
+test('真实 DOM 冒烟：外观（预设/强调色/圆角/缩放/密度）能存下去、点了就生效', { skip: SKIP }, async () => {
+  const { window } = loadPage();
+  await settle();
+  try {
+    window.switchTab('settings');
+    await settle(60);
+    window.document.querySelector('.settings-menu-item[data-section="desktop"]').click();
+    await settle(120);
+
+    const presets = [...window.document.querySelectorAll('#appearance-presets [data-preset]')];
+    assert.ok(presets.length >= 4, `预设色板应至少 4 个，实际 ${presets.length}`);
+    // 点第 3 个预设（薄荷）：点了就生效（CSS 变量落在 <html> 上）
+    presets[2].click();
+    await settle(60);
+    const accent = window.document.getElementById('cfg-accent');
+    accent.value = '#ff8800';
+    accent.dispatchEvent(new window.Event('input', { bubbles: true }));
+    window.document.getElementById('cfg-radius').value = '1.3';
+    window.document.getElementById('cfg-density').value = 'roomy';
+    window.document.getElementById('cfg-density').dispatchEvent(new window.Event('change', { bubbles: true }));
+    const rootVars = window.document.documentElement.style;
+    assert.equal(rootVars.getPropertyValue('--accent'), '#ff8800', '自定义强调色要立刻套到 :root');
+    assert.equal(window.document.documentElement.dataset.density, 'roomy', '密度立刻生效');
+    assert.equal(rootVars.getPropertyValue('--r-scale'), '1.3', '圆角倍率立刻生效');
+
+    const posts = [];
+    window.fetch = async (url, options = {}) => {
+      posts.push({ url: String(url), method: options?.method || 'GET', body: options?.body });
+      return { ok: true, status: 200, json: async () => ({ config: {} }) };
+    };
+    window.document.querySelector('#save-cfg-btn').click();
+    await settle(150);
+    const save = posts.find((p) => p.url.includes('/api/config') && p.method === 'POST');
+    assert.ok(save, '点保存必须 POST /api/config');
+    const patch = JSON.parse(save.body || '{}');
+    assert.equal(patch.ui?.accent, '#ff8800', '自定义强调色要进 patch.ui');
+    assert.equal(patch.ui?.radius, 1.3, '圆角倍率要进 patch.ui');
+    assert.equal(patch.ui?.density, 'roomy', '密度要进 patch.ui');
+    assert.equal(patch.ui?.preset, presets[2].dataset.preset, '选中的预设 id 要进 patch.ui');
+  } finally { window.happyDOM?.abort?.(); }
+});
+
 test('真实 DOM 冒烟：api() 走 fetch 桩', { skip: SKIP }, async () => {
   const { window, fetchLog } = loadPage();
   await settle();

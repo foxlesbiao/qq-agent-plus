@@ -26,6 +26,7 @@ import {
 } from './core/format.js';
 import { QARegistry } from './core/registry.js';
 import { applyIcons, iconSvg } from './core/icons.js';
+import { appearanceVars, resolveAppearance } from './core/appearance.js';
 import { pendingSessionDetail, refreshIntervalMs, startUpdateProgressTicker, state } from './core/state.js';
 
 // 导航/主题等静态节点上的 data-icon 在启动时统一注入 SVG（幂等，可重复调用）
@@ -94,6 +95,29 @@ function applyTheme(pref) {
     btn.title = `主题：${THEME_LABEL[pref] || '暗色'}（点击切换）`;
   }
   try { localStorage.setItem('qqa-theme', pref); } catch { /* 忽略 */ }
+}
+
+/**
+ * 外观设置（预设/强调色/圆角/缩放/密度）：localStorage 先落一次"立刻生效"，
+ * 拉到 config.ui 之后再以服务端为准覆盖一次（跨设备同步）。
+ * 都失效时用默认值 —— 外观绝不该让控制台起不来。
+ */
+function getAppearancePref() {
+  try {
+    const raw = localStorage.getItem('qqa-appearance');
+    if (raw) return JSON.parse(raw);
+  } catch { /* 隐私模式 */ }
+  return {};
+}
+
+function applyAppearance(pref = {}) {
+  const app = resolveAppearance(pref);
+  const root = document.documentElement;
+  for (const [k, v] of Object.entries(appearanceVars(app))) root.style.setProperty(k, v);
+  root.dataset.density = app.density;
+  try { localStorage.setItem('qqa-appearance', JSON.stringify(app)); } catch { /* 忽略 */ }
+  state.appearance = app;
+  return app;
 }
 
 /** 点击按钮：暗 → 亮 → 跟随系统 → 暗。 */
@@ -886,6 +910,8 @@ async function loadSettings() {
     api('/api/model-prices').catch(() => ({ prices: [], current: null }))
   ]);
   state.config = cfg;
+  // 外观以服务端为准再套一次（localStorage 那份只是"打开就生效"的快速通道）
+  applyAppearance(cfg?.ui || {});
   syncGraduatedFeatureNavigation(cfg);
   state.providers = provData.providers || [];
   state.visionResults = visionData.results || {};
@@ -1076,6 +1102,7 @@ async function init() {
   // 主题：先按本地偏好应用（index.html 的内联脚本已做过一次，这里同步按钮图标），
   // 再用后端配置覆盖（若用户换了设备，以后端为准）。
   applyTheme(getThemePref());
+  applyAppearance(getAppearancePref());
   try {
     const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)');
     // 仅在"跟随系统"时响应系统主题变化
@@ -1174,7 +1201,7 @@ else document.addEventListener('DOMContentLoaded', init, { once: true });
 
 
 export {
-  applyTheme, closeModelModal, currentThinkingRaw, getThemePref, loadFriendFeaturePage,
+  applyAppearance, applyTheme, closeModelModal, currentThinkingRaw, getAppearancePref, getThemePref, loadFriendFeaturePage,
   loadIdentityFeaturePage, loadIncidentFeaturePage, loadSettings, modelModalShell, refreshStatus,
   renderBanner, renderControlHub, renderExperimentalSettingsSection, renderLifecycleOverview,
   renderSettings, renderThinkingSeg, switchTab, thinkingStops, updateProgressElapsed
