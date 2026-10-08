@@ -3220,7 +3220,7 @@ dialog { margin: auto; max-height: 88vh; }
 */
 .plat-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-card);
   background: var(--bg-2);
   padding: 2px 14px 6px;
   margin: 0 0 14px;
@@ -3465,3 +3465,111 @@ dialog { margin: auto; max-height: 88vh; }
 }
 /* 滑条：轨道与滑块跟随强调色 */
 input[type='range'] { accent-color: var(--accent); height: 20px; }
+
+/* ══════════════════════════════════════════════════════════════
+   设计标度 v2（2026-10-08）：照参照控制台实测的数字对齐
+   ══════════════════════════════════════════════════════════════
+   实测它的系统是 Tailwind + shadcn 的约定：`--spacing: .25rem`（**4px 步进**）、
+   `--radius: .75rem`（**统一 12px**）、body 基准 **16px**、控件 14px、卡片
+   `0 1px 2px rgba(0,0,0,.05)` 极轻阴影、oklch + color-mix 派生色。
+
+   我们的问题是"没有标度"：间距手写 7/8/9/10/11/13/14px 混用、圆角同时存在
+   6/9/10/14 四种 —— 单看每个元素都不丑，整屏就是"不齐"。这一节把标度立起来，
+   并把**壳层**（导航/顶栏/按钮/输入/卡片/表格头）统一到标度上；
+   页面内部的历史写法逐步替换，不在这里一次全改（避免一次性打散布局）。
+
+   字号为什么是 15px 而不是 16px：我们是"信息密度优先"的控制台（一屏要塞会话列表 +
+   详情 + 用量表），16px 会把可见行数压掉一截；折中取 15px（比原来 14.5 大一档），
+   控件同步提到 13.5px。这是有意的差异，不是没对齐。
+*/
+:root {
+  /* 间距（4px 步进，和参照实现同一个节奏） */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+
+  /* 字号档位（只用这几档，别再出现 11.5 / 12.5 / 13.5 这类临时值） */
+  --fs-xs: 11px;
+  --fs-sm: 12px;
+  --fs-md: 13.5px;
+  --fs-lg: 15px;
+  --fs-xl: 19px;
+  --fs-2xl: 23px;
+  --lh-tight: 1.35;
+  --lh-base: 1.55;
+
+  /* 圆角：按"角色"分四档（不是随手四种）——小件 8 / 控件 10 / 卡片与导航 12 / 大块 16。
+     参照实现也是角色制（导航与卡片 12px、按钮 7px），关键是同一角色处处一致。 */
+  --r-sm: calc(8px * var(--r-scale));
+  --r-input: calc(10px * var(--r-scale));
+  --r-md: calc(10px * var(--r-scale));
+  --r-card: calc(12px * var(--r-scale));
+  --r-lg: calc(12px * var(--r-scale));
+  --r-xl: calc(16px * var(--r-scale));
+
+  /* 卡片阴影：极轻（它的 0 1px 2px rgba(0,0,0,.05)），只用来把卡片从底上"抬"起来 */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .05);
+}
+[data-theme='light'] {
+  /* 亮色下同样的阴影要更明显一点才看得出来（白卡贴浅底） */
+  --shadow-card: 0 1px 2px rgba(16, 24, 40, .06), 0 2px 6px rgba(16, 24, 40, .04);
+}
+
+/* ── 壳层：按标度重排 ── */
+body { font-size: var(--fs-lg); line-height: var(--lh-base); }
+
+/* 导航项：字重降到 500（选中 600），行高与内边距走标度，高度从 35 抬到 38 更接近它的手感 */
+.tab { font-size: var(--fs-md); font-weight: 500; padding: var(--sp-2) 10px; gap: 10px; border-radius: var(--r-card); }
+.tab.active { font-weight: 600; }
+.tab .ico { width: 17px; height: 17px; }
+.nav-group-label { padding: var(--sp-3) 10px var(--sp-1); font-size: var(--fs-xs); }
+
+/* 按钮：统一高度与内边距（原来 7/4px 两档落差太大） */
+.btn { font-size: var(--fs-md); padding: 6px 14px; border-radius: var(--r-input); min-height: 32px; }
+.btn-small { font-size: var(--fs-sm); padding: 4px 10px; border-radius: var(--r-sm); min-height: 27px; }
+
+/* 输入/下拉/文本域：高度与圆角统一，字号提到控件档 */
+input[type='text'], input[type='password'], input[type='number'], input[type='search'],
+select, textarea {
+  font-size: var(--fs-md);
+  border-radius: var(--r-input);
+  padding: 6px 10px;
+  min-height: 32px;
+}
+select { padding-right: 8px; }
+
+/* 卡片：统一 12px 圆角 + 极轻阴影（这是"浮起来"的关键，我们没有它就显得平） */
+.kpi, .panel, .usage-card, .tool-card, .pd-chat, .price-card, .plat-card {
+  border-radius: var(--r-card);
+  box-shadow: var(--shadow-card);
+}
+/* 卡片内边距走标度（16px），比原来的 13~15 松一档 */
+.panel { padding: var(--sp-4) var(--sp-4) var(--sp-4); }
+.kpi { padding: var(--sp-3) var(--sp-4) var(--sp-4); }
+.kpi-value { font-size: var(--fs-2xl); }
+.pane-head h2 { font-size: var(--fs-xl); }
+.panel-titles h3 { font-size: var(--fs-md); }
+
+/* 表格：行高与字号统一（原来每处各写一套） */
+.usage-table th, .usage-table td, .archive-table td, .member-table td {
+  font-size: var(--fs-sm);
+  padding: var(--sp-2) var(--sp-3);
+}
+
+/* 顶栏：定高 + 控件字号统一，四个状态项不再各自成块 */
+.topbar { min-height: 46px; }
+.top-status .chip, .chip { font-size: var(--fs-xs); }
+
+/* 滚动条：细一点、只在悬浮时明显（避免两条粗灰条把视觉压死） */
+* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--faint); background-clip: content-box; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* 选中文字用强调色柔和底（细节，但"手感"就是这些攒出来的） */
+::selection { background: var(--accent-soft); }
