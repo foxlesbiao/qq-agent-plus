@@ -7,6 +7,7 @@ import vm from 'node:vm';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { toClassicScript } from './helpers/ui-module-source.mjs';
+import { scanDirForMarkdownStars } from './helpers/ui-markdown-stars.mjs';
 
 // 必须指到临时数据目录：这个用例会 import src/console/app.js，控制台启动时会把身份与
 // 异常两个试点的 SQLite 建在 DATA_DIR 下。不重定向就会动到开发机（甚至部署机）自己的
@@ -3631,59 +3632,26 @@ try {
 
   // ⚠️ 设置页那些 .hint 是 **HTML**，不是 markdown：把 **…** 写进去浏览器会连星号一起显示
   //（2026-10-04 复审 P3：写文案的人以为在用 markdown，实际用户看到「**密钥类字段…**」）。
-  // 对 ui/ 源码做一次粗筛：非注释行里出现成对的 ** 就报错。
+  // 判据本体在 test/helpers/ui-markdown-stars.mjs —— 那里同时被一条跨平台用例调用。
+  // 为什么要抽出去：这段原本只活在这个文件里，而它在 Windows 上会先因别的原因失败，
+  // 于是**本地永远跑不到**（2026-10-08 实证：往 appearance.js 写了一行 `** 2.4` 幂运算，
+  // 本地全绿、CI 直接红）。
   {
-    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-      const full = path.join(dir, e.name);
-      return e.isDirectory() ? walk(full) : (e.name.endsWith('.js') ? [full] : []);
-    });
-    const offenders = [];
-    for (const file of walk('ui')) {
-      const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
-      for (let i = 0; i < lines.length; i += 1) {
-        const line = lines[i];
-        if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue;     // 整行是注释：不管
-        // ⚠️ **不能**用 `line.includes('//')` 来跳"行内注释" —— 提示文案里带 URL
-        // （"…详见 https://example.com/help **报名** 流程"）会被整行豁免，断言等于漏检
-        //（2026-10-04 复审 P3）。改成只截掉**行尾**那段真注释：先找最后一个引号，
-        //  它之后的 `// …` 才算注释；引号之前的部分（也就是会被渲染的文案）一律要检。
-        const commentAt = /\s\/\//.exec(line);
-        const shown = commentAt ? line.slice(0, commentAt.index) : line;
-        if (!shown.trim()) continue;
-        // 只把**引号里的星号串**剔掉 —— 那是 '******' 掩码，不是 markdown 强调语法。
-        // （别再顺手去剔成对的 **：那正好把要找的东西一起吃了，断言就成了摆设。）
-        const probe = shown.replace(/'[*]+'|"[*]+"/g, "''");
-        if (probe.includes('**')) offenders.push(file + ':' + (i + 1));
-      }
+    const { offenders, probeFailures, scanned } = scanDirForMarkdownStars('ui', { relTo: '.' });
+    for (const why of probeFailures) {
+      fail++;
+      console.log('  FAIL markdown 判据自检：' + why + '（判据被改坏了）');
     }
-    // 自检：判据本身不许有洞。① 掩码 '******' 不算；② **带 URL 的提示行**必须算
-    //（早先用 line.includes('//') 跳「行内注释」，结果任何含 URL 的提示行整行免检 ——
-    //  2026-10-04 复审 P3）。这两条一起钉住，改判据时必须一起改这里。
-    const probeOf = (line) => {
-      const commentAt = /\s\/\//.exec(line);
-      const shown = commentAt ? line.slice(0, commentAt.index) : line;
-      return shown.replace(/'[*]+'|"[*]+"/g, "''");
-    };
-    const probeCases = [
-      ["        <div class=\"hint\">详见 https://example.com/help **报名** 流程</div>", true, '带 URL 的提示行仍要检出'],
-      ["      <div class=\"hint\">留空即保持 '******'</div>", false, "掩码 '******' 不是 markdown"],
-    ];
-    for (const [line, shouldFlag, why] of probeCases) {
-      const flagged = probeOf(line).includes('**');
-      if (flagged !== shouldFlag) {
-        fail++;
-        console.log('  FAIL markdown 判据自检：' + why + '（expected ' + shouldFlag + ', got ' + flagged + '）');
-      } else {
-        pass++;
-        console.log('  OK   markdown 判据自检：' + why);
-      }
+    if (!probeFailures.length) {
+      pass++;
+      console.log('  OK   markdown 判据自检：带 URL 的提示行仍要检出 / 掩码不算 markdown');
     }
     if (offenders.length) {
       fail++;
       console.log('  FAIL 提示文案里混进 markdown 星号（会原样显示给用户）-> ' + offenders.join(', '));
     } else {
       pass++;
-      console.log('  OK   ui/ 源码里没有漏进 HTML 模板的 markdown 星号');
+      console.log('  OK   ui/ 源码里没有漏进 HTML 模板的 markdown 星号（扫了 ' + scanned + ' 个文件）');
     }
   }
 

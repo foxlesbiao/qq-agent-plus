@@ -291,7 +291,12 @@ function renderIdentityAssets(data) {
 function renderMemoryAssets(data) {
   const entries = data?.entries || [];
   if (!entries.length) return '<div class="empty-hint">当前没有会话记忆</div>';
-  return `<div class="asset-table-wrap"><table class="asset-table">
+  // 接口带 limit（默认 500，按最近更新截断）：截过就要说出来，否则用户以为"就这么多"
+  // （2026-10-08 审查：limit 加了但界面没说）
+  const total = Number(data?.total) || entries.length;
+  const capped = total > entries.length
+    ? `<div class="hint">共 ${total} 条，按最近更新只列前 ${entries.length} 条。</div>` : '';
+  return `${capped}<div class="asset-table-wrap"><table class="asset-table">
     <thead><tr><th>会话</th><th>人物</th><th>印象</th><th>最近更新</th><th>操作</th></tr></thead>
     <tbody>${entries.map((entry, index) => `<tr>
       <td>${esc(formatChatTitle(entry.chatKey, chatNameOf(entry.chatKey)))}</td>
@@ -1082,7 +1087,13 @@ function renderFriendFeaturePageImpl(c, status) {
         <button type="button" class="btn btn-primary btn-small" id="friend-feature-save">保存好友设置</button>
       </div>
       <div class="field-row">
-        <div class="field"><label>好友审批管理员 QQ</label><input type="text" id="cfg-identity-friend-owner" inputmode="numeric" value="${esc(friend.ownerUin || '')}" /></div>
+        <!-- 管理员 QQ 的唯一编辑入口在「设置 → 模型 API → 全局管理员 QQ」：这里从第一次渲染起
+             就是"提示 + hidden 镜像"，DOM 不再变化（原来渲染真输入框、随后被 stable-features 换成
+             hidden，于是"切走再回来这一格就没了"）。保存路径读的仍是 #cfg-identity-friend-owner。 -->
+        <div class="field"><label>好友审批管理员 QQ</label>
+          <span class="hint" style="margin:0">统一在「设置 → 模型 API → 全局管理员 QQ」里配置
+            <button type="button" class="link-btn" data-open-settings="api">去设置</button></span>
+          <input type="hidden" id="cfg-identity-friend-owner" data-global-admin-mirror="true" value="${esc(friend.ownerUin || '')}" /></div>
         <div class="field"><label>候选生成模式</label><select id="cfg-identity-friend-mode"><option value="triggered" ${friend.mode === 'triggered' ? 'selected' : ''}>消息触发评估</option><option value="prompt" ${friend.mode !== 'triggered' ? 'selected' : ''}>旧版提示词提名</option></select></div>
         <div class="field"><label>旧模式最低累计消息</label><input type="number" id="cfg-identity-friend-min-messages" min="1" max="10000" value="${esc(friend.minMessageCount ?? 50)}" /></div>
         <div class="field"><label>同一用户冷却天数</label><input type="number" id="cfg-identity-friend-cooldown" min="1" max="365" value="${esc(friend.cooldownDays ?? 30)}" /></div>
@@ -1219,7 +1230,10 @@ function renderSlangFeaturePage(c, status) {
         <button type="button" class="btn btn-primary btn-small" id="slang-feature-save">保存研究设置</button>
       </div>
       <div class="field-row">
-        <div class="field"><label>审批管理员 QQ</label><input type="text" id="cfg-slang-owner" inputmode="numeric" value="${esc(slang.ownerUin || c.identityPilot?.friendProposal?.ownerUin || '')}" /></div>
+        <div class="field"><label>审批管理员 QQ</label>
+          <span class="hint" style="margin:0">统一在「设置 → 模型 API → 全局管理员 QQ」里配置
+            <button type="button" class="link-btn" data-open-settings="api">去设置</button></span>
+          <input type="hidden" id="cfg-slang-owner" data-global-admin-mirror="true" value="${esc(slang.ownerUin || c.identityPilot?.friendProposal?.ownerUin || '')}" /></div>
         <div class="field"><label>最少出现次数</label><input type="number" id="cfg-slang-min-occurrences" min="2" max="20" value="${esc(slang.minOccurrences ?? 3)}" /></div>
         <div class="field"><label>最少发言人数</label><input type="number" id="cfg-slang-min-speakers" min="1" max="20" value="${esc(slang.minSpeakers ?? 2)}" /></div>
         <div class="field"><label>统计窗口（小时）</label><input type="number" id="cfg-slang-window-hours" min="1" max="720" value="${esc(slang.windowHours ?? 72)}" /></div>
@@ -1333,7 +1347,10 @@ function renderIncidentFeaturePageImpl(c, status, incidents = [], options = {}) 
         <button type="button" class="btn btn-primary btn-small" id="incident-feature-save">保存异常设置</button>
       </div>
       <div class="field-row">
-        <div class="field"><label>告警管理员 QQ</label><input type="text" id="cfg-incident-owner" inputmode="numeric" value="${esc(settings.ownerUin || '')}" /></div>
+        <div class="field"><label>告警管理员 QQ</label>
+          <span class="hint" style="margin:0">统一在「设置 → 模型 API → 全局管理员 QQ」里配置
+            <button type="button" class="link-btn" data-open-settings="api">去设置</button></span>
+          <input type="hidden" id="cfg-incident-owner" data-global-admin-mirror="true" value="${esc(settings.ownerUin || '')}" /></div>
         <div class="field"><label>同类异常合并窗口（分钟）</label><input type="number" id="cfg-incident-window" min="1" max="1440" value="${esc(settings.duplicateWindowMinutes ?? 10)}" /></div>
         <div class="field"><label>已解决日志保留天数</label><input type="number" id="cfg-incident-retention" min="1" max="3650" value="${esc(settings.retentionDays ?? 90)}" /></div>
       </div>
@@ -1399,27 +1416,42 @@ function renderIncidentFeaturePageImpl(c, status, incidents = [], options = {}) 
     state.incidentSeverity = event.target.value;
     loadIncidentFeaturePage({ force: true });
   });
-  $$('[data-incident-ack]', box).forEach((button) => button.addEventListener('click', async () => {
+  // 三个动作都要"失败看得见"：原来没有 try/catch，请求一失败就只剩一条控制台报错 ——
+  // 按钮点了没反应、行还挂着"待处理"，用户只会以为界面卡了（2026-10-08 审查）。
+  // 与同文件里的保存动作同一口径：出错弹一句原文，成功后重拉列表。
+  const incidentAction = (selector, run) => {
+    $$(selector, box).forEach((button) => button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        await run(button);
+      } catch (error) {
+        alert(error?.message || String(error));
+      } finally {
+        button.disabled = false;
+      }
+    }));
+  };
+  incidentAction('[data-incident-ack]', async (button) => {
     await api(`/api/incidents/${encodeURIComponent(button.dataset.incidentAck)}/acknowledge`, {
       method: 'POST', body: '{}'
     });
     loadIncidentFeaturePage();
-  }));
-  $$('[data-incident-resolve]', box).forEach((button) => button.addEventListener('click', async () => {
+  });
+  incidentAction('[data-incident-resolve]', async (button) => {
     const resolution = prompt('填写处理结果');
     if (!resolution?.trim()) return;
     await api(`/api/incidents/${encodeURIComponent(button.dataset.incidentResolve)}/resolve`, {
       method: 'POST', body: JSON.stringify({ resolution: resolution.trim() })
     });
     loadIncidentFeaturePage();
-  }));
-  $$('[data-incident-delete]', box).forEach((button) => button.addEventListener('click', async () => {
+  });
+  incidentAction('[data-incident-delete]', async (button) => {
     if (!await askForConfirmation('删除这条已解决的异常日志？业务状态和 Session 不会被删除。')) return;
     await api(`/api/incidents/${encodeURIComponent(button.dataset.incidentDelete)}`, {
       method: 'DELETE', body: JSON.stringify({ confirm: true })
     });
     loadIncidentFeaturePage();
-  }));
+  });
 }
 
 async function saveIncidentFeatureConfig() {

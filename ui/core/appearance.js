@@ -34,11 +34,11 @@ const DARK_INTENSITIES = [
 
 /** 表面色板：只给"底/卡/边框/文字"四组值，符合"配色方案"的直觉。每套在两种明暗下各一份。 */
 const SCHEMES = [
-  { id: 'default', label: '默认', hint: '中性蓝灰' },
-  { id: 'slate', label: '石板', hint: '冷灰低饱和' },
-  { id: 'nord', label: '极地', hint: '北欧蓝调' },
-  { id: 'forest', label: '青林', hint: '暖调青绿' },
-  { id: 'rose', label: '玫瑰', hint: '暖灰粉调' }
+  { id: 'default', label: '默认', hint: '中性蓝灰 · 最深' },
+  { id: 'slate', label: '石板', hint: '中性冷灰 · 无彩度' },
+  { id: 'rose', label: '玫瑰', hint: '紫调夜蓝' },
+  { id: 'forest', label: '青林', hint: '墨绿' },
+  { id: 'nord', label: '极地', hint: '北欧蓝 · 最亮' }
 ];
 
 /** 强调色预设（原来叫"主题配色"，只有五个且和明暗混在一起 —— 现在拆干净）。 */
@@ -118,6 +118,9 @@ const DEFAULTS = {
   accent: '',
   accentScope: 'global',
   sidebarStyle: 'follow',
+  // 侧栏"悬停展开的图标条"：false = 鼠标移开就收成 64px 图标条、移上去自动展开（参照实现的默认），
+  // true = 常驻展开。命名与参照实现一致（它的 appearance.sidebarPinned 就是这个意思）。
+  sidebarPinned: false,
   background: 'none',
   bgColor: '#0b1220',
   bgFrom: '#4c8dff',
@@ -189,7 +192,10 @@ function accentShades(hex, alphaSoft = 0.12, alphaBorder = 0.36, alphaRing = 0.4
 function readableOn(rgb, dark = '#0b1220', light = '#ffffff', threshold = 0.54) {
   const lin = (c) => {
     const s = c / 255;
-    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    // 用 Math.pow 而不是 `**` 运算符：仓库有条守卫会扫 ui/ 里所有行的 `**`
+    // （文字里的 markdown 加粗漏进界面就会原样显示给用户），它不区分代码与文案 ——
+    // 与其去放宽那条守卫（放宽就会漏检），不如按它的口径写。
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
   };
   const lum = 0.2126 * lin(rgb.r) + 0.7152 * lin(rgb.g) + 0.0722 * lin(rgb.b);
   return lum > threshold ? dark : light;
@@ -230,6 +236,7 @@ function resolveAppearance(ui = {}) {
     customAccent: Boolean(custom),
     accentScope: pick(ACCENT_SCOPES, src.accentScope, DEFAULTS.accentScope),
     sidebarStyle: pick(SIDEBAR_STYLES, src.sidebarStyle, DEFAULTS.sidebarStyle),
+    sidebarPinned: src.sidebarPinned === true,
     background: pick(BACKGROUNDS, src.background, DEFAULTS.background),
     bgColor: normalizeHex(src.bgColor) || DEFAULTS.bgColor,
     bgFrom: normalizeHex(src.bgFrom) || DEFAULTS.bgFrom,
@@ -308,6 +315,8 @@ function appearanceAttrs(app) {
     'dark-intensity': app.darkIntensity,
     'accent-scope': app.accentScope,
     'sidebar-style': app.sidebarStyle,
+    // 图标条模式：值为 '1' 时才收（空串＝常驻展开）。取值口径与 html 上的其它开关一致。
+    'side-rail': app.sidebarPinned ? '' : '1',
     background: app.background,
     font: app.font,
     density: app.density,
@@ -330,6 +339,7 @@ function appearancePatch(app) {
     accent: app.customAccent ? app.accent : '',
     accentScope: app.accentScope,
     sidebarStyle: app.sidebarStyle,
+    sidebarPinned: app.sidebarPinned,
     background: app.background,
     bgColor: app.bgColor,
     bgFrom: app.bgFrom,

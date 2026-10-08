@@ -32,6 +32,8 @@ const PATHS = {
   chip: '<rect x="4" y="6" width="16" height="12" rx="2"/><path d="M8 10h4M8 14h8"/>',
   clock: '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.4V12l3.4 2.1"/>',
   shield: '<path d="M12 3.5 5 6v6c0 4.2 3 7.4 7 8.5 4-1.1 7-4.3 7-8.5V6z"/><path d="M9 12.2l2.2 2.2L15.4 10"/>',
+  // ── 侧栏 ──
+  pin: '<path d="M9.4 4h5.2l-.7 5.3 3.2 3.2H6.9l3.2-3.2z"/><path d="M12 12.5V20"/>',
   // ── 主题 ──
   moon: '<path d="M20.2 14.6A8.6 8.6 0 1 1 9.4 3.8a7 7 0 0 0 10.8 10.8z"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5V5M12 19v2.5M2.5 12H5M19 12h2.5M5.2 5.2l1.8 1.8M17 17l1.8 1.8M5.2 18.8 7 17M17 7l1.8-1.8"/>',
@@ -73,7 +75,11 @@ function iconSvg(name, { size = 18, cls = '' } = {}) {
     if (name) console.warn(`[icons] 没有这个图标：${name}`);
     return '';
   }
-  const clsAttr = cls ? ` class="${cls}"` : '';
+  // 一律带上 `ico-svg`：SVG 的默认样式是 fill:black / stroke:none，而"描边 + 跟 currentColor"
+  // 这套样式原来只挂在 `.ico svg` 上 —— 凡是不走 applyIcons 包装的直接调用（总览的 KPI 与卡片头、
+  // 刷新按钮、顶栏主题按钮）就渲染成**黑色实心块**：深色下与卡片 1.22:1，等于看不见
+  //（2026-10-08 用户反馈"总览卡片符号看不清"查到的就是它）。给 SVG 自带类，任何用法都不会漏。
+  const clsAttr = ` class="${['ico-svg', cls].filter(Boolean).join(' ')}"`;
   return `<svg${clsAttr} viewBox="0 0 24 24" width="${size}" height="${size}" aria-hidden="true" focusable="false">${path}</svg>`;
 }
 

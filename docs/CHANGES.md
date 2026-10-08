@@ -48,6 +48,39 @@
 | 省 Token 模式 | `src/core/token-saver.js`（新增）、`src/core/config-legacy.js`、`src/llm/prompt.js`、`src/core/orchestrator.js`、`src/memory/memory-global.js`、`src/features/daily-moments.js`、`src/features/qzone-interactions.js`、`ui/app.js`、`src/console/app.js` | 「设置 -> 省 Token」三档，只给上下文档位条数、单次运行轮数与预算、交接/印象注入字符数、表情清单条数**夹上限**，不改写用户设置；关掉即恢复原样 | 本仓库新增 |
 | 关闭上游调试探针 | `src/*.js`、`ui/*.js` | 上游作者留在源码里的调试上报（指向其开发机私网地址）全部关掉 | `apply-disable-upstream-debug.sh` |
 
+## 未发布 · 控制台外观 v3、侧栏与设置分区菜单、两轮复审收口
+
+**尚未发版**（本节由工作树整理，发布时按版本号改名即可）。这一批集中在控制台，外加两轮独立
+复审抓到的运行时缺陷。
+
+- **外观 v3（七轴）**：明暗 / 深色强度 / 色板 / 强调色（含作用范围）/ 侧栏样式 / 背景 / 字体 /
+  圆角 / 缩放 / 密度 / 对比度各成一轴，改动**立即生效**、点「保存设置」才落服务端。强调色的
+  柔和底/描边/焦点环由 `color-mix` 从 `--accent` 现算（首屏内联脚本只抄一个值，避免闪烁）；
+  `@supports` 之外保留默认蓝的 rgba 兜底 —— **别把兜底写进同一个 `:root` 块**（同块内后写的
+  永远赢，兜底等于没写；自定义属性在计算期失效会让底色直接消失）。
+- **主题切换的圆形波纹**：View Transitions + `::view-transition-new(root)` 的 clip-path 扩散，
+  带忙碌守卫、`updateCallbackDone` 拒绝回退与计时器兜底；关掉动效时直切。
+- **左侧边栏**：悬停/焦点展开的图标条（248 ↔ 64，260ms `cubic-bezier(.4,0,.1,1)`），底部新增
+  「固定」图钉（与「设置 → 外观 → 固定侧栏」互为镜像，写回 `ui.sidebarPinned`）。**内层宽度
+  必须按内容盒算**（`--side-w-inner = --side-w-full − 2×--side-pad-x`）：写成外框宽会让底部
+  那一排顶出右缘、把最右的图标裁掉。
+- **设置页分区菜单**：选中块与主导航共用一份实现（`ui/core/nav-pill.js`）；切分区时把当前项
+  **带进视野**（只滚侧栏自己，`block:'nearest'` 语义）；`aria-current="page"`；菜单自滚加
+  `overscroll-behavior: contain` + `scrollbar-gutter: stable`。滑块节点在重建 DOM 时回收复用，
+  否则动画会变成"直接出现在终点"。
+- **运行时收口（复审发现）**：`#wake` 的前置判定与 `scheduleWake` 的预判段整体兜住（此前
+  store 一报错，等待中会话会永远停在"等待中"、`pendingWake` 永久占位导致该群不再被自动唤醒）；
+  `allow`/`deny` 名单形状坏掉不再抛（此前会让机器人静默不吭声）；未读扫描窗口与 `claimUnread`
+  的领取上限统一为 `min(100, batchLimit)`（此前窗口更大，降级时会回没被 @ 的群）；
+  `send.byLengthMs` / `drainDelayMs` 的 **0 不再被 `|| 默认` 吞掉**；协议端更新的镜像引用
+  加白名单校验（此前可注入 `.env`）；健康检查豁免 `onExceed='block'` 的"到期未处理"
+  （此前每小时误报一次停滞）。
+- **控制台缺陷**：总览页两条跳转链接此前调 `window.switchTab`（不存在）→ 点击只抛 TypeError；
+  异常等级/状态英文原样漏到界面；总览日期用浏览器本地时区；外观面板读已保存配置导致"切走再
+  切回就忘了刚改的"；思考档位重建后滑块与方向键失效；存档/会话记忆/用量表缺键盘可达；
+  人物记忆轮询把读长文的人弹回顶部；浮层不能用 Esc 关；`loadSettings` 在配置接口失败时抛
+  未处理拒绝。
+
 ## 0. 群名片工具、16 轮全项目复审与生图发送修复（v0.8.0 起）
 
 这一版包含一项社区贡献的新工具（机器人修改自己在群里的群名片，PR #19）、第十六轮全项目复审
@@ -90,7 +123,8 @@
   无人回。现行做法：进 messages 前补 id（与 inline 路径自造 id 同口径）、补 type、参数字符串化，
   assistant 与 tool 消息配对同步。
 - **其余复审收口（同一批 11 P2 + 8 P3 中的另外 12 项）**：未读扫描窗口四处统一
-  `#unreadScanLimit()`（≥ claimUnread 的 batchLimit，batchLimit 调大后 @ 判定不再漏看）；
+  `#unreadScanLimit()`（= min(100, claimUnread 的 batchLimit)，四处判定口与实际领取的批次同口径；
+  早前写成 max(100, batchLimit) 时，落在"批外"的 @ 会让降级闸门误判可以回应）；
   pacing 不再顶掉模型自安排的唤醒及其留言；waiting 会话空跑不再虚增当日 runs（与启动回收口径
   对齐）；兜底模型跨渠道时成本记实际渠道（`vendorOfBaseUrl`，渠道价目表按真实渠道匹配）；identity
   启动冲刷逐条隔离 + 关库时摘净 identityStore（原样下会瘫痪到重启）；`replaceKnownFriends` 尊重

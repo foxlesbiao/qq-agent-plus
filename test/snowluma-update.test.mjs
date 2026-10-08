@@ -124,6 +124,21 @@ test('targetImageFor：沿用当前镜像的镜像站前缀，不把国内机器
   assert.equal(override, 'registry.local/snowluma:v9.9.9', '配置里手填的镜像优先');
 });
 
+test('renderEnvWithImage：镜像引用不合法（含换行/空格/引号）直接拒绝，不许往 .env 里注入新变量', () => {
+  // 2026-10-08 二轮审查：这个值来自控制台请求体，会被写成 .env 的一行 —— 值里带换行就等于
+  // 往 .env 注入一个新变量（docker compose 会拿它插值镜像 tag / 端口 / 引导密码）。
+  const rejects = ['a\nb=1', 'a\r\nb=1', 'a b', 'a;b', 'a"b', '', '   '];
+  for (const bad of rejects) {
+    assert.throws(() => renderEnvWithImage('SNOWLUMA_IMAGE=old\n', bad), /不合法/,
+      `应拒绝非法镜像引用：${JSON.stringify(bad)}`);
+  }
+  // 反向：合法引用照旧写进去
+  assert.match(
+    renderEnvWithImage('SNOWLUMA_IMAGE=old\n', 'mirror.ccs.tencentyun.com/x/y:v1.2.22'),
+    /^SNOWLUMA_IMAGE=mirror\.ccs\.tencentyun\.com\/x\/y:v1\.2\.22$/m
+  );
+});
+
 test('renderEnvWithImage：只改 SNOWLUMA_IMAGE 那一行，其余行（含令牌）原样保留', () => {
   const raw = 'SNOWLUMA_IMAGE=old:v1\nONEBOT_TOKEN=secret-token\nSNOWLUMA_CONTAINER=qq-agent-snowluma\n';
   const next = renderEnvWithImage(raw, 'new:v2');

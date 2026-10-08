@@ -18,6 +18,7 @@ import {
   normalizeAsrMax, normalizeStickerCollectMax, normalizeStickerMax, onebotIssueText, onebotStatusLineHtml, uiServiceOfUrl
 } from './format.js';
 import { QARegistry } from './registry.js';
+import { scheduleSideNav } from './side-nav.js';
 import { loadingLogs, loadingStatus, pendingSessionDetail, state } from './state.js';
 import { appendChatMessageRows, loadChats, updateChatMessagesBody } from '../pages/chat.js';
 import { renderSessionDetail, renderSessionList } from '../pages/sessions.js';
@@ -43,6 +44,35 @@ function syncGraduatedFeatureNavigation(c = state.config || {}) {
     const tab = $(`[data-feature-nav="${feature}"]`);
     if (tab) tab.classList.toggle('hidden', !visible);
   }
+  // 显隐会改导航的行高/项数 → 侧栏那个"会滑动的选中块"必须重新对位，
+  // 否则高亮会停在错的那一行上（首屏这里就会跑一次：被门控的页签在 init 之后才收起）。
+  scheduleSideNav(document);
+}
+
+/**
+ * 关对话框：先挂 `.closing` 播一段退场动画（150ms：整层淡出 + 卡片微收 + 糊一下），
+ * 动画结束再调用原生 close()。
+ * 为什么需要它：原生 `dialog.close()` 是瞬间生效的 —— 元素立即变成 display:none，
+ * 退场动画根本没有机会播。所以"关"这件事必须由 JS 分两步做。
+ * 兜底计时器：万一动画没跑（用户开了"关闭全部动效"、或者 `animationend` 因为节点被别处
+ * 移除而没触发），200ms 后无条件 close() —— 一个关不掉的对话框比没有动画严重得多。
+ */
+function closeDialog(dialog) {
+  if (!dialog || typeof dialog.close !== 'function') return;
+  if (!dialog.open) return;
+  if (dialog.dataset.closing === '1') return;
+  dialog.dataset.closing = '1';
+  dialog.classList.add('closing');
+  let done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    dialog.classList.remove('closing');
+    delete dialog.dataset.closing;
+    if (dialog.open) dialog.close();
+  };
+  dialog.addEventListener('animationend', (e) => { if (e.target === dialog) finish(); });
+  setTimeout(finish, 200);
 }
 
 function askForConfirmation(message) {
@@ -675,5 +705,6 @@ export {
   identityPilotSettingsPatch, impressionMetaLabel, initChatScrollLoader, initSessionScrollLoader,
   patchKeyedList, pollUntilReady, readAssetImage, requestExperimentOwnerUin, revealLoadingIfSlow,
   scheduleChatsRefresh, scheduleSessionRender, setBoxError, setHtmlIfChanged, setLoadingStatus,
-  setStatusLabel, splitRowsHtml, syncClampedInputs, syncGraduatedFeatureNavigation, updateOnebotStatusLine
+  closeDialog, setStatusLabel, splitRowsHtml, syncClampedInputs, syncGraduatedFeatureNavigation,
+  updateOnebotStatusLine
 };

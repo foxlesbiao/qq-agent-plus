@@ -98,7 +98,8 @@ test('开关：设置页与平台页的 checkbox 长成胶囊开关（列表里�
     '开关要 appearance:none 自绘');
   assert.ok(/--switch-w: 44px/.test(css) && /--switch-h: 24px/.test(css), '尺寸要按参照实现的 44×24');
   assert.ok(/translateX\(var\(--switch-travel\)\)/.test(css), '圆点靠位移过去');
-  assert.ok(/\.ma-check|\.bl-chk/.test(css) || true, '列表多选框保持方框（不在这条选择器里）');
+  // 原来这条写成 `assert.ok(/…/.test(css) || true)` —— `|| true` 让它永远为真，等于没断言；
+  // 「多选方块没被卷进开关样式」由下一行那条真实匹配断言守住（2026-10-08 审查）。
   const switchSel = css.match(/\.checkbox-row > input\[type='checkbox'\],[\s\S]{0,120}?\{/);
   assert.ok(switchSel && !switchSel[0].includes('.ma-check'), '多选方块不许被卷进开关样式');
 });
@@ -152,5 +153,8 @@ test('开关的覆盖范围包含外观面板（.opt-row-ctrl），且轨道用 
   const segBlock = css.match(/\.seg \{[\s\S]*?\}/);
   assert.ok(segBlock, '要有 .seg 规则');
   assert.equal(/border:\s*1px solid/.test(segBlock[0]), false, '分段轨道不许用 1px border（取整误差会让滑块对不齐）');
-  assert.ok(/box-shadow: inset 0 0 0 1px var\(--border\)/.test(segBlock[0]), '描边要用 inset box-shadow 画');
+  // 描边色走 --ctl-line（= 掺主文字色的加深版边框）：亮色下 --border 贴白卡只有 1.24:1，
+  // 分段轨道的槽、开关的槽、未选中的单选圈都靠它表达，用裸 --border 等于看不见控件。
+  assert.ok(/box-shadow: inset 0 0 0 1px var\(--ctl-line\)/.test(segBlock[0]), '描边要用 inset box-shadow 画');
+  assert.ok(/--ctl-line: color-mix\(in srgb, var\(--text\) 22%, var\(--border\)\)/.test(css), '要有统一的控制件轮廓色 --ctl-line');
 });

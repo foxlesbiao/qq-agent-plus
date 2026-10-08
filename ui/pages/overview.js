@@ -8,10 +8,18 @@
 import { api } from '../core/api.js';
 import { esc } from '../core/dom.js';
 import { applyIcons, iconSvg } from '../core/icons.js';
+// switchTab 是 app.js 的模块导出（**不是** window 上的全局）。以前这里写 window.switchTab，
+// 生产环境里那个函数根本不存在：点「全部异常 →」只会抛 TypeError，链接完全没反应
+// （测试里看不出来，因为沙箱把模块拍平成普通脚本，函数恰好成了全局）。
+import { switchTab } from '../app.js';
+// 异常等级/状态的中文名与色块**复用常量表**：服务端的取值是 warning/acknowledged，
+// 这里曾经自己写了一份 warn/acked 的小表，结果英文原样漏到界面上、色块也丢了
+// （2026-10-08 审查）。
+import { INCIDENT_SEVERITY_LABELS, INCIDENT_STATE_LABELS } from '../core/constants.js';
 
-const SEVERITY_LABEL = { critical: '严重', error: '错误', warn: '警告', info: '信息' };
-const SEVERITY_CLASS = { critical: 'bad', error: 'bad', warn: 'warn', info: '' };
-const STATE_LABEL = { open: '待处理', acked: '已确认', resolved: '已解决' };
+const SEVERITY_LABEL = INCIDENT_SEVERITY_LABELS;
+const STATE_LABEL = INCIDENT_STATE_LABELS;
+const SEVERITY_CLASS = { critical: 'bad', error: 'bad', warning: 'warn', info: '' };
 
 function fmtNum(n) {
   const v = Number(n) || 0;
@@ -30,23 +38,33 @@ function fmtBytes(bytes) {
   return `${i === 0 ? Math.round(value) : value.toFixed(1)} ${units[i]}`;
 }
 
+// 时间一律按 **Asia/Shanghai** 解释：服务端按上海自然日切分用量（src/core/util.js 的
+// todayKey/shanghaiDayStart），这里若用浏览器本地时区，非 UTC+8 的管理员会看到"今天的柱子
+// 是 0 次"、时间戳与别的页也对不上（2026-10-08 审查）。上海没有夏令时，所以 +8h 取 UTC 字段
+// 与 Asia/Shanghai 完全等价 —— 和服务端用的是同一个算法。
+const ZONE_OFFSET_MS = 8 * 3600 * 1000;
+const pad2 = (n) => String(n).padStart(2, '0');
+
+/** 上海时区下的 YYYY-MM-DD（与服务端 todayKey 同口径，用于和 /api/usage/stats 的 day 对齐）。 */
+function shDay(ts = Date.now()) {
+  const n = Number(ts);
+  const d = new Date((Number.isFinite(n) ? n : Date.now()) + ZONE_OFFSET_MS);
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
 function fmtTime(ts) {
   const n = Number(ts);
-  if (!Number.isFinite(n) || n <= 0) return '—';
-  const d = new Date(n);
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  const today = new Date();
-  const sameDay = d.toDateString() === today.toDateString();
-  return sameDay ? `${hh}:${mm}` : `${d.getMonth() + 1}-${String(d.getDate()).padStart(2, '0')} ${hh}:${mm}`;
+  if (!Number.isFinite(n) || n <= 0 || n > 8.64e15) return '—';
+  const d = new Date(n + ZONE_OFFSET_MS);
+  const hh = pad2(d.getUTCHours());
+  const mm = pad2(d.getUTCMinutes());
+  return shDay(n) === shDay(Date.now()) ? `${hh}:${mm}` : `${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())} ${hh}:${mm}`;
 }
 
 function days(n) {
   const out = [];
-  for (let i = n - 1; i >= 0; i -= 1) {
-    const d = new Date(Date.now() - i * 86400_000);
-    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
-  }
+  const now = Date.now();
+  for (let i = n - 1; i >= 0; i -= 1) out.push(shDay(now - i * 86400_000));
   return out;
 }
 
@@ -144,7 +162,7 @@ async function loadOverview() {
           <li>
             <span class="feed-time">${fmtTime(it.lastAt)}</span>
             <span class="chip ${SEVERITY_CLASS[it.severity] || ''}">${esc(SEVERITY_LABEL[it.severity] || it.severity)}</span>
-            <span class="feed-text">${esc(String(it.message || it.code || '').slice(0, 90))}</span>
+            <span class="feed-text" title="${esc(String(it.message || it.code || ''))}">${esc(String(it.message || it.code || '').slice(0, 90))}</span>
             ${it.count > 1 ? `<span class="muted">×${it.count}</span>` : ''}
             <span class="muted">${esc(STATE_LABEL[it.state] || it.state)}</span>
           </li>`).join('')}
@@ -203,7 +221,7 @@ async function loadOverview() {
           <dt>OneBot</dt><dd>${onebot.connected ? '<span class="chip ok">已连接</span> 正向 WebSocket + HTTP API' : '<span class="chip">未连接</span>（地址与令牌在「OneBot」设置页）'}</dd>
           <dt>机器人</dt><dd>${selfName ? `${esc(selfName)}${onebot.self?.userId ? ` · ${esc(onebot.self.userId)}` : ''}` : '（还没拿到登录信息）'}</dd>
           <dt>模型</dt><dd>${esc(status?.orchestrator?.model || '（未设置）')}</dd>
-          <dt>协议端</dt><dd>${slVersion ? `v${esc(slVersion)}` : '—'} · <a href="#" id="overview-goto-onebot">去更新 / 看详情</a></dd>
+          <dt>协议端</dt><dd>${slVersion ? `v${esc(slVersion)}` : '—'} · <a href="#" id="overview-goto-onebot" class="panel-link" data-open-settings="onebot">去更新 / 看详情</a></dd>
         </dl>`, { icon: 'link' })}
       ${panel('最近异常', `最近 ${incidentList.length} 条 · 点标题看全部`, incidentBody,
       { icon: 'alert', actions: '<a href="#" id="overview-goto-incidents" class="panel-link">全部异常 →</a>' })}
@@ -238,8 +256,10 @@ async function loadOverview() {
 
   applyIcons(box);
   document.getElementById('overview-refresh')?.addEventListener('click', () => { delete box.dataset.ready; loadOverview(); });
-  document.getElementById('overview-goto-incidents')?.addEventListener('click', (e) => { e.preventDefault(); window.switchTab('incidents'); });
-  document.getElementById('overview-goto-onebot')?.addEventListener('click', (e) => { e.preventDefault(); window.switchTab('settings'); window.dispatchEvent(new CustomEvent('qa-settings-section', { detail: 'onebot' })); });
+  // 「去更新 / 看详情」不在这里绑定：它带 data-open-settings="onebot"，由 app.js 里那**一个**
+  // 全局委托处理（老写法是自己 switchTab + 派发一个 qa-settings-section 事件，而那个事件全仓
+  // 没有任何监听者 —— 换分区这件事从来没发生）。
+  document.getElementById('overview-goto-incidents')?.addEventListener('click', (e) => { e.preventDefault(); switchTab('incidents'); });
 }
 
 export { loadOverview };

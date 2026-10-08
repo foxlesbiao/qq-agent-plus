@@ -475,7 +475,8 @@ export class Orchestrator {
     if (!b.enabled || !b.exceeded) return false;
     if (b.onExceed === 'block') return true;
     if (!String(chatKey).startsWith('group:')) return false;   // 私聊不受 degrade 影响
-    // ⚠️ 窗口必须与 #wake 的 degrade 闸门一致（#unreadScanLimit ≥ claimUnread 的 batchLimit）：
+    // ⚠️ 窗口必须与 #wake 的 degrade 闸门一致（#unreadScanLimit = min(100, batchLimit)，即
+    // claimUnread 真正领取的批次大小）：
     // 闸门看的是「这次要处理的那批未读里有没有 @」。窗口偏小时，落在窗口之后的 @ 会被这里
     // 判成"会丢"，提醒被无谓顺延 24 小时（#wake 其实照常派发）—— 2026-10-05 复审实测。
     const pending = this.store.peekUnread(chatKey, this.#unreadScanLimit()) || [];
@@ -577,11 +578,13 @@ export class Orchestrator {
     return chatKey.startsWith('group:');
   }
 
-  // 未读扫描窗口：必须 ≥ 实际领取的批次大小（#wake 的 claimUnread 用 store.batchLimit）。
-  // 全部判定口（degrade 闸门 / #budgetWouldDrop / 即时@例外 / #predictTier）共用同一窗口 ——
-  // batchLimit 被调到 100 以上时，落在固定 100 窗口之后的 @ 会被判据漏看（2026-10-06 复审）。
+  // 未读扫描窗口：全部判定口（degrade 闸门 / #budgetWouldDrop / 即时@例外 / #predictTier）共用。
+  // 必须**等于**实际领取的批次大小：claimUnread 内部把它夹在 100 以内（store.js 的
+  // Math.min(100, …)），所以窗口开得更大反而有害 —— 超预算的群里，第 101 条之后的 @ 会让
+  // degrade 闸门判"有 @，可以回"，而真正领到的 100 条里没有 @，于是没被 @ 也回了一句
+  // （2026-10-08 审查）。两处取同一个值，别再各算一份。
   #unreadScanLimit() {
-    return Math.max(100, Number(getConfig().store?.batchLimit) || 100);
+    return Math.min(100, Math.max(1, Number(getConfig().store?.batchLimit) || 100));
   }
 
   /** 确保该会话有一次自主节奏唤醒安排；已有且在合理范围内则不动。 */
@@ -819,6 +822,9 @@ export class Orchestrator {
       // （2026-09-22 审查发现）。这里掷一次存起来，wake 时取走。
       const roll = this.random() * 100;
       this.pendingRolls.set(chatKey, { roll, at: Date.now() });
+      // 这一段里有 store 读（#predictTier 的档位判定、#applyWaitingConversation 的写回）：
+      // 中间抛出去就会留下上面 #abortSchedule 注释里那两笔烂账，所以整体兜住（2026-10-08 审查）。
+      try {
       const predicted = this.#predictTier(chatKey, { roll });
       if (predicted.shouldRespond === false) {
         // 不响应：把已存在的等待会话撤掉（例如刚被艾特、随后判定又不成立的情况）
@@ -863,6 +869,10 @@ export class Orchestrator {
         this.emit('session-start', { sessionId: session.id, chatKey, status: 'waiting', triggerSummary: summary });
       }
       this.emit('chat-update', chatKey);
+      }
+      } catch (error) {
+        // 预测/创建"等待中"会话途中失败：把排程痕迹与会话一起收掉，别留下半成品
+        this.#abortSchedule(chatKey, error);
       }
     }
 
@@ -1002,26 +1012,64 @@ export class Orchestrator {
     return task;
   }
 
-  async #wake(chatKey, { proactive = false, manual = false, waitingSessionId = null, wakeNote = '', paced = false } = {}) {
-    if (!canRun(chatKey)) { if (waitingSessionId) this.#discardWaiting(waitingSessionId); return; }
+  /**
+   * #wake 的前置判定：能不能跑、要不要现在跑。返回 false ＝ 这一轮不跑（该收的会话已收掉）。
+   *
+   * 为什么单独成一个方法：这一段里有 **store 读写**（canRun 读配置、#chatRuntimeDecision 会
+   * getChatMeta 并把过期线程写回）。任何一步抛出都会让 waiting 会话永远停在"等待中" —— 调用方
+   * 已经把它从 pendingSessions 摘掉了，控制台清不掉、abortAll 也够不到它，直到重启。
+   * 与 2026-10-06（add 之后）、2026-10-07（claimUnread 之后）修的两处是同一类窗口，
+   * 这次把 add 之前的这一段也圈进来（2026-10-08 审查）。
+   */
+  #wakePreflight(chatKey, waitingSessionId) {
+    if (!canRun(chatKey)) { if (waitingSessionId) this.#discardWaiting(waitingSessionId); return false; }
     if (!this.#chatRuntimeDecision(chatKey).allowed) {
       if (waitingSessionId) this.#discardWaiting(waitingSessionId);
-      return;
+      return false;
     }
-    if (this.aborted) { if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted'); return; }
-    if (this.paused) { if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted'); return; }
-    if (this.runningChats.has(chatKey)) return;
+    if (this.aborted) { if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted'); return false; }
+    if (this.paused) { if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted'); return false; }
+    if (this.runningChats.has(chatKey)) return false;
 
     // 模型未设置：不产生报错会话，消息保留为未读；设置模型后（下一条消息或手动唤醒）自动补处理
     if (!String(getConfig().api.model || '').trim()) {
       if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted', '模型未设置');
-      return;
+      return false;
     }
 
     // 全局并发限制：满了就稍后重试
     if (this.runningChats.size >= Math.max(1, Number(getConfig().maxConcurrentRuns) || 2)) {
       if (waitingSessionId) this.#discardWaiting(waitingSessionId);
       this.scheduleWake(chatKey, 3000);
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * 排程/唤醒中途出错时把这一次的痕迹清干净。不清的话有两笔烂账：
+   *   · pendingWake 会永久占着这个会话 —— 恢复循环 `pendingWake.has(key)` 直接 continue，
+   *     这个群从此不会被自动唤醒（只有新消息能救回来）；
+   *   · 刚刚 create 出来的"等待中"会话不在 pendingSessions 里，谁也收不掉。
+   */
+  #abortSchedule(chatKey, error) {
+    log.error(`[orchestrator] 排程失败（${chatKey}）：`, error);
+    this.pendingWake.delete(chatKey);
+    const timer = this.wakeTimers.get(chatKey);
+    if (timer) { clearTimeout(timer); this.wakeTimers.delete(chatKey); }
+    this.firstPendingAt.delete(chatKey);
+    this.pendingRolls.delete(chatKey);
+    const waitingId = this.pendingSessions.get(chatKey);
+    this.pendingSessions.delete(chatKey);
+    if (waitingId) this.#finishWaiting(waitingId, 'aborted', '排程失败');
+  }
+
+  async #wake(chatKey, { proactive = false, manual = false, waitingSessionId = null, wakeNote = '', paced = false } = {}) {
+    try {
+      if (!this.#wakePreflight(chatKey, waitingSessionId)) return;
+    } catch (error) {
+      log.error(`[orchestrator] 唤醒前置判定失败（${chatKey}）：`, error);
+      if (waitingSessionId) this.#finishWaiting(waitingSessionId, 'aborted', '前置判定失败');
       return;
     }
 
@@ -1336,7 +1384,10 @@ export class Orchestrator {
       const pacedNow = this.#pacingApplies(chatKey);
       const unread = this.store.unreadCount(chatKey);
       if (!pacedNow && unread > 0) {
-        const drainDelay = Math.max(200, Number(getConfig().drainDelayMs) || 1200);
+        // drainDelayMs 的 0 是合法值（"连续批次之间不额外等"）：0 应当落到 200ms 的硬下限，
+        // 而不是被 `|| 1200` 当成没配（2026-10-08 审查，与 sender 的 byLengthMs 同一类）
+        const drainRaw = Number(getConfig().drainDelayMs);
+        const drainDelay = Math.max(200, Number.isFinite(drainRaw) ? drainRaw : 1200);
         this.scheduleWake(chatKey, drainDelay);
       }
       // 自主节奏：本次处理完，确保还留着下一次"自己醒来"的安排

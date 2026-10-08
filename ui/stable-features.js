@@ -161,17 +161,23 @@ import { api } from './core/api.js';
   }
 
   /**
-   * 改导航项的文字，但**不碰图标**。
-   * 原来这里直接写 `el.textContent = '…'`，会把 applyIcons 注入的 `<span class="ico">` 一起抹掉 ——
+   * 改导航项的主名，但**不碰图标、也不碰说明那行**。
+   * 历史上这里直接写 `el.textContent = '…'`，会把 applyIcons 注入的 `<span class="ico">` 一起抹掉 ——
    * 「人物印象」与「异常处理」两项因此在每次启动后都变成没有图标的导航项
-   * （2026-10-08 真机实测：12 个 tab 里就这两项 hasSvg=false）。所以只替换文字节点，
+   * （2026-10-08 真机实测：12 个 tab 里就这两项 hasSvg=false）。
+   * 现在导航项是"主名 + 一行说明"两行结构，主名在 `.tab-label b` 里，所以只改那一个节点，
    * 并顺手补一次 applyIcons（幂等）兜底"图标还没注入就先跑了这条"的顺序问题。
    */
   function setNavLabel(el, label) {
     el.classList.remove('hidden');
-    const textNode = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.nodeValue.trim());
-    if (!textNode) el.appendChild(document.createTextNode(label));
-    else if (textNode.nodeValue.trim() !== label) textNode.nodeValue = label;
+    const title = el.querySelector('.tab-label b');
+    if (title) { if (title.textContent.trim() !== label) title.textContent = label; }
+    else {
+      // 兜底：万一模板换了结构（没有 .tab-label），退回"只替换文字节点"的老做法
+      const textNode = [...el.childNodes].find((n) => n.nodeType === Node.TEXT_NODE && n.nodeValue.trim());
+      if (!textNode) el.appendChild(document.createTextNode(label));
+      else if (textNode.nodeValue.trim() !== label) textNode.nodeValue = label;
+    }
     applyIcons(el);
   }
 

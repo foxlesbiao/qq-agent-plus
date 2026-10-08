@@ -48,13 +48,17 @@ function readRuntimePaused(dataDir) {
   }
 }
 
-/** 当日预算是否"已用尽且策略为 degrade"（此时编排器按设计保留未读，不该报停滞）。 */
-function readBudgetDegraded(dataDir) {
+/**
+ * 当日预算用尽、且策略本身就会**保留未读**（此时"到期未处理"是设计使然，不该报停滞）。
+ * degrade：只回 @，其余保留未读；block：整批不跑，消息留到明天 —— 两种都会让消息堆着，
+ * 只豁免 degrade 的话 block 用户每天都会收到一条"收发链路可能停滞"的误报（2026-10-08 审查）。
+ */
+function readBudgetKeepPending(dataDir) {
   try {
     const cfg = JSON.parse(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8'));
     const usage = JSON.parse(fs.readFileSync(path.join(dataDir, 'usage-today.json'), 'utf8'));
     const status = budgetStatus(cfg, usage);
-    return status.exceeded && status.onExceed === 'degrade';
+    return status.exceeded && ['degrade', 'block'].includes(status.onExceed);
   } catch {
     return false;
   }
@@ -165,8 +169,8 @@ export async function runHealthCheck(opts = {}) {
     add('outbound-freshness', true, '跳过（observe 模式不发消息）');
   } else if (readRuntimePaused(dataDir)) {
     add('outbound-freshness', true, '跳过（Agent 已暂停，消息按设计留在未读）');
-  } else if (readBudgetDegraded(dataDir)) {
-    add('outbound-freshness', true, '跳过（当日预算已用尽且策略为 degrade：保留未读是设计行为）');
+  } else if (readBudgetKeepPending(dataDir)) {
+    add('outbound-freshness', true, '跳过（当日预算已用尽且策略为 degrade/block：保留未读是设计行为）');
   } else {
     try {
       const db = openDatabase(path.join(dataDir, 'messages.sqlite'), { readOnly: true });

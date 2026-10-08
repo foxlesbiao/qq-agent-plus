@@ -34,12 +34,19 @@ function loadPage() {
   // 骨架进 DOM；script 标签不交给 happy-dom 自己加载，由测试按清单手动按序执行
   window.document.write(RAW_HTML.replace(/<script[^>]*>\s*<\/script>/g, ''));
   const fetchLog = [];
+  // 桩配置要能让**每个分区**都渲染得出来：漏字段时是那个分区的渲染函数抛
+  // "Cannot read properties of undefined"，用例只会说"那个控件不存在"，
+  // 查起来很绕（2026-10-08：聊天设置页因为缺 c.sticker 直接渲染失败）。
   const cfgStub = {
-    api: { model: 'smoke-model', maxRounds: 3 },
+    api: { model: 'smoke-model', maxRounds: 3, temperature: 0.7 },
     allow: { groups: ['10001', '20002'], private: [] },
     server: {}, runtime: { mode: 'observe' },
     webSearch: { enabled: false }, asr: {}, tts: {},
-    identityPilot: {}, slangPilot: {}, incidentPilot: {}, memory: {}
+    identityPilot: {}, slangPilot: {}, incidentPilot: {}, memory: {},
+    sticker: { enabled: false },
+    send: { minGapMs: 1000, maxGapMs: 3000, maxPerMinute: 80, maxPerHour: 500, byLengthMs: 20, hardSplitAt: 4000 },
+    proactive: { enabled: false, probability: 0.25, checkIntervalMinMs: 1800000, checkIntervalMaxMs: 5400000 },
+    conversation: {}, store: {}, wakeDelayMs: 8000
   };
   window.fetch = async (url) => {
     fetchLog.push(String(url));
@@ -428,5 +435,130 @@ test('真实 DOM 冒烟：「平台能力」页的开关/配额/按群覆盖能�
     const saveSrc = fs.readFileSync(path.join(UI, 'pages', 'settings-save.js'), 'utf8');
     assert.ok(saveSrc.includes('ALL_GATE_KEYS') && saveSrc.includes('gateCheckboxId'),
       '保存映射要用 platform.js 的键表/命名约定（手抄清单迟早与渲染漂掉）');
+  } finally { window.happyDOM?.abort?.(); }
+});
+
+test('真实 DOM 冒烟：总览的跳转入口指向对的目标（分区键与目标页都要对）', { skip: SKIP }, async () => {
+  // 背景：「全部异常 →」曾经调 window.switchTab（生产里没有这个全局，点了只抛 TypeError）；
+  // 「去更新 / 看详情」曾经 switchTab + 派发一个全仓无人监听的 qa-settings-section 事件，
+  // 于是"跳到 OneBot 分区"从来没发生过。这里能直接验的是"点了确实到了目标页/带了正确的分区键"。
+  // 注意：data-open-settings 的**委托处理器注册在 init() 里**，而这个沙箱只跑脚本、不跑 init()
+  //（与既有用例一致），所以"点了跳到设置页"那一半在这里测不了 —— 那半边的守卫在
+  // test/ui-review-fixes-2026-10-08.test.mjs 的源码锚点（禁止 window.switchTab / qa-settings-section）。
+  const { window } = loadPage();
+  await settle();
+  try {
+    const doc = window.document;
+    window.switchTab('overview');
+    await settle(150);
+
+    const inc = doc.getElementById('overview-goto-incidents');
+    assert.ok(inc, '总览要有「全部异常」入口');
+    inc.click();
+    await settle(120);
+    assert.equal(doc.getElementById('view-incidents')?.classList.contains('active'), true,
+      '「全部异常」应切到异常处理页（id=view-incidents）');
+
+    window.switchTab('overview');
+    await settle(120);
+    const one = doc.getElementById('overview-goto-onebot');
+    assert.ok(one, '总览要有「去更新 / 看详情」入口');
+    assert.equal(one.dataset.openSettings, 'onebot',
+      '要走 app.js 那一个 data-open-settings 全局委托，且分区键必须是侧栏里真有的 onebot');
+    assert.equal(one.tagName, 'A', '入口样式是行内链接（改了标签就要同步 .panel-link 的样式口径）');
+  } finally { window.happyDOM?.abort?.(); }
+});
+
+test('真实 DOM 冒烟：总览的异常列表用服务端取值（warning/acknowledged 不漏英文、色块不丢）', { skip: SKIP }, async () => {
+  // 服务端的 severity 是 info|warning|error|critical、state 是 open|acknowledged|resolved，
+  // 总览曾经自己写了一份 warn/acked 的小表 → 界面上直接印出英文 "warning"/"acknowledged"，
+  // 色块也匹配不上（2026-10-08 审查）。喂一条真实取值，逐项核对中文与色块。
+  const { window } = loadPage();
+  await settle();
+  try {
+    const doc = window.document;
+    // 只接管这一个接口，其余（含 /api/config）照旧走原始桩 —— 整个换掉会让设置页拿不到配置
+    const orig = window.fetch;
+    window.fetch = async (url, options) => {
+      if (String(url).includes('/api/incidents')) {
+        return { ok: true, status: 200, json: async () => ({
+          incidents: [{ severity: 'warning', state: 'acknowledged', message: '磁盘水位偏高', lastAt: Date.now(), count: 2 }],
+          status: { counts: { open: 1, acknowledged: 1, resolved: 0, critical: 0 } }
+        }) };
+      }
+      return orig(url, options);
+    };
+    window.switchTab('overview');
+    await settle(150);
+    doc.getElementById('overview-refresh').click();
+    await settle(220);
+
+    const feed = doc.querySelector('#overview-page .feed');
+    assert.ok(feed, '要有异常列表');
+    const text = feed.textContent;
+    assert.ok(text.includes('警告'), `warning 要显示成「警告」，实际：${text}`);
+    assert.ok(text.includes('已确认'), `acknowledged 要显示成「已确认」，实际：${text}`);
+    assert.equal(/(^|\s)(warning|acknowledged)($|\s)/.test(text), false, '不该把服务端的英文取值印到界面上');
+    assert.ok(feed.querySelector('.chip.warn'), 'warning 要带上告警色块（色表也曾经与取值对不上）');
+  } finally { window.happyDOM?.abort?.(); }
+});
+
+test('真实 DOM 冒烟：数字字段填 0 要存成 0（不被 `|| 默认值` 吃掉）', { skip: SKIP }, async () => {
+  // min="0" 的控件里 0 是文档化的合法值：温度 0 = 贪心解码、批次间隔 0 = 不等、触发概率 0 =
+  // 从不主动开口、按字数附加间隔 0 = 不额外等。写成 `Number(val(...)) || 默认值` 时 0 是假值
+  // → 存回去变成 0.8 / 1200 / 0.25 / 20，界面上看着像"没保存"（2026-10-08 审查）。
+  // 这里走完整的"改控件 → 点保存 → 看 POST 体"。
+  const { window } = loadPage();
+  await settle();
+  try {
+    const doc = window.document;
+    const posts = [];
+    const orig = window.fetch;
+    window.fetch = async (url, options = {}) => {
+      if ((options?.method || 'GET').toUpperCase() === 'POST') {
+        posts.push({ url: String(url), body: options?.body });
+        // 保存成功后 saveConfig 会做 `state.config = data.config` 并重渲染 —— 这里必须把
+        // 一份**形状完整的配置**还回去，否则 state.config 变成 {}，接着渲染另一个分区就抛
+        // "Cannot read properties of undefined"（实测踩到）。借原始桩的配置形状最省事。
+        const shape = await orig('/api/config').then((r) => r.json());
+        return { ok: true, status: 200, json: async () => ({ config: shape }) };
+      }
+      return orig(url, options);   // GET 照旧：换掉会让设置页读不到 state.config
+    };
+    window.switchTab('settings');
+    await settle(100);
+
+    // ① 模型 API：温度 0
+    doc.querySelector('.settings-menu-item[data-section="api"]').click();
+    await settle(160);
+    const temp = doc.getElementById('cfg-temperature');
+    assert.ok(temp, '模型 API 页要有温度控件');
+    temp.value = '0';
+    doc.querySelector('#save-cfg-btn').click();
+    await settle(220);
+
+    // ② 聊天设置：批次间隔 0 / 触发概率 0 / 按字数附加间隔 0
+    doc.querySelector('.settings-menu-item[data-section="chat"]').click();
+    await settle(200);
+    for (const id of ['cfg-draindelay', 'cfg-pro-prob', 'cfg-bylength']) {
+      assert.ok(doc.getElementById(id), `聊天设置页要有 #${id}`);
+      doc.getElementById(id).value = '0';
+    }
+    doc.querySelector('#save-cfg-btn').click();
+    await settle(220);
+
+    const cfgPosts = () => posts.filter((p) => p.url.includes('/api/config')).map((p) => JSON.parse(p.body || '{}'));
+    assert.equal(cfgPosts().length, 2, '两次保存都要发出 POST /api/config');
+    assert.equal(cfgPosts()[0].api?.temperature, 0, '温度填 0 要存成 0（不是 0.8）');
+    assert.equal(cfgPosts()[1].drainDelayMs, 0, '批次间隔填 0 要存成 0（不是 1200）');
+    assert.equal(cfgPosts()[1].proactive?.probability, 0, '触发概率填 0 要存成 0（不是 0.25）');
+    assert.equal(cfgPosts()[1].send?.byLengthMs, 0, '按字数附加间隔填 0 要存成 0（不是 20）');
+
+    // 反向：留空仍然等价于"恢复原值/default"，不能变成 0（否则清了字段等于把行为改掉）
+    doc.getElementById('cfg-draindelay').value = '';
+    doc.querySelector('#save-cfg-btn').click();
+    await settle(220);
+    const last = cfgPosts().pop();
+    assert.notEqual(last.drainDelayMs, 0, '留空不该被写成 0（那是"清空 = 恢复默认"的路子）');
   } finally { window.happyDOM?.abort?.(); }
 });

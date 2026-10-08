@@ -8,6 +8,7 @@ import { closeModelModal, loadSettings, modelModalShell } from '../app.js';
 import { api } from '../core/api.js';
 import { TOOL_CAT_ORDER, TOOL_META, USAGE_RANGES } from '../core/constants.js';
 import { $, $$, esc } from '../core/dom.js';
+import { closeDialog } from '../core/dom-util.js';
 import {
   chatNameOf, effectivePriceFor, fmtTime, fmtTok, fmtTokens, fmtYuan, formatChatTitle, hasOwnPrice,
   matchPriceTable, mulOf, priceTxt
@@ -332,7 +333,7 @@ async function savePriceDialog() {
       state.config.api.modelPrices = { ...(state.config.api.modelPrices || {}), [key]: entry };
     }
     if (result) { result.textContent = `已保存：${key}`; result.className = 'control-result success'; }
-    $('#price-dialog')?.close();
+    closeDialog($('#price-dialog'));
     refreshModelPriceCard();
     // 用量页正在看的话，让它重算（价格变了）
     if (state.tab === 'usage') loadUsageView({ force: true });
@@ -366,7 +367,7 @@ async function deletePriceDialog() {
       state.config.api.modelPrices = next;
     }
     if (result) { result.textContent = `已删除：${key}`; result.className = 'control-result success'; }
-    $('#price-dialog')?.close();
+    closeDialog($('#price-dialog'));
     refreshModelPriceCard();
     if (state.tab === 'usage') loadUsageView({ force: true });
   } catch (error) {
@@ -684,19 +685,22 @@ function renderUsagePage(stats, st, prices) {
   });
   $('#usage-refresh-btn')?.addEventListener('click', () => loadUsageView({ force: true }));
 
-  // 行点击 → 弹明细
-  box.querySelector('[data-table="days"]')?.addEventListener('click', (e) => {
-    const tr = e.target.closest('tr[data-key]');
-    if (tr) openUsageBreakdown('day', tr.dataset.key);
-  });
-  box.querySelector('[data-table="chats"]')?.addEventListener('click', (e) => {
-    const tr = e.target.closest('tr[data-key]');
-    if (tr) openUsageBreakdown('chat', tr.dataset.key);
-  });
-  box.querySelector('[data-table="models"]')?.addEventListener('click', (e) => {
-    const tr = e.target.closest('tr[data-key]');
-    if (tr) openUsageBreakdown('model', tr.dataset.key);
-  });
+  // 行点击 → 弹明细（键盘同样：Enter/Space）
+  for (const [table, kind] of [['days', 'day'], ['chats', 'chat'], ['models', 'model']]) {
+    const host = box.querySelector(`[data-table="${table}"]`);
+    if (!host) continue;
+    host.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr[data-key]');
+      if (tr) openUsageBreakdown(kind, tr.dataset.key);
+    });
+    host.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const tr = e.target.closest('tr[data-key]');
+      if (!tr) return;
+      e.preventDefault();
+      openUsageBreakdown(kind, tr.dataset.key);
+    });
+  }
 
   // 未定价提示条：每个模型一个按钮，点开就是定价弹窗（填完立即重算）
   box.querySelector('[data-field="unpriced-list"]')?.addEventListener('click', (e) => {
@@ -903,7 +907,15 @@ function updateUsagePage(stats, st, prices) {
     }
     tbody.dataset.empty = '0';
     const html = shown.map(build).join('');
-    if (tbody.dataset.sig !== html) { tbody.innerHTML = html; tbody.dataset.sig = html; }
+    if (tbody.dataset.sig !== html) {
+      tbody.innerHTML = html;
+      tbody.dataset.sig = html;
+      // 明细是"点这一行"打开的，键盘也要能开：<tr> 不是原生可聚焦元素，得自己补 tabindex/role
+      for (const tr of tbody.querySelectorAll('tr[data-key]')) {
+        tr.tabIndex = 0;
+        tr.setAttribute('role', 'button');
+      }
+    }
   };
 
   // 成本单元格：整行都没有价格时不能显示成 ¥0.00（会被读成"免费"）

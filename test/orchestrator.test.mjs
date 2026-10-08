@@ -1770,6 +1770,43 @@ it('换卡后 24 小时内，历史与交接口径会说明"旧口癖不作数"'
     assert.ok(modelCalls >= 1, '有 @ 时应运行');
   });
 
+  // ── 唤醒/排程的失败收口（2026-10-08 二轮审查）──
+  // 这两条守同一件事：前置判定与预判里**有 store 读写**（getChatMeta / 线程过期写回 /
+  // applyWaitingConversation），任何一步抛出都不能留下"永远停在等待中"的会话，也不能让
+  // pendingWake 永久占位（那会让恢复循环从此跳过这个会话）。旧代码里这两处都在 try 之外 ——
+  // 抛一次就得重启才能恢复。
+  it('唤醒前置判定抛错：等待中会话要被收掉，不能留在 waiting', async (t) => {
+    const { runner, store, sessions, append } = fixture(t);
+    append(1);
+    const waiting = sessions.create({
+      chatKey: 'group:1', trigger: [], triggerSummary: '', status: 'waiting', waitUntil: Date.now() + 1000
+    });
+    // 模拟 sqlite 损坏/磁盘满：前置判定要读会话元数据（getChatMeta → 线程过期写回）
+    store.getChatMeta = () => { throw new Error('database disk image is malformed'); };
+    await runner.wake('group:1', { waitingSessionId: waiting.id });
+    // finish() 会把会话从 current 摘掉并写进索引 —— 两边都要查，否则"undefined !== 'waiting'"
+    // 这种空断言会假装通过（实测踩到）。
+    assert.equal(sessions.current.has(waiting.id), false, '不能还挂在 current 里当活跃会话');
+    const idx = sessions.index.find((s) => s.id === waiting.id);
+    assert.ok(idx, '会话应落进索引');
+    assert.notEqual(idx.status, 'waiting',
+      `前置判定抛错后等待中会话不能被留在 waiting（实际 ${idx.status}）`);
+  });
+
+  it('排程预判抛错：pendingWake 不能永久占位（否则恢复循环从此跳过这个会话）', async (t) => {
+    const { runner, store } = fixture(t);
+    const chatKey = 'group:1';
+    // 注入点要在 try 之内（预判/建"等待中"会话那一段读 peekUnread）：
+    // 顶层那次 #chatRuntimeDecision 在 pendingWake.add 之前，它抛错不会留下占位。
+    store.peekUnread = () => { throw new Error('database or disk is full'); };
+    // 排程窗口给足 5s：不然那个 debounce 定时器会在 30ms 内自己跑掉、顺手把 pendingWake 删了，
+    // 断言就永远是绿的（实测：窗口给 5ms 时这条用例连变异都咬不住）。
+    assert.doesNotThrow(() => runner.scheduleWake(chatKey, 5000));
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(runner.pendingWake.has(chatKey), false, 'pendingWake 不该留下这次排程的痕迹');
+    assert.equal(runner.firstPendingAt.has(chatKey), false, 'firstPendingAt 也要清掉');
+  });
+
 });
 
 describe('proactiveProbability（冷场开话题的发言概率）', () => {

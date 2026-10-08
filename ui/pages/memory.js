@@ -64,7 +64,7 @@ function renderMemoryList() {
           f.memberCount ? `${f.memberCount} 位群友 · ${f.impressionCount} 条印象` : '暂无群友印象'
         ].filter(Boolean).join(' · ');
     return `
-      <div class="chat-item ${key === state.currentMemoryChatKey ? 'selected' : ''}" data-key="${esc(key)}">
+      <div class="chat-item ${key === state.currentMemoryChatKey ? 'selected' : ''}" data-key="${esc(key)}" role="button" tabindex="0">
         <div class="chat-item-title">
           <span class="session-chat">${esc(names[key] || key)}</span>
           ${busyHtml}
@@ -74,10 +74,18 @@ function renderMemoryList() {
       </div>`;
   }).join('');
   $$('.chat-item', box).forEach((el) => {
-    el.addEventListener('click', () => {
+    const open = () => {
       state.currentMemoryChatKey = el.dataset.key;
       renderMemoryList();
       loadMemoryDetail(state.currentMemoryChatKey);
+    };
+    el.addEventListener('click', open);
+    // 键盘也要能进：这一列原来是纯 div（无 role/tabindex），Tab 直接跳过整列（2026-10-08 审查）。
+    // 与「会话」「存档」两个列表同样的 Enter/Space 口径。
+    el.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      open();
     });
   });
 }

@@ -459,7 +459,7 @@ function renderChatList() {
     const showIncidentControl = c.key.startsWith('group:')
       && state.config?.incidentPilot?.enabled === true;
     return `
-      <div class="chat-item ${c.key === state.currentChatKey ? 'selected' : ''} ${c.unread ? 'unread-row' : ''} ${isNew ? 'new-item' : ''}" data-key="${esc(c.key)}">
+      <div class="chat-item ${c.key === state.currentChatKey ? 'selected' : ''} ${c.unread ? 'unread-row' : ''} ${isNew ? 'new-item' : ''}" data-key="${esc(c.key)}" role="button" tabindex="0">
         <div class="chat-item-title">
           <span class="session-chat">${esc(name)}</span>
           ${c.timeControl?.enabled ? `<span class="thread-pill">${c.timeControl.active ? '活跃时段' : '仅记录'}</span>` : ''}
@@ -483,6 +483,13 @@ function renderChatList() {
     if (el.__bound) return;      // 增量更新会保留旧行，别重复绑定
     el.__bound = true;
     el.addEventListener('click', () => selectChat(el.dataset.key));
+    // 键盘也要能进会话：存档列表原来是纯 div（无 role/tabindex），Tab 直接跳过整列 ——
+    // 只能点鼠标才打得开（2026-10-08 审查）。与「会话」列表同样的 Enter/Space 口径。
+    el.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      selectChat(el.dataset.key);
+    });
   });
   $$('[data-chat-runtime]', box).forEach((button) => {
     if (button.__bound) return;

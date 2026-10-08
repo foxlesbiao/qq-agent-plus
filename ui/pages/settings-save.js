@@ -27,6 +27,27 @@ import { syncThinkingUi } from './settings.js';
 // 外观的数值夹紧搬到 ui/core/appearance.js 的 resolveAppearance —— 它已经是那条唯一入口，
 // 这里再夹一遍等于同一个规则写两处，撤掉（原来只有圆角/缩放两处用它）。
 
+/**
+ * 数字控件的取值：**显式的 0 要留住**。
+ *
+ * 原来这几处写的是 `Number(val('#x', c.x)) || 默认值`，而 `Number('0')` 是 0（假值）——
+ * 于是用户把「批次间隔」填 0（不要等待）、「触发概率」填 0（从不主动开口）、「温度」填 0
+ * （贪心解码）保存后，存回去的却是 1200 / 0.25 / 0.8，界面上看着像"没保存"。
+ * 这几个控件的 min 本来就写着 0，0 是文档化的合法值（2026-10-08 审查）。
+ *
+ * 语义：清空 / 非法 → 保持原值（再退回 fallback，与 memThreshold 的口径一致）；
+ *       合法值 → 按 [min,max] 收口。
+ */
+function numKeep(raw, current, min, max, fallback) {
+  const text = String(raw ?? '').trim();
+  const n = text === '' ? NaN : Number(text);
+  if (!Number.isFinite(n)) {
+    const keep = Number(current);
+    return Number.isFinite(keep) ? Math.min(max, Math.max(min, keep)) : fallback;
+  }
+  return Math.min(max, Math.max(min, n));
+}
+
 async function saveConfig({ quiet = false } = {}) {
   const c = state.config;
   // 只在当前区块的元素存在时才读取，避免“每个区块保存时读取其他区块元素”导致的 null 报错。
@@ -337,7 +358,7 @@ async function saveConfig({ quiet = false } = {}) {
           return c.api.extraBody || {};
         }
       })(),
-      temperature: Number(val('#cfg-temperature', c.api.temperature)) || 0.8,
+      temperature: numKeep(val('#cfg-temperature', c.api.temperature), c.api.temperature, 0, 2, 0.8),
       maxRounds: Number(val('#cfg-maxrounds', c.api.maxRounds)) || 12,
       maxRunTokens: clampInt(
         val('#cfg-max-run-tokens', c.api.maxRunTokens),
@@ -608,7 +629,7 @@ async function saveConfig({ quiet = false } = {}) {
     patch.wakeDelayMinMs = wakeDelayMinMs;
     patch.wakeDelayMaxMs = wakeDelayMaxMs;
     patch.wakeDelayMs = Math.round((wakeDelayMinMs + wakeDelayMaxMs) / 2);
-    patch.drainDelayMs = Number(val('#cfg-draindelay', c.drainDelayMs)) || 1200;
+    patch.drainDelayMs = numKeep(val('#cfg-draindelay', c.drainDelayMs), c.drainDelayMs, 0, 600000, 1200);
     patch.maxConcurrentRuns = Number(val('#cfg-maxruns', c.maxConcurrentRuns)) || 2;
     patch.conversation = {
       ...(c.conversation || {}),
@@ -667,7 +688,7 @@ async function saveConfig({ quiet = false } = {}) {
       // 回退值必须与 config.js 的 DEFAULT_CONFIG.send.maxPerMinute 一致（80）
       maxPerMinute: Number(val('#cfg-maxpermin', c.send?.maxPerMinute)) || 80,
       maxPerHour: Number(val('#cfg-maxperhour', c.send?.maxPerHour)) || 500,
-      byLengthMs: Number(val('#cfg-bylength', c.send?.byLengthMs)) || 20,
+      byLengthMs: numKeep(val('#cfg-bylength', c.send?.byLengthMs), c.send?.byLengthMs, 0, 1000, 20),
       hardSplitAt: Number(val('#cfg-hardsplit', c.send?.hardSplitAt)) || 0
       // typingIndicator 的控件在「平台能力」页 → 由下面 sec === 'platform' 的块负责保存；
       // 这里靠 ...c.send 原样带过，不读别的分区的控件
@@ -677,7 +698,7 @@ async function saveConfig({ quiet = false } = {}) {
       enabled: chk('#cfg-proactive', !!c.proactive?.enabled),
       checkIntervalMinMs: Number(val('#cfg-pro-min', c.proactive?.checkIntervalMinMs)) || 1800000,
       checkIntervalMaxMs: Number(val('#cfg-pro-max', c.proactive?.checkIntervalMaxMs)) || 5400000,
-      probability: Number(val('#cfg-pro-prob', c.proactive?.probability)) || 0.25,
+      probability: numKeep(val('#cfg-pro-prob', c.proactive?.probability), c.proactive?.probability, 0, 1, 0.25),
       // 默认 true（与升级前行为一致）：没这个控件时才退回已保存配置
       followUpEnabled: chk('#cfg-pro-followup', c.proactive?.followUpEnabled !== false),
       selfWakeEnabled: chk('#cfg-pro-selfwake', c.proactive?.selfWakeEnabled !== false)

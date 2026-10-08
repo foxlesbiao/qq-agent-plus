@@ -3,6 +3,7 @@
 
 import { api } from './core/api.js';
 import { esc } from './core/dom.js';
+import { setHtmlIfChanged } from './core/dom-util.js';
 import { state } from './core/state.js';
 import { saveMemberNote } from './pages/memory.js';
 (function globalPersonMemoryConsole() {
@@ -148,10 +149,12 @@ import { saveMemberNote } from './pages/memory.js';
     const box = document.getElementById('global-memory-items');
     if (!box) return;
     if (!people.length) {
-      box.innerHTML = '<div class="gm-empty">还没有人物长期记忆</div>';
+      setHtmlIfChanged(box, '<div class="gm-empty">还没有人物长期记忆</div>');
       return;
     }
-    box.innerHTML = people.map((person) => {
+    // setHtmlIfChanged：内容没变就不碰 DOM。这个页面每 15s 轮询一次（还有一个 focus 监听），
+    // 无条件 innerHTML 会把正在读长印象的人每 15 秒弹回顶部一次（2026-10-08 审查）。
+    setHtmlIfChanged(box, people.map((person) => {
       const sources = person.sourceChatKeys || [];
       const title = person.name || person.userId || '未知人物';
       const subtitle = person.userId
@@ -161,7 +164,7 @@ import { saveMemberNote } from './pages/memory.js';
         <div class="gm-person-title"><strong>${esc(title)}</strong><span class="gm-count">${(person.impressions || []).length} 条</span></div>
         <div class="gm-sub">${esc(subtitle)}</div>
       </button>`;
-    }).join('');
+    }).join(''));
     box.querySelectorAll('[data-gm-key]').forEach((button) => {
       button.addEventListener('click', () => {
         selectedKey = button.dataset.gmKey || '';
@@ -204,7 +207,7 @@ import { saveMemberNote } from './pages/memory.js';
     if (!box) return;
     const person = people.find((item) => item.key === selectedKey);
     if (!person) {
-      box.innerHTML = '<div class="empty-hint">← 选择人物查看全局长期记忆</div>';
+      setHtmlIfChanged(box, '<div class="empty-hint">← 选择人物查看全局长期记忆</div>');
       return;
     }
 
@@ -244,7 +247,7 @@ import { saveMemberNote } from './pages/memory.js';
         <div class="gm-status">备注用于聊天记录、记忆与提示词里的称呼（与“会话记忆”页共用同一份数据）。</div>
       </div>` : '';
 
-    box.innerHTML = `
+    setHtmlIfChanged(box, `
       <div class="detail-header">
         <h2>${esc(person.name || person.userId || '未知人物')}</h2>
         <div class="sub">${person.userId ? `QQ ${esc(person.userId)} · ` : ''}${memories.length} 条全局长期印象</div>
@@ -260,7 +263,7 @@ import { saveMemberNote } from './pages/memory.js';
       </div>
       ${noteHtml}
       <div class="gm-section"><h3>来源会话</h3><div>${sourceHtml}</div></div>
-      <div class="gm-section"><h3>长期印象</h3>${memoryHtml}</div>`;
+      <div class="gm-section"><h3>长期印象</h3>${memoryHtml}</div>`);
 
     const status = box.querySelector('#gm-action-status');
     const noteInput = box.querySelector('#gm-note-input');

@@ -136,12 +136,16 @@ test('appearanceAttrs：属性名与取值语义（动效 off 压过 reduced；�
   const plain = appearanceAttrs(resolveAppearance({}));
   assert.deepEqual(Object.keys(plain).sort(), [
     'accent-scope', 'background', 'contrast', 'dark-intensity', 'density', 'font', 'hide-badges',
-    'hide-theme-btn', 'motion', 'scheme', 'sidebar-style'
+    'hide-theme-btn', 'motion', 'scheme', 'side-rail', 'sidebar-style'
   ].sort());
   assert.equal('data-theme' in plain, false, 'data-theme 归 applyTheme 管，不在这里重复设');
   assert.equal(plain.motion, '');
   assert.equal(plain['hide-badges'], '', '默认显示徽章 → 不给隐藏标记');
   assert.equal(plain['hide-theme-btn'], '');
+  // 侧栏默认就是"悬停展开的图标条"（与参照实现同默认）→ 默认要给标记；钉住才不给
+  assert.equal(plain['side-rail'], '1', '默认＝图标条模式');
+  assert.equal(appearanceAttrs(resolveAppearance({ sidebarPinned: true }))['side-rail'], '',
+    '钉住侧栏＝不给图标条标记');
 
   assert.equal(appearanceAttrs(resolveAppearance({ reduceMotion: true })).motion, 'reduced');
   assert.equal(appearanceAttrs(resolveAppearance({ noMotion: true })).motion, 'off');
@@ -160,7 +164,8 @@ test('appearancePatch ⇄ resolveAppearance 往返稳定（存下去再读回来
     { mode: 'light', scheme: 'nord', darkIntensity: 'oled', accentPreset: 'sky', accentScope: 'sidebar' },
     { accent: '#ff8800', sidebarStyle: 'accent', background: 'gradient', bgFrom: '#111111', bgTo: '#222222', bgAngle: 45 },
     { font: 'serif', radius: 1.45, zoom: 0.8, density: 'roomy', tweaks: { '--bg': '#010203' } },
-    { showBadges: false, showTopbarTheme: false, reduceMotion: true, contrast: 'high' }
+    { showBadges: false, showTopbarTheme: false, reduceMotion: true, contrast: 'high' },
+    { sidebarPinned: true, sidebarStyle: 'panel' }
   ];
   for (const c of cases) {
     const once = resolveAppearance(c);

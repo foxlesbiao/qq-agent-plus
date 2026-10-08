@@ -23,7 +23,11 @@ import { refreshSeg } from '../core/segment.js';
  * 换了离散的颜色/明暗就用 View Transitions 从点击处扩散（连续型滑条不开，见 setAppearance）。
  */
 function renderAppearanceBlock(c) {
-  const cur = resolveAppearance(c.ui || {});
+  // 基准取"界面上正在生效的外观"，而不是已保存的 c.ui：外观是"点了就生效、点保存才落盘"的，
+  // 若按 c.ui 画，用户改完再切到别的设置分区又切回来，刚做的（明明已经生效的）选择会被面板"忘掉"——
+  // 面板亮着「深色」而页面其实是浅色（2026-10-08 审查，真机复现）。启动时 currentAppearance()
+  // 就是由服务端 c.ui 算出来的，所以首屏两者一致，不会出现"服务端配置被本地旧值盖住"。
+  const cur = { ...resolveAppearance(c.ui || {}), ...currentAppearance() };
   const seg = (id, options, current, label) => `<div class="seg" id="${id}" role="radiogroup" aria-label="${esc(label)}">${
     options.map((o) => `<button type="button" class="seg-item${o.id === current ? ' selected' : ''}" data-v="${esc(o.id)}" aria-checked="${o.id === current}" role="radio">${esc(o.label)}</button>`).join('')
   }</div>`;
@@ -44,9 +48,11 @@ function renderAppearanceBlock(c) {
 
   const tweaks = TWEAK_VARS.map((v) => {
     const saved = cur.tweaks[v.key] || '';
+    // 这里原来还有一个恒为「默认」两字的装饰性胶囊（不响点击），和右边的色值文字叠在一起
+    // 就成了"默认 … 默认"，看不出谁在说什么；真正"恢复配色默认值"的是右边那个 重置 按钮。
+    // 去掉之后一行只剩：名称 + 色块（当前生效色）+ 色值（没改过就写"默认"）+ 重置（2026-10-08 审查）。
     return `<div class="tweak-row">
         <div class="tweak-name">${esc(v.label)} <span class="tweak-var">${esc(v.key)}</span></div>
-        <span class="tweak-default">默认</span>
         <label class="tweak-swatch" title="选择 ${esc(v.label)}" style="background:var(${esc(v.key)})">
           <input type="color" data-tweak="${esc(v.key)}"${saved ? ' data-dirty="1"' : ''} value="${esc(saved || '#888888')}" aria-label="${esc(v.label)}颜色" />
         </label>
@@ -102,7 +108,11 @@ function renderAppearanceBlock(c) {
           <div class="opt-row-sub">填十六进制色值；留空 = 用上面选中的预设。</div>
         </div>
         <div class="opt-row-ctrl">
-          <input type="text" id="cfg-accent" placeholder="#4c8dff" value="${esc(c.ui?.accent || '')}" style="width:104px" spellcheck="false" />
+          <!-- 值必须取「当前生效」的 cur（不是已保存的 c.ui.accent）：面板里其余控件都这么取，
+               否则"改了没保存 → 切走再切回"，这个框会被已保存值清空，而 readUI 又从这个框读 ——
+               下一次动任何外观轴就把用户的自定义色悄悄丢回预设（2026-10-08 审查）。
+               注意：这是 HTML 注释，会被原样插进 DOM，所以不能用 markdown 星号强调（有源码守卫盯着）。 -->
+          <input type="text" id="cfg-accent" placeholder="#4c8dff" value="${esc(cur.customAccent ? cur.accent : '')}" style="width:104px" spellcheck="false" />
         </div>
       </div>
       <div class="opt-row">
@@ -118,6 +128,13 @@ function renderAppearanceBlock(c) {
           <div class="opt-row-sub">侧栏底色：跟页面一样、比页面深一档、或者掺一点强调色。</div>
         </div>
         <div class="opt-row-ctrl">${seg('appearance-sidebarstyle', SIDEBAR_STYLES, cur.sidebarStyle, '侧栏样式')}</div>
+      </div>
+      <div class="opt-row">
+        <div class="opt-row-main">
+          <div class="opt-row-title">固定侧栏</div>
+          <div class="opt-row-sub">默认（不勾）＝侧栏平时收成图标条，鼠标移上去自动展开、移开再收起（对齐参照控制台）；勾上＝常驻展开。</div>
+        </div>
+        <div class="opt-row-ctrl"><input type="checkbox" id="cfg-sidebar-pinned" ${cur.sidebarPinned ? 'checked' : ''} /></div>
       </div>
     </div>
 
@@ -265,6 +282,7 @@ function bindAppearanceControls() {
     accent: customAccent(),
     accentScope: segVal('appearance-scope', 'global'),
     sidebarStyle: segVal('appearance-sidebarstyle', 'follow'),
+    sidebarPinned: el('cfg-sidebar-pinned')?.checked === true,
     background: segVal('appearance-bg', 'none'),
     bgColor: el('cfg-bgcolor')?.value || '',
     bgFrom: el('cfg-bgfrom')?.value || '',
@@ -432,7 +450,7 @@ function bindAppearanceControls() {
   });
 
   // ⑧ 开关（顶栏 / 无障碍）：开关自己就是 checkbox，直接读值
-  for (const id of ['cfg-showbadges', 'cfg-showtopbartheme', 'cfg-reducemotion', 'cfg-nomotion', 'cfg-contrast']) {
+  for (const id of ['cfg-showbadges', 'cfg-showtopbartheme', 'cfg-reducemotion', 'cfg-nomotion', 'cfg-contrast', 'cfg-sidebar-pinned']) {
     el(id)?.addEventListener('change', (ev) => apply(ev, false));
   }
 
@@ -449,7 +467,13 @@ function bindAppearanceControls() {
   }
 
   // 色板预览卡里的"底色"要按当前明暗画，所以每次绑定时对着当前主题刷一遍内联色
-  refreshPanel = () => { syncLabels(); paintSchemePreviews(); };
+  refreshPanel = () => {
+    syncLabels();
+    paintSchemePreviews();
+    // 侧栏图钉（在侧栏上）与这个开关是同一个轴：从那边改完，面板里的勾要跟着走
+    const pin = el('cfg-sidebar-pinned');
+    if (pin) pin.checked = currentAppearance().sidebarPinned === true;
+  };
   refreshPanel();
   bindAppearanceListener();
 }
@@ -481,17 +505,17 @@ function bindAppearanceListener() {
 const SCHEME_PREVIEW = {
   dark: {
     default: { bg: '#0b1220', card: '#111b2d' },
-    slate: { bg: '#0c0f14', card: '#141922' },
-    nord: { bg: '#0e1621', card: '#16212f' },
-    forest: { bg: '#0d1512', card: '#141f1b' },
-    rose: { bg: '#17121a', card: '#211a25' }
+    slate: { bg: '#191d24', card: '#20252e' },
+    rose: { bg: '#241f38', card: '#2b2645' },
+    forest: { bg: '#1b2a23', card: '#22332b' },
+    nord: { bg: '#2e3440', card: '#3b4252' }
   },
   light: {
     default: { bg: '#f4f7fc', card: '#ffffff' },
-    slate: { bg: '#f5f7fa', card: '#ffffff' },
-    nord: { bg: '#f4f7fb', card: '#ffffff' },
-    forest: { bg: '#f4f8f5', card: '#ffffff' },
-    rose: { bg: '#faf6f9', card: '#ffffff' }
+    slate: { bg: '#ededed', card: '#f8f8f8' },
+    rose: { bg: '#fceef4', card: '#fff4f8' },
+    forest: { bg: '#f6f1e3', card: '#fdf6e3' },
+    nord: { bg: '#e5e9f0', card: '#eceff4' }
   }
 };
 

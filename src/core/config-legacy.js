@@ -627,6 +627,9 @@ export const DEFAULT_CONFIG = {
     accent: '',               // 自定义强调色（#rrggbb）；非空时压过预设
     accentScope: 'global',    // 强调色作用范围：global | sidebar
     sidebarStyle: 'follow',   // 侧栏底色：follow | panel | accent
+    // 侧栏是不是"悬停展开的图标条"：false = 鼠标移开收成 64px 图标条、移上去自动展开（参照控制台的默认），
+    // true = 常驻展开。与参照实现同名同义（它的 appearance.sidebarPinned）。
+    sidebarPinned: false,
     background: 'none',       // 整页背景：none | solid | gradient
     bgColor: '#0b1220',
     bgFrom: '#4c8dff',

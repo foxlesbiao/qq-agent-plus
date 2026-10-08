@@ -113,6 +113,12 @@ export function readComposeEnv(composeDir) {
 
 /** 把 .env 里的 SNOWLUMA_IMAGE 换成新值：**其余行原样保留**，没有该键就追加。 */
 export function renderEnvWithImage(raw = '', image = '') {
+  // 镜像引用要写进 .env 的一行 —— 值里带换行就等于往 .env 注入新变量（docker compose 会拿它
+  // 插值镜像 tag / 端口 / 引导密码）。合法镜像引用只由这些字符组成，与 deploy-all.sh 对同一个
+  // 值用的那套校验同一口径（2026-10-08 审查）。
+  if (!/^[A-Za-z0-9._/:@-]+$/.test(String(image || ''))) {
+    throw new Error(`镜像引用不合法（只允许字母、数字与 . _ / : @ -）：${JSON.stringify(image)}`);
+  }
   const lines = String(raw || '').split(/\r?\n/);
   let replaced = false;
   const next = lines.map((line) => {

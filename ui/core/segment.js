@@ -34,6 +34,15 @@ function positionSegPill(seg) {
   pill.style.setProperty('--pill-left', `${pad}px`);
   pill.style.setProperty('--pill-x', `${active.offsetLeft - seg.clientLeft - pad}px`);
   pill.style.setProperty('--pill-w', `${active.offsetWidth}px`);
+  // 首次定位不要"从 0 宽长出来"：新渲染的面板一出现，滑块就该已经停在正确那一格上。
+  // （.seg-pill 的 width 带 transition，起始值 0px → 不压掉的话，每开一次设置页/外观面板，
+  //  十几条分段控件的滑块都会当着用户的面从左边鼓出来一下。宽度真为 0 时（还没布局完）
+  //  压住反而会让高亮消失，所以只在拿到了真实宽度时才恢复过渡。）
+  if (pill.dataset.fresh === '1' && active.offsetWidth > 0) {
+    delete pill.dataset.fresh;
+    void pill.offsetWidth;                    // 先让这次几何在 transition:none 下定型
+    pill.style.removeProperty('transition');  // 之后换档照常有平滑滑动
+  }
 }
 
 /**
@@ -48,6 +57,10 @@ function ensureSegPill(seg) {
     pill = doc.createElement('span');
     pill.className = PILL_CLASS;
     pill.setAttribute('aria-hidden', 'true');
+    // 新建的滑块先关掉过渡（见 positionSegPill 末尾：首次定位完成后再恢复），
+    // 这样它一出现就是最终位置，而不是从 0 宽滑过去。
+    pill.style.transition = 'none';
+    pill.dataset.fresh = '1';
     seg.insertBefore(pill, seg.firstChild);
   }
   seg.classList.add('seg-enhanced');
@@ -65,11 +78,38 @@ function enhanceSeg(root = document) {
     // 事件委托：选项是渲染时重建的，绑在容器上就不怕重建
     bindSegResize(seg);
     seg.addEventListener('click', () => requestAnimationFrame(() => positionSegPill(seg)));
+    // 键盘：方向键换档（ARIA radiogroup 的常规期望 —— 只挪滑块不改选中，等于"看起来能动、
+    // 实际没反应"）。同时把 tabindex 收敛成 roving（只有当前档是 Tab 停靠点），
+    // 这样 Tab 进分区、方向键在档位间走，和原生 radio 组的行为一致。
+    syncSegTabindex(seg);
+    seg.addEventListener('click', () => syncSegTabindex(seg));
     seg.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') requestAnimationFrame(() => positionSegPill(seg));
+      const items = [...seg.querySelectorAll(':scope > .seg-item')];
+      if (!items.length) return;
+      const cur = Math.max(0, items.findIndex((b) => b.classList.contains('selected') || b.getAttribute('aria-checked') === 'true'));
+      const step = (e.key === 'ArrowRight' || e.key === 'ArrowDown') ? 1
+        : (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -1
+          : (e.key === 'Home') ? -items.length
+            : (e.key === 'End') ? items.length : 0;
+      if (!step) return;
+      e.preventDefault();
+      const next = (cur + step + items.length * 2) % items.length;
+      items[next].click();          // 复用点击路径：选中态、aria、滑块、回调都在那一条链上
+      items[next].focus();
     });
   }
   return segs.length;
+}
+
+/**
+ * 让分段控件像原生 radio 组那样"只有一个 Tab 停靠点"：
+ * 选中的那一档 tabindex=0，其余 -1，方向键在档位之间移动（见 enhanceSeg 的 keydown）。
+ */
+function syncSegTabindex(seg) {
+  const items = [...seg.querySelectorAll(':scope > .seg-item')];
+  if (!items.length) return;
+  const active = seg.querySelector(':scope > .seg-item.selected, :scope > .seg-item[aria-checked="true"]') || items[0];
+  for (const b of items) b.tabIndex = b === active ? 0 : -1;
 }
 
 /** 外部改了选中项（如回填配置）后手动同步一次。 */
@@ -78,6 +118,7 @@ function refreshSeg(root = document) {
   for (const seg of segs) {
     ensureSegPill(seg);
     positionSegPill(seg);
+    syncSegTabindex(seg);
   }
   return segs.length;
 }
@@ -103,4 +144,4 @@ function bindSegResize(seg) {
   });
 }
 
-export { PILL_CLASS, enhanceSeg, positionSegPill, refreshSeg, bindSegResize };
+export { PILL_CLASS, bindSegResize, enhanceSeg, positionSegPill, refreshSeg, syncSegTabindex };

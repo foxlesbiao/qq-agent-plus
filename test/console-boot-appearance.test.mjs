@@ -114,6 +114,32 @@ test('首屏脚本：应用范围=仅侧栏时全局仍用默认蓝（与模块�
   assert.equal(global.get('--accent-side'), '#f7b955');
 });
 
+test('首屏脚本认得强调色预设：选了预设色也要即刻画出那一支（不能先画默认蓝）', () => {
+  // 选了预设时存档里 accent 是空串（只有自定义色才存 hex），所以脚本必须按 accentPreset 查表。
+  // 漏了这一步的表现就是：刷新后按钮/选中态先是一版默认蓝，模块跑起来才换成用户挑的那支 ——
+  // 正是这段脚本存在的意义（2026-10-08 审查，真机实测到这一闪）。
+  for (const a of ACCENTS) {
+    const { vars } = runBoot({ accent: '', accentPreset: a.id });
+    assert.equal(vars.get('--accent'), a.hex, `预设 ${a.id} 的首屏强调色应为 ${a.hex}（首屏那张表与 ACCENTS 漂了）`);
+    assert.equal(vars.get('--accent-side'), a.hex);
+    // 压在强调色上的字色也要跟着那支色算，而不是默认蓝的
+    assert.equal(vars.get('--accent-fg'), accentForeground(a.hex), `预设 ${a.id} 的 --accent-fg 应按它自己的颜色算`);
+  }
+  // 自定义色优先于预设：两个都在时用自定义那一支
+  assert.equal(runBoot({ accent: '#ff8800', accentPreset: 'amber' }).vars.get('--accent'), '#ff8800');
+  // 预设 id 不认识 / 没存过 → 回默认蓝，不能抛
+  assert.equal(runBoot({ accent: '', accentPreset: 'nope' }).vars.get('--accent'), '#4c8dff');
+});
+
+test('首屏脚本的强调色优先级：自定义 > 预设 > 默认蓝（自定义成默认蓝也不能被预设顶掉）', () => {
+  // 拿"算出来等于默认蓝"当"没设自定义色"的判据会误判：用户把自定义色填成 #4c8dff、而记住的
+  // 预设是 sky 时，首屏会画成 sky，模块跑起来再跳回 #4c8dff —— 一次闪烁 + 两处实现不一致
+  // （2026-10-08 二轮审查）。判据必须是"存档里有没有自定义色"，不是"颜色值等不等于默认"。
+  assert.equal(runBoot({ accent: '#4c8dff', accentPreset: 'sky' }).vars.get('--accent'), '#4c8dff');
+  assert.equal(runBoot({ accent: '', accentPreset: 'sky' }).vars.get('--accent'), '#38bdf8', '没自定义才用预设');
+  assert.equal(runBoot({ accent: '' }).vars.get('--accent'), '#4c8dff', '两者都没有回默认蓝');
+});
+
 test('首屏脚本的取值与模块 appearanceVars 对齐（同一份 patch，两边给同样的值）', async () => {
   const { appearanceVars } = await import('../ui/core/appearance.js');
   const patch = { accent: '#ff8800', radius: 1.2, zoom: 0.85, bgColor: '#010203', bgFrom: '#111111', bgTo: '#222222', bgAngle: 45 };

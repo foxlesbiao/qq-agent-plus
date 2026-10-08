@@ -58,7 +58,20 @@
           var lum = 0.2126 * lin((n >> 16 & 255) / 255) + 0.7152 * lin((n >> 8 & 255) / 255) + 0.0722 * lin((n & 255) / 255);
           return lum > FG_THRESHOLD ? '#0b1220' : '#ffffff';
         }
-        var accent = /^#?[0-9a-f]{6}$/i.test(String(patch.accent || '')) ? patch.accent : DEFAULT_ACCENT;
+        // 选了预设色时 patch.accent 是空串（只有自定义色才存 hex，见 appearance.js 的 appearancePatch），
+        // 所以这里必须能按预设 id 查出颜色 —— 否则首屏一律先画成默认蓝，等模块跑起来才换成用户挑的
+        // 那一支，正是这段脚本存在的意义（防"先按默认色画一版、启动完成再换"的那一闪）。
+        // 这张表与 appearance.js 的 ACCENTS **必须逐色一致**：test/console-boot-appearance.test.mjs
+        // 会逐项核对，改了一边忘了另一边会直接红。
+        var PRESET_HEX = {
+          sky: '#38bdf8', indigo: '#4c8dff', violet: '#a78bfa', rose: '#f472b6',
+          emerald: '#2fd07a', amber: '#f7b955', sunset: '#f97316'
+        };
+        // 优先级与 appearance.js 的 resolveAppearance 逐字一致：自定义色 > 预设色 > 默认蓝。
+        // 不能拿"算出来等于默认蓝"当"没设自定义色"的判据 —— 用户自定义成 #4c8dff 时会被误判，
+        // 于是首屏先画成预设色、模块跑起来再跳回用户那个色（一次闪烁，且两处实现在这一点上不一致）。
+        var accent = (/^#?[0-9a-f]{6}$/i.test(String(patch.accent || '')) ? patch.accent : '')
+          || PRESET_HEX[patch.accentPreset] || DEFAULT_ACCENT;
         var globalAccent = patch.accentScope === 'sidebar' ? DEFAULT_ACCENT : accent;
         var st = root.style;
         st.setProperty('--accent', globalAccent);
@@ -87,7 +100,9 @@
           contrast: patch.contrast === 'high' ? 'high' : '',
           motion: patch.noMotion === true ? 'off' : (patch.reduceMotion === true ? 'reduced' : ''),
           'hide-badges': patch.showBadges === false ? '1' : '',
-          'hide-theme-btn': patch.showTopbarTheme === false ? '1' : ''
+          'hide-theme-btn': patch.showTopbarTheme === false ? '1' : '',
+          // 侧栏是不是"悬停展开的图标条"：没钉住就是图标条（与参照实现同一默认）
+          'side-rail': patch.sidebarPinned === true ? '' : '1'
         };
         for (var at in attrs) { if (attrs[at]) root.setAttribute('data-' + at, attrs[at]); }
       } catch (e) { /* 外观预置失败就用默认色起来，不影响可用性 */ }
@@ -106,22 +121,21 @@
       </div>
 
       <nav id="tabs" data-page-node-id="E9BCxQoSdlNgyXwJBELj6z">
-        <div class="nav-group-label">总览</div>
-        <button class="tab active" data-icon="gauge" data-tab="overview" data-page-node-id="qoverviewnav">总览</button>
-        <div class="nav-group-label">对话</div>
-        <button class="tab" data-icon="chat" data-tab="sessions" data-page-node-id="QA2pcdHYdARJK2APBNKZmC">会话</button>
-        <button class="tab" data-icon="archive" data-tab="chats" data-page-node-id="AdXD0D2NiWH5UBfpPQqzQ2">存档</button>
-        <button class="tab" data-icon="sliders" data-tab="control" data-page-node-id="qcontrolnav">控制</button>
-        <div class="nav-group-label">记忆</div>
-        <button class="tab" data-icon="database" data-tab="memory" data-page-node-id="vXS9OY6wG4MkJlzQ2aLADZ">会话记忆</button>
-        <button class="tab" data-icon="users" data-tab="people-memory" data-page-node-id="qpeoplememorynav">人物记忆</button>
-        <button class="tab" data-icon="idcard" data-tab="identity" data-feature-nav="identity">人物印象</button>
-        <button class="tab" data-icon="userplus" data-tab="friends" data-feature-nav="auto-friend">好友管理</button>
-        <div class="nav-group-label">运行</div>
-        <button class="tab" data-icon="activity" data-tab="assets" data-page-node-id="qassetobserve">观测</button>
-        <button class="tab" data-icon="coins" data-tab="usage" data-page-node-id="hcZzcXuMojNoiE7UcRVYfR">用量</button>
-        <button class="tab" data-icon="alert" data-tab="incidents" data-feature-nav="incidents">异常处理</button>
-        <button class="tab" data-icon="gear" data-tab="settings" data-page-node-id="4cXbRBtGmcpcL272eKvHPV">设置</button>
+        <!-- 每一项两行：主名 + 一行说明（对齐参照控制台的一级导航）。分组不用小标题，
+             靠 data-group-start 在组间留一道空白 —— 十二项各带一行说明，再加四个分组标题
+             就太吵了，而且分组标题的信息量已经被说明那行接住了。 -->
+        <button class="tab active" data-icon="gauge" data-tab="overview" data-page-node-id="qoverviewnav"><span class="tab-label"><b>总览</b><i>机器人与协议端</i></span></button>
+        <button class="tab" data-icon="chat" data-tab="sessions" data-group-start data-page-node-id="QA2pcdHYdARJK2APBNKZmC"><span class="tab-label"><b>会话</b><i>逐条对话记录</i></span></button>
+        <button class="tab" data-icon="archive" data-tab="chats" data-page-node-id="AdXD0D2NiWH5UBfpPQqzQ2"><span class="tab-label"><b>存档</b><i>分群聊天的长期归档</i></span></button>
+        <button class="tab" data-icon="sliders" data-tab="control" data-page-node-id="qcontrolnav"><span class="tab-label"><b>控制</b><i>更新与运行开关</i></span></button>
+        <button class="tab" data-icon="database" data-tab="memory" data-group-start data-page-node-id="vXS9OY6wG4MkJlzQ2aLADZ"><span class="tab-label"><b>会话记忆</b><i>每条会话记了什么</i></span></button>
+        <button class="tab" data-icon="users" data-tab="people-memory" data-page-node-id="qpeoplememorynav"><span class="tab-label"><b>人物记忆</b><i>群友的长期画像</i></span></button>
+        <button class="tab" data-icon="idcard" data-tab="identity" data-feature-nav="identity"><span class="tab-label"><b>人物印象</b><i>印象与关系档案</i></span></button>
+        <button class="tab" data-icon="userplus" data-tab="friends" data-feature-nav="auto-friend"><span class="tab-label"><b>好友管理</b><i>好友申请与派发</i></span></button>
+        <button class="tab" data-icon="activity" data-tab="assets" data-group-start data-page-node-id="qassetobserve"><span class="tab-label"><b>观测</b><i>素材与实验状态</i></span></button>
+        <button class="tab" data-icon="coins" data-tab="usage" data-page-node-id="hcZzcXuMojNoiE7UcRVYfR"><span class="tab-label"><b>用量</b><i>花费与 token</i></span></button>
+        <button class="tab" data-icon="alert" data-tab="incidents" data-feature-nav="incidents"><span class="tab-label"><b>异常处理</b><i>告警与日志</i></span></button>
+        <button class="tab" data-icon="gear" data-tab="settings" data-page-node-id="4cXbRBtGmcpcL272eKvHPV"><span class="tab-label"><b>设置</b><i>全部配置</i></span></button>
       </nav>
 
       <div class="side-foot">
@@ -133,6 +147,9 @@
           </select>
         </label>
         <button id="pause-btn" class="btn btn-small" data-page-node-id="plyqWsDjnlKP1Td6wSVJaD">暂停</button>
+        <!-- 固定侧栏：与外观面板里那个开关是同一个轴（ui.sidebarPinned）。图标条模式下也能点
+             （鼠标移上去侧栏就展开），不用先跑到设置里去找开关。 -->
+        <button id="side-pin-btn" class="icon-btn" type="button" data-icon="pin" title="固定侧栏" aria-label="固定侧栏" aria-pressed="false" data-page-node-id="qsidepinbtn"></button>
         <button id="theme-btn" class="icon-btn" title="切换主题（暗 → 亮 → 跟随系统）" aria-label="切换主题" data-page-node-id="v47iM0LsuM4VppZ5WLh7Qi"></button>
       </div>
     </aside>
@@ -335,6 +352,8 @@
   <script type="module" src="/core/appearance.js"></script>
   <script type="module" src="/core/theme-transition.js"></script>
   <script type="module" src="/core/segment.js"></script>
+  <script type="module" src="/core/nav-pill.js"></script>
+  <script type="module" src="/core/side-nav.js"></script>
   <script type="module" src="/core/registry.js"></script>
   <script type="module" src="/core/dom.js"></script>
   <script type="module" src="/core/api.js"></script>

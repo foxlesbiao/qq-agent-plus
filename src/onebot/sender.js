@@ -210,7 +210,10 @@ export class SendQueue {
     const min = Math.max(200, Number(cfg.minGapMs) || 1000);
     const max = Math.max(min, Number(cfg.maxGapMs) || 3000);
     if (isLast) return 0;
-    const byLength = Math.min(8000, (String(text || '').length) * (Number(cfg.byLengthMs) || 20));
+    // byLengthMs 的 0 是合法值（"不按字数附加延迟"，控制台那个框 min="0"）——
+    // 用 `|| 20` 会把它吞掉，界面上填了 0、实际每条仍按 20ms/字延迟（2026-10-08 审查）。
+    const perChar = Number(cfg.byLengthMs);
+    const byLength = Math.min(8000, String(text || '').length * (Number.isFinite(perChar) ? Math.max(0, perChar) : 20));
     return Math.min(15000, Math.max(min, randInt(min, max) * 0.5 + byLength * 0.5));
   }
 

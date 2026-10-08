@@ -28,7 +28,6 @@
   --border: #22304d;
   --text: #e7edf8;
   --muted: #96a5bf;
-  --faint: #6c7d99;
   --accent: #4c8dff;
   --green: #2fd07a;
   --red: #ff6b6b;
@@ -67,7 +66,6 @@
   --border: #e0e7f2;
   --text: #14202f;
   --muted: #5b6b83;
-  --faint: #8a99ad;
   --accent: #2f6fe4;
   --green: #1f9d55;
   --red: #d94a4a;
@@ -131,13 +129,15 @@ summary,
 [role='button'],
 [role='tab'],
 .clickable {
+  /* 六个属性统一走 --dur-interaction（150ms）：参照实现里颜色与 scale 都是 0.15s，
+     而这条基础规则原来颜色用 180ms、位移用 120ms —— 同一个按钮上两种速度，看着发"散"。 */
   transition:
-    background-color var(--dur-base) var(--ease-in-out),
-    border-color var(--dur-base) var(--ease-in-out),
-    color var(--dur-base) var(--ease-in-out),
-    box-shadow var(--dur-base) var(--ease-in-out),
-    transform var(--dur-fast) var(--ease-out-quart),
-    opacity var(--dur-base) var(--ease-in-out);
+    background-color var(--dur-interaction) var(--ease-in-out),
+    border-color var(--dur-interaction) var(--ease-in-out),
+    color var(--dur-interaction) var(--ease-in-out),
+    box-shadow var(--dur-interaction) var(--ease-in-out),
+    transform var(--dur-interaction) var(--ease-out-quart),
+    opacity var(--dur-interaction) var(--ease-in-out);
 }
 
 /* ── 主题切换平滑过渡 ──
@@ -153,9 +153,9 @@ body,
 .usage-table th,
 .usage-table td {
   transition:
-    background-color var(--dur-slow) var(--ease-in-out),
-    border-color var(--dur-slow) var(--ease-in-out),
-    color var(--dur-slow) var(--ease-in-out);
+    background-color var(--dur-interaction) var(--ease-in-out),
+    border-color var(--dur-interaction) var(--ease-in-out),
+    color var(--dur-interaction) var(--ease-in-out);
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -180,9 +180,7 @@ body,
   .usage-card,
   .tier-btn,
   .toast,
-  [class*='itemIn'],
-  [class*='popIn'],
-  [class*='slideIn'] {
+  [class*='itemIn'] {
     animation: none !important;
     transform: none !important;
   }
@@ -212,7 +210,7 @@ body {
   padding: 78px 16px 16px;
   pointer-events: none;              /* 不挡操作；卡片本身恢复可点击 */
   opacity: 0;                        /* 默认静态隐藏：正常进入时一秒都不出现 */
-  transition: opacity .22s ease;
+  transition: opacity var(--dur-base) var(--ease-in-out);
 }
 /* 只有 html 上没有 boot-silent（= 脚本判定启动过慢，或 8 秒兜底被触发）时才显示 */
 html.boot-show .loading-overlay { opacity: 1; }
@@ -284,12 +282,17 @@ html.boot-show .loading-overlay { opacity: 1; }
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 4px 0;
+  padding: 10px 0 0;
   border-top: 1px solid var(--border);
 }
-.side-foot .runtime-control { flex: 1; min-width: 0; display: flex; }
+.side-foot .runtime-control { flex: 1 1 0; min-width: 0; display: flex; }
 .side-foot #runtime-mode { width: 100%; }
-.side-foot .icon-btn { width: 34px; height: 34px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
+/* 三个按钮都不参与收缩：宁可下拉框变窄，也不让图标被挤出去（下拉框内容只有两个字 + 箭头） */
+.side-foot .icon-btn, .side-foot #pause-btn { flex: 0 0 auto; }
+.side-foot .icon-btn { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; }
+/* 固定按钮：钉住时点亮，未钉住（图标条模式）时把图钉转 45° —— 一眼看出当前是哪种 */
+#side-pin-btn.pinned { color: var(--accent-side); }
+#side-pin-btn:not(.pinned) .ico { transform: rotate(45deg); }
 
 /* ── 导航（垂直）── */
 #tabs {
@@ -303,48 +306,26 @@ html.boot-show .loading-overlay { opacity: 1; }
   background: none;
   border: 0;
 }
-.nav-group-label {
-  padding: 12px 10px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: .6px;
-  color: var(--faint);
-}
-/* ⚠️ .tab 的基础定义必须完整写在这一处（历史教训：在别处再写一条 .tab 会在清理重复时被删掉）。
-   追加属性请合并进下面这条规则。 */
-.tab {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  width: 100%;
-  text-align: left;
-  background: none;
-  border: 1px solid transparent;
-  color: var(--muted);
-  padding: 8px 10px;
-  border-radius: 10px;
-  cursor: pointer;
-  font-family: inherit;
-  font-size: 13.5px;
-  font-weight: 500;
-  white-space: nowrap;
-  transition: background .14s ease, color .14s ease, border-color .14s ease;
-}
+/* 一级导航不再有分组标题：改成"主名 + 一行说明"两行结构，组与组之间靠空白分隔
+   （十二项各带一行说明之后再叠四个分组标题就太吵了；说明那行已经接住了分组的语义）。 */
+/* ⚠️ .tab 的基础定义**已并入文件末尾「一级导航」区块**（那里是唯一权威定义，含 font-family/
+   white-space 这两条独有属性）。这里原来是它的第一份定义，与末尾那份在 gap / padding /
+   border / 圆角 / 字号 / 过渡上互相打架 —— 同权重，谁在后面谁赢，于是"改这里等于没改"
+   （2026-10-08 审查发现）。已撤掉，只留指针。 */
 /* 图标：内联 SVG（ui/icons.js 注入 <span class="ico">）。原来这里是
    content: attr(data-icon) 直接画 emoji —— emoji 自带配色、各系统形状不同，
    选中/悬停态也没法统一。改成 SVG 后颜色跟随 currentColor。 */
 .ico { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 18px; height: 18px; }
-.ico svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+/* 图标统一"描边 + 跟文字色"。选择器必须同时覆盖 `.ico-svg`（SVG 自带的类）：
+   总览的 KPI/卡片头图标、刷新按钮、顶栏主题按钮都是直接调 iconSvg() 的，没有 .ico 包装 ——
+   只写 `.ico svg` 时它们会退回 SVG 默认的 fill:black，深色下 1.22:1。 */
+.ico svg, .ico-svg { display: block; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .tab .ico { opacity: .85; }
 .tab:hover .ico { opacity: 1; }
 .tab.active .ico { opacity: 1; color: var(--accent); }
-.tab:hover { background: var(--hover); color: var(--text); }
-.tab.active {
-  background: var(--accent-soft);
-  border-color: var(--accent-border);
-  color: var(--text);
-  font-weight: 600;
-}
+.tab:not(.active):hover { background: var(--hover); color: var(--text); }
+/* 选中态的底色/左缘条现在归 .side-pill（会滑动，见「一级导航」区块），这里不再重复定义 ——
+   原来这里那一版会与滑块叠成两层色。字重由下面 .tab.active { font-weight: 600 } 负责。 */
 
 /* ── 工作区与状态条 ── */
 #workspace { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
@@ -383,7 +364,6 @@ html.boot-show .loading-overlay { opacity: 1; }
   }
   .side-head { padding: 0 2px 4px; }
   #tabs { flex-direction: row; flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; gap: 6px; padding-bottom: 4px; }
-  .nav-group-label { display: none; }
   .tab { width: auto; flex-shrink: 0; }
   .side-foot { border-top: 0; padding-top: 4px; }
 }
@@ -567,7 +547,7 @@ html.boot-show .loading-overlay { opacity: 1; }
 }
 .thread-run-list::-webkit-scrollbar { height: 7px; }
 .thread-run-list::-webkit-scrollbar-thumb {
-  background: var(--border); border-radius: 7px;
+  background: color-mix(in srgb, var(--text) 22%, var(--border)); border-radius: 7px;
   border: 2px solid transparent; background-clip: padding-box;   /* 与全局同口径：裁出透明边，不描背景色的边 */
 }
 .thread-run {
@@ -952,7 +932,10 @@ html.boot-show .loading-overlay { opacity: 1; }
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   background: var(--bg-2);
-  overflow-y: auto;          /* 菜单比窗口还高时自己滚 */
+  overflow-y: auto;          /* 菜单比窗口还高时自己滚（shadcn 的 SidebarContent 也是这个做法） */
+  /* 滚到底之后不要把手势"传染"给外层表单（滚动链）；滚动条出现/消失也别让菜单宽度跳一下 */
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 14px 10px;
   /* 设置页整体滚动后：侧栏钉在视图顶部、保持一屏高（边框与底色不会中途断掉）。
      它自己没超出内容时不拦截滚轮 —— Chrome 会把手势交给外层可滚动祖先。 */
@@ -976,14 +959,25 @@ html.boot-show .loading-overlay { opacity: 1; }
 .settings-runstate .rs-title { font-weight: 600; font-size: 13px; }
 .settings-runstate .rs-row { display: flex; align-items: center; gap: 8px; }
 .settings-runstate .rs-row .dot { width: 8px; height: 8px; }
-.settings-menu { display: flex; flex-direction: column; gap: 2px; }
+/* 分区菜单：与主导航同一套"选中块滑过去"（滑块实现见 ui/core/nav-pill.js）。
+   这里给它定位上下文、内缩 0（菜单项本来就是满宽）、圆角与菜单项对齐。 */
+.settings-menu { position: relative; display: flex; flex-direction: column; gap: 2px; --pill-inset: 0px; }
+.settings-menu .side-pill { border-radius: 7px; }
 .settings-menu-item {
+  position: relative;
   background: none; border: none; text-align: left;
   color: var(--muted); padding: 8px 12px; border-radius: 7px;
   cursor: pointer; font-size: 13px; width: 100%;
 }
-.settings-menu-item:hover { background: var(--bg-3); color: var(--text); }
-.settings-menu-item.active { background: var(--bg-3); color: var(--accent); font-weight: 600; }
+/* 选中项的底色交给滑块 —— 否则滑块滑过来时旧格子还留着自己那一层底色 */
+.settings-menu-item:not(.active):hover { background: var(--bg-3); color: var(--text); box-shadow: none; }
+.settings-menu-item.active { background: transparent; color: var(--accent); font-weight: 600; }
+/* 历史遗留块（文件后半段的 `.chat-item.selected, …, .settings-menu-item.active`）会给选中项
+   再上一层 --accent-soft 底 + 3px 左边框，`:hover` 也会盖一层 —— 权重相同但它更靠后，所以赢。
+   分区菜单的底色与左缘条都归滑块，这里多一层 .settings-menu 把权重提上去压回来：
+   否则选中项是"两层色 + 两条边"，而且那 3px 边框会把文字推右 3px（换分区时标签抖一下）。 */
+.settings-menu .settings-menu-item.active { background: transparent; border-left: 0; }
+.settings-menu .settings-menu-item.active:hover { background: transparent; box-shadow: none; }
 
 /* ── 设置页：滚动轴放在整个视图上（窄屏本来就是这么做的）──
    原来 .settings-pane 自己是 max-width:860px 居中的滚动容器：它左右两侧的空白
@@ -1135,8 +1129,8 @@ html.boot-show .loading-overlay { opacity: 1; }
   display: flex; flex-direction: column; gap: 6px; text-align: left; cursor: pointer;
   padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2);
   color: inherit; font: inherit;
-  transition: border-color var(--dur-fast) var(--ease-in-out), background var(--dur-fast) var(--ease-in-out),
-    transform var(--dur-fast) var(--ease-out-quart);
+  transition: border-color var(--dur-interaction) var(--ease-in-out), background var(--dur-interaction) var(--ease-in-out),
+    transform var(--dur-interaction) var(--ease-out-quart);
 }
 .persona-card:hover { background: var(--bg-3); border-color: var(--accent); transform: translateY(-1px); }
 .persona-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -1317,18 +1311,10 @@ html.boot-show .loading-overlay { opacity: 1; }
    min-width:0）整条覆盖，留着只会让人以为 .field-row 还是 flex 容器 —— 2026-10-01 修对齐时
    顺手清掉，两处都是实测确认无效的死规则。 */
 .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
-.field input[type=text], .field input[type=password], .field input[type=number], .moment-window-row input[type=time], .field select, .field textarea {
-  width: 100%;
-  background: var(--bg-2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  border-radius: 7px;
-  padding: 7px 10px;
-  font-size: 13px;
-  outline: none;
-}
-.field textarea { min-height: 84px; resize: vertical; font-family: inherit; }
-.field input:focus, .field textarea:focus, .field select:focus { border-color: var(--accent); }
+/* 这一版（bg-2 / 7px 圆角 / padding 7 10 / 13px）已被文件末尾「表单控件 v2」整条取代 ——
+   它的几何与字号跟别处各写一套，正是"同一页里输入框高低不一"的来源。只剩宽度还有人读。 */
+.field input[type=text], .field input[type=password], .field input[type=number],
+.field input[type=search], .field select, .field textarea { width: 100%; }
 .checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 13px; }
 .experimental-settings .checkbox-row { flex-wrap: wrap; }
 .experimental-settings .checkbox-row .muted { flex: 1 1 220px; min-width: 0; }
@@ -1383,6 +1369,9 @@ html.boot-show .loading-overlay { opacity: 1; }
     flex-direction: row; overflow-x: auto; gap: 6px;
   }
   #view-settings .settings-menu-item { flex: 0 0 auto; width: auto; }
+  /* 横排时滑块的位移只算 Y，会盖住整条菜单 → 不用滑块，选中态回到逐项底色（与主导航窄屏同一口径） */
+  #view-settings .settings-menu .side-pill { display: none; }
+  #view-settings .settings-menu-item.active { background: var(--bg-3); }
   #view-settings .settings-pane {
     padding: 16px; min-width: 0; flex: 0 0 auto; overflow: visible;
   }
@@ -1406,15 +1395,13 @@ html.boot-show .loading-overlay { opacity: 1; }
 }
 
 /* ── 动效 ── */
-@keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-@keyframes popIn { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: none; } }
-@keyframes itemIn { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: none; } }
+/* 入场：新增条目（会话/存档列表的新行）。参照实现的 log-row-in 同款（透明度 + 4px 位移）。 */
+@keyframes itemIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 @keyframes checkPop { 0% { transform: scale(.85); } 60% { transform: scale(1.18); } 100% { transform: scale(1); } }
 @keyframes savedFlash { 0% { color: var(--green); } 100% { color: var(--muted); } }
-/* 页面切换：轻微上浮淡入，比纯 fadeIn 多一点"到位"感 */
+/* 页面切换：轻微上浮淡入，比纯淡入多一点"到位"感 */
 @keyframes pageIn { from { opacity: 0; transform: translateY(var(--shift-sm)); } to { opacity: 1; transform: none; } }
 /* 抽屉/面板从右侧滑入 */
-@keyframes slideInRight { from { opacity: 0; transform: translateX(16px); } to { opacity: 1; transform: none; } }
 /* 呼吸：用于"运行中"这类持续状态，很轻，不抢注意力 */
 @keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 /* 脉冲环：保存成功、新消息这类瞬时正反馈 */
@@ -1428,9 +1415,9 @@ html.boot-show .loading-overlay { opacity: 1; }
 
 /* ── 组件动效挂载 ──
    统一用 token 里的时长/曲线，不要在这里再写死 ms 值。 */
-.model-modal-overlay { animation: fadeIn var(--dur-base) var(--ease-in-out); }
-.model-modal { animation: popIn var(--dur-slow) var(--ease-spring); }
-.session-item.new-item, .chat-item.new-item { animation: itemIn var(--dur-slow) var(--ease-out-quart); }
+
+
+.session-item.new-item, .chat-item.new-item { animation: itemIn var(--dur-base) var(--ease-out-quart); }
 /* 表格行不要挂入场动画：表格每次刷新都会重建行，动画会跟着重放＝整片闪。
    需要入场感的地方用「新增行才加类」的方式（见 .session-item.new-item）。 */
 .member-table tr { animation: none; }
@@ -1466,9 +1453,9 @@ html.boot-show .loading-overlay { opacity: 1; }
 /* 会话/会话列表条目：入场 + 悬浮位移（右侧一点点，暗示"可展开"） */
 .session-item, .chat-item {
   transition:
-    background-color var(--dur-base) var(--ease-in-out),
-    border-color var(--dur-base) var(--ease-in-out),
-    transform var(--dur-fast) var(--ease-out-quart);
+    background-color var(--dur-interaction) var(--ease-in-out),
+    border-color var(--dur-interaction) var(--ease-in-out),
+    transform var(--dur-interaction) var(--ease-out-quart);
 }
 .session-item:hover, .chat-item:hover { transform: translateX(2px); }
 .session-item.selected, .chat-item.selected {
@@ -1482,21 +1469,9 @@ html.boot-show .loading-overlay { opacity: 1; }
 .dot-wait { animation: breathe 1.8s var(--ease-in-out) infinite; }
 /* 连接正常时不呼吸（静态更稳），只有异常态才动 —— 避免常态干扰 */
 
-/* 页签：切换时下划线滑动感（用 transform 而非 width，性能更好） */
-.tab { position: relative; }
-.tab.active::after {
-  content: '';
-  position: absolute;
-  left: 10px; right: 10px; bottom: -1px;
-  height: 2px;
-  background: var(--accent);
-  border-radius: 2px;
-  animation: tabSlide var(--dur-slow) var(--ease-out-quart);
-}
-@keyframes tabSlide {
-  from { opacity: 0; transform: scaleX(.4); }
-  to { opacity: 1; transform: none; }
-}
+/* 页签：切换时的"下划线滑动"与选中条都由 .side-pill 承担（2026-10-08 改成会滑动的滑块，
+   见「一级导航」区块）。这里原来那条 ::after 下划线 + tabSlide 动画是横向页签时代的遗留，
+   现在会渲染成选中项底下多出的一根横线，和滑块重复，已删。 */
 
 /* 档位按钮：按下时轻微缩放，选中态用 spring 弹一下 */
 .tier-btn:active { transform: scale(.97); }
@@ -1513,27 +1488,9 @@ html.boot-show .loading-overlay { opacity: 1; }
 
 /* ── 输入框：聚焦时边框/阴影变化，让"我在这里输入"很明确 ──
    .field 是布局容器不需要动效，动的是里面的控件。 */
-.field input,
-.field textarea,
-.field select,
-.pc-row input[type=number],
-.tier-param input[type=number],
-.tier-param textarea,
-.ma-toolbar input[type=text],
-.model-rows-table input {
-  transition:
-    border-color var(--dur-base) var(--ease-in-out),
-    box-shadow var(--dur-base) var(--ease-in-out),
-    background-color var(--dur-base) var(--ease-in-out);
-}
-.field input:focus,
-.field textarea:focus,
-.field select:focus,
-.pc-row input[type=number]:focus,
-.tier-param input[type=number]:focus,
-.tier-param textarea:focus {
-  box-shadow: 0 0 0 3px rgba(91, 140, 255, .12);
-}
+/* 控件过渡与聚焦环统一在文件末尾「表单控件 v2」里定义。
+   这里原来给 .field 的聚焦硬编码了一圈 `rgba(91,140,255,.12)` —— 换强调色时不跟着变，
+   而且是"第二条焦点样式"，与 :focus-visible 那条互相不知道对方存在。 */
 
 /* 页签：基础态过渡（.tab:hover 已有，这里补基础） */
 .tab {
@@ -1554,7 +1511,7 @@ html.boot-show .loading-overlay { opacity: 1; }
 /* 会话/会话条目：已有基础过渡，这里补入场与选中态的平滑 */
 .session-item.selected,
 .chat-item.selected { border-left-color: var(--accent); }
-.chat-item.unread-row { animation: itemIn var(--dur-slow) var(--ease-out-quart); }
+.chat-item.unread-row { animation: itemIn var(--dur-base) var(--ease-out-quart); }
 
 /* 折叠面板头部：三角形旋转 */
 .collapsible > summary::before {
@@ -1640,7 +1597,7 @@ html.boot-show .loading-overlay { opacity: 1; }
 
 .checkbox-row input[type=checkbox] { accent-color: var(--accent); transition: transform .1s ease; }
 .checkbox-row input[type=checkbox]:checked { animation: checkPop .18s ease; }
-.collapsible > summary { transition: color .14s ease; }
+.collapsible > summary { transition: color var(--dur-interaction) var(--ease-in-out); }
 .collapsible > summary:hover { color: var(--text); }
 
 #cfg-save-result.saved-flash { animation: savedFlash 1.1s ease; }
@@ -2053,6 +2010,12 @@ html.boot-show .loading-overlay { opacity: 1; }
   color: var(--muted);
   font-size: 9px;
 }
+/* 异常处理页的表格外壳。原来 markup 里写了 class="table-wrap" 但 **CSS 里根本没有这条规则** ——
+   于是它既不裁也不滚：820px 窗口下实测表格 1016px 撑出 758px 的卡片外面 258px
+   （虽然外层 .asset-pane 能横滚，但表格明显越出卡片边界，看着就是坏的）。
+   与 .asset-table-wrap / .usage-table-scroll 同一口径：外壳负责横向滚动。 */
+.table-wrap { overflow-x: auto; }
+
 .asset-table-wrap {
   max-height: calc(100vh - 330px);
   overflow: auto;
@@ -2261,7 +2224,7 @@ html.boot-show .loading-overlay { opacity: 1; }
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
   padding: 8px 4px; border: none; border-radius: 6px;
   background: transparent; color: var(--muted); cursor: pointer;
-  font-size: 12px; transition: background .12s, color .12s;
+  font-size: 12px; transition: background var(--dur-interaction) var(--ease-in-out), color var(--dur-interaction) var(--ease-in-out);
   min-width: 0;
 }
 .tier-btn:hover { background: var(--hover); }
@@ -2303,7 +2266,7 @@ html.boot-show .loading-overlay { opacity: 1; }
   background: transparent; color: var(--text);
   border: 1px solid var(--border); border-radius: 7px;
   cursor: pointer; font-size: 14px; line-height: 1;
-  transition: background .12s, border-color .12s;
+  transition: background var(--dur-interaction) var(--ease-in-out), border-color var(--dur-interaction) var(--ease-in-out);
 }
 .icon-btn:hover { background: var(--hover); border-color: var(--accent); }
 .icon-btn:active { background: var(--active); }
@@ -2320,7 +2283,7 @@ html.boot-show .loading-overlay { opacity: 1; }
 
 /* 过渡：颜色变化时平滑，避免切换主题时"咔"一下 */
 body, .btn, .tab, .model-modal, .price-card, .tier-btn, .icon-btn {
-  transition: background-color .16s ease, color .16s ease, border-color .16s ease;
+  transition: background-color var(--dur-interaction) var(--ease-in-out), color var(--dur-interaction) var(--ease-in-out), border-color var(--dur-interaction) var(--ease-in-out);
 }
 
 /* 列表底部的分页提示（滚动加载更多） */
@@ -2465,8 +2428,8 @@ body, .btn, .tab, .model-modal, .price-card, .tier-btn, .icon-btn {
   padding: 1px 5px;
   border-radius: 4px;
   color: var(--muted);
-  background: var(--hover);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 16%, var(--border));
   font-weight: 400;
 }
 
@@ -2480,8 +2443,8 @@ body, .btn, .tab, .model-modal, .price-card, .tier-btn, .icon-btn {
   padding: 1px 5px;
   border-radius: 4px;
   color: var(--muted);
-  background: var(--hover);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 16%, var(--border));
   font-weight: 400;
   white-space: nowrap;
 }
@@ -2760,7 +2723,7 @@ body {
 .btn {
   border-radius: 10px; padding: 6px 14px; border: 1px solid var(--border);
   background: var(--bg-3); color: var(--text); font-weight: 550;
-  transition: background .15s, border-color .15s, transform .06s, box-shadow .15s;
+  transition: background var(--dur-interaction) var(--ease-in-out), border-color var(--dur-interaction) var(--ease-in-out), transform var(--dur-fast) var(--ease-out-quart), box-shadow var(--dur-interaction) var(--ease-in-out);
 }
 .btn:hover { border-color: var(--accent-border); color: var(--text); background: var(--hover); }
 .btn:active { transform: translateY(1px); }
@@ -2774,20 +2737,11 @@ body {
 .btn:disabled { opacity: .5; cursor: not-allowed; box-shadow: none; }
 .icon-btn {
   border-radius: 10px; border: 1px solid transparent; background: transparent; color: var(--muted);
-  transition: background .15s, color .15s;
+  transition: background var(--dur-interaction) var(--ease-in-out), color var(--dur-interaction) var(--ease-in-out);
 }
 .icon-btn:hover { background: var(--hover); color: var(--text); }
 
-/* ── 表单控件 ── */
-input, textarea, select {
-  border-radius: 10px; border: 1px solid var(--border); background: var(--bg-3);
-  color: var(--text); padding: 7px 10px; transition: border-color .15s, box-shadow .15s;
-}
-input:focus, textarea:focus, select:focus {
-  outline: none; border-color: var(--accent-border);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-input::placeholder, textarea::placeholder { color: var(--faint); }
+/* ── 表单控件 ── 已并入文件末尾「表单控件 v2」（全局只留一处定义） */
 #runtime-mode { font-weight: 550; }
 
 /* ── 面板、列表与卡片 ── */
@@ -2883,18 +2837,21 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
 /* ── 字段容器：flex 拉伸 → 自适应网格 ── */
 .field-row {
   display: grid;
-  /* 列宽 ≥280 后把剩余空间均分（1fr）：以前是 minmax(220px, 340px)，列宽封顶 + 左对齐，
-     内容区宽到 860 以后右侧就空出一大片，整行看着"全挤在左边"。 */
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 12px 18px;
+  /* 列数写死三轨（窄屏再降），不用 auto-fit：
+     auto-fit 会把"没被占满的轨道"收掉，于是同一个页面里"两个字段的网格"会各自伸成两列、
+     "十个字段的网格"会排成四列 —— 实测「控制」页第一行两个框 560px、下面几行 295px，
+     同一屏里两种列宽。固定轨道数之后，任何一行的字段都落在同样的三条轨道上。 */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 1180px;
+  gap: 14px 20px;
   /* 必须是 start（2026-10-01 修）：原先写 end，同一格里两个字段只要内容高度不同 ——
      一个带单行提示、一个带两行提示 —— 矮的那格整块被压到底部，标签与输入框就跟隔壁错开
      十几像素（实测 imageGen 那行差 18px）。表单要的是"标签与控件对齐"，不是底边对齐。 */
   align-items: start;
   margin-bottom: 14px;
 }
-/* 行里只有一个字段时占满整行，不要缩成半宽挂在左侧 */
-.field-row > :only-child { grid-column: 1 / -1; }
+/* 行里只有一个字段时**不要**占满整行：占满就成了一个 1600px 宽的空框（实测出现过 1622px 的数字框）。
+   它占一轨（桌面 ≈380px），与上面几行的第一列对齐，看起来是"表格里的一格"而不是"一条横幅"。 */
 /* 数字/短文本字段不限宽：此前给它们 max-width:220px，在均分列宽的网格里
    会缩在格子左侧、右边空出一截，"框都偏左"的观感主要来自这里。
    （注释写着不再限宽，规则却把 220px 留下了——2026-09-26 按注释本意删掉。） */
@@ -2909,33 +2866,85 @@ input::placeholder, textarea::placeholder { color: var(--faint); }
   color: var(--muted);
 }
 .field input[type=text], .field input[type=password], .field input[type=number],
-.field input[type=search], .field select {
-  width: 100%;
-  height: 36px;
-  padding: 0 12px;
-  border-radius: 10px;
-  background: var(--bg-3);
-  font-size: 13.5px;
-}
-.field textarea { width: 100%; padding: 10px 12px; border-radius: 10px; background: var(--bg-3); font-size: 13.5px; }
+.field input[type=search], .field select, .field textarea { width: 100%; }
 .field input:hover:not(:disabled), .field select:hover:not(:disabled), .field textarea:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 .field input:disabled, .field select:disabled, .field textarea:disabled { opacity: .6; cursor: not-allowed; }
 .field input[type=number] { font-variant-numeric: tabular-nums; }
+/* 全是参数行的网格收紧行距（40px 控件配 10px 行距 ≈ 50px 一拍，接近"规格表"的节奏）；
+   含说明文字的网格保持 Carbon 建议的间距，别把助手文字挤到控件上。 */
+.field-row:not(:has(.hint)) { gap: 10px 20px; margin-bottom: 12px; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   参数行（2026-10-08 第四轮）：密集参数区不再"整页堆满大空框"
+   ──────────────────────────────────────────────────────────────────────────────
+   病症（实测）：好友管理 23 个字段里 22 个是数字，每个占 **368px** 宽，而框里只有 1–3 位数字
+   （约 90% 是空的）；聊天设置 31 个字段里有 23 个数字，整段 **3027px** 高。观感 = 一页大空框。
+
+   三份设计系统的口径（查证过，不是我自己拍的）：
+     · GOV.UK：「Use fixed width inputs for content that has a specific, known length」
+       —— 它按"字符数"给固定宽度类（width-2 / 3 / 4 / 5 / 10 / 20），后四位邮编用 width-5。
+     · Ant Design：horizontal（标签左、控件右、标签列定宽）**是表单的默认布局**。
+     · Carbon：field widths should reflect the intended length of the content；
+       并建议分组与渐进披露，别一次把输入框都堆出来。
+   → 所以：**标签左、控件右、标签列定宽**，控件按内容定宽；长文本/说明类保持"标签在上"。
+
+   为什么用 `:not(:has(.hint))` 分流：带说明文字的字段需要纵向空间放助手文字
+   （Carbon：助手文字在控件下方、始终可见），它们的观感问题本来就不是"空框"。
+   ══════════════════════════════════════════════════════════════════════════════ */
+.field:not(:has(.hint)):not(:has(> label.checkbox-row)) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+}
+/* 标签固定列宽：所有行的控件都从同一条竖线开始（Ant Design 的 labelCol 思路）。
+   150px 是按最长标签量的（"旧模式最低累计消息" 9 字 ≈ 113px，留出余量）。 */
+.field:not(:has(.hint)):not(:has(> label.checkbox-row)) > label {
+  flex: 0 0 150px;
+  margin: 0;
+  align-self: center;
+}
+.field:not(:has(.hint)):not(:has(> label.checkbox-row)) > :not(label) {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* 数字：按内容定宽（8ch ≈ 7 位数字 + 一点余量）。不是"所有数字都这么窄" —— 它只影响
+   参数行里的数字；句子里那种行内小数字有自己的规则。 */
+.field:not(:has(.hint)):not(:has(> label.checkbox-row)) > input[type='number'] {
+  flex: 0 0 auto;
+  width: calc(8ch + 30px);
+}
+/* 下拉：按内容定宽（fit 最长选项），不拉满整行 —— 拉满就会出现"右边一大截空白" */
+.field:not(:has(.hint)):not(:has(> label.checkbox-row)) > select {
+  flex: 0 1 auto;
+  width: auto;
+  max-width: 100%;
+}
 
 /* ── 旧式内联字段（<label><span>标题</span><input></label>，如"更新部署"）── */
 .update-deploy-settings {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 300px));
-  gap: 12px 16px;
-  align-items: end;
+  /* 与 .field-row 同一套节奏，只是这一页字段更多更短，用四轨（同样写死，不用 auto-fit） */
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  max-width: 1180px;
+  gap: 14px 20px;
+  align-items: start;
+}
+/* 窄屏降列：写死轨道数就必须自己管这件事，否则 1280 的笔记本上四轨只剩 200px 一列 */
+@media (max-width: 1240px) {
+  .field-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .update-deploy-settings { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .field-row, .update-deploy-settings { grid-template-columns: minmax(0, 1fr); }
 }
 .update-deploy-settings > label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .update-deploy-settings > label > span { font-size: 12px; font-weight: 600; letter-spacing: .2px; color: var(--muted); }
 .update-deploy-settings input[type=text],
 .update-deploy-settings input[type=number],
-.update-deploy-settings input[type=search] { width: 100%; height: 36px; padding: 0 12px; border-radius: 10px; }
+.update-deploy-settings input[type=search] { width: 100%; }
 .update-deploy-settings > label:has(> input[type=checkbox]) {
   flex-direction: row;
   align-items: center;
@@ -3072,7 +3081,6 @@ input[type=checkbox], input[type=radio] {
 #console-login-form { display: flex; flex-direction: column; gap: 10px; }
 #console-login-form h2 { font-size: 16px; font-weight: 650; margin: 0 0 4px; }
 #console-login-form label { font-size: 12px; font-weight: 600; letter-spacing: .2px; color: var(--muted); }
-#console-login-form input { height: 36px; }
 #console-login-form .btn { height: 36px; justify-content: center; }
 
 /* 密码框 + 「显示 / 隐藏」按钮（登录框、SnowLuma 改密钥那三格；设置页里同款的用内联 flex） */
@@ -3282,7 +3290,7 @@ dialog { margin: auto; max-height: 88vh; }
 .kpi {
   border: 1px solid var(--border); border-radius: 12px; background: var(--bg-2);
   padding: 13px 15px 14px; min-width: 0;
-  transition: transform var(--dur-base, .16s) ease, border-color var(--dur-base, .16s) ease;
+  transition: transform var(--dur-interaction) var(--ease-out-quart), border-color var(--dur-interaction) var(--ease-in-out);
 }
 .kpi:hover { transform: translateY(-1px); border-color: var(--border-strong, var(--border)); }
 .kpi-head { display: flex; align-items: center; gap: 7px; color: var(--muted); }
@@ -3304,6 +3312,9 @@ dialog { margin: auto; max-height: 88vh; }
 .panel-sub { margin-top: 3px; font-size: 11.5px; color: var(--muted); }
 .panel-actions { flex-shrink: 0; font-size: 12px; }
 .panel-link { color: var(--accent); text-decoration: none; }
+/* 行内文字按钮：用在提示句子里（"统一在…里配置 去设置"），不带边框与内边距 */
+.link-btn { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer; }
+.link-btn:hover { text-decoration: underline; }
 .panel-link:hover { text-decoration: underline; }
 .panel-body { min-width: 0; }
 
@@ -3319,8 +3330,8 @@ dialog { margin: auto; max-height: 88vh; }
 .feed-time { font-family: var(--mono); font-size: 11.5px; color: var(--muted); flex-shrink: 0; }
 .feed-text { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.meter { height: 6px; border-radius: 999px; background: var(--bg-3); overflow: hidden; margin-top: 8px; }
-.meter-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width .3s ease; }
+.meter { height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--text) 12%, var(--bg-3)); overflow: hidden; margin-top: 8px; }
+.meter-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width var(--dur-slow) var(--ease-out-quart); }
 .meter.warn .meter-fill { background: var(--orange); }
 .meter.bad .meter-fill { background: var(--red); }
 
@@ -3331,14 +3342,14 @@ dialog { margin: auto; max-height: 88vh; }
 
 .bars { display: flex; align-items: flex-end; gap: 10px; height: 96px; padding-top: 4px; }
 .bars-col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
-.bars-bar { width: 100%; max-width: 46px; border-radius: 5px 5px 2px 2px; background: var(--bg-3); border: 1px solid var(--border); transition: background .2s ease; }
+.bars-bar { width: 100%; max-width: 46px; border-radius: 5px 5px 2px 2px; background: color-mix(in srgb, var(--text) 12%, var(--bg-3)); border: 1px solid color-mix(in srgb, var(--text) 16%, var(--border)); transition: background var(--dur-interaction) var(--ease-in-out); }
 .bars-bar.on { background: var(--accent-border); border-color: var(--accent-border); }
 .bars-x { margin-top: 6px; font-family: var(--mono); font-size: 10.5px; color: var(--faint); white-space: nowrap; }
 
 .chip.bad { color: var(--red); border-color: rgba(255, 107, 107, .45); background: rgba(255, 107, 107, .08); }
 
 /* 设置侧栏分组标题（2026-10-08）：17 个分区平铺太劝退，按组归位。
-   样式与 .nav-group-label 同族但更轻，避免和一级导航的分组标题抢注意力。 */
+   这一层保留分组标题：它是一页之内的二级导航，项多、且不带说明行，标题是它唯一的结构。 */
 .settings-menu-group {
   margin: 12px 0 5px;
   padding: 0 10px;
@@ -3456,21 +3467,14 @@ body { font-size: var(--fs-lg); line-height: var(--lh-base); }
 .tab { font-size: var(--fs-md); font-weight: 500; padding: var(--sp-2) 10px; gap: 10px; border-radius: var(--r-card); }
 .tab.active { font-weight: 600; }
 .tab .ico { width: 17px; height: 17px; }
-.nav-group-label { padding: var(--sp-3) 10px var(--sp-1); font-size: var(--fs-xs); }
 
 /* 按钮：统一高度与内边距（原来 7/4px 两档落差太大） */
 .btn { font-size: var(--fs-md); padding: 6px 14px; border-radius: var(--r-input); min-height: 32px; }
 .btn-small { font-size: var(--fs-sm); padding: 4px 10px; border-radius: var(--r-sm); min-height: 27px; }
 
-/* 输入/下拉/文本域：高度与圆角统一，字号提到控件档 */
-input[type='text'], input[type='password'], input[type='number'], input[type='search'],
-select, textarea {
-  font-size: var(--fs-md);
-  border-radius: var(--r-input);
-  padding: 6px 10px;
-  min-height: 32px;
-}
-select { padding-right: 8px; }
+/* 输入/下拉/文本域：几何与聚焦统一在文件末尾「表单控件 v2」。
+   这里那版（min-height 32px / padding 6 10 / 13.5px）与 .field 那版（h 36 / padding 0 12）
+   同时在跑，结果是"同一页里两种高度的输入框"—— 正是用户看到的"输入框不符合美学"。 */
 
 /* 卡片：统一 12px 圆角 + 极轻阴影（这是"浮起来"的关键，我们没有它就显得平） */
 .kpi, .panel, .usage-card, .tool-card, .pd-chat, .price-card, .plat-card {
@@ -3516,7 +3520,7 @@ select { padding-right: 8px; }
   --dur-interaction: 150ms;   /* 与参照实现同一个量级（0.15s） */
 }
 
-.tab, .settings-menu-item, .chip, .status-badge, .unread-pill, .nav-group-label,
+.tab, .settings-menu-item, .chip, .status-badge, .unread-pill, .tab-label i,
 .pick-item, .mm-prov, .mm-model, .panel-link, .feed li,
 .plat-row, .plat-grid-row, .kv dd a, .incident-actions button, .list-head {
   transition:
@@ -3588,25 +3592,43 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus
 :root {
   --accent-side: var(--accent);
   --accent-fg: #fff;
+  /* 兜底值：不支持 color-mix 的浏览器就用这一套（默认蓝的 rgba）。
+     ⚠️ 不能在同一个块里"先写兜底、再写 color-mix"—— 同一块内后者永远赢，兜底等于没写；
+     而且自定义属性存的是 token 流，不支持时每个 var() 都会在**计算期**失效、底色直接消失。
+     所以真兜底必须用 @supports 分开（见下面那个块）。2026-10-08 审查修正。 */
   --accent-soft: rgba(76, 141, 255, .12);
   --accent-border: rgba(76, 141, 255, .36);
   --accent-ring: rgba(76, 141, 255, .4);
   --accent-side-soft: var(--accent-soft);
   --accent-side-border: var(--accent-border);
-  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
-  --accent-border: color-mix(in srgb, var(--accent) 36%, transparent);
-  --accent-ring: color-mix(in srgb, var(--accent) 40%, transparent);
-  --accent-side-soft: color-mix(in srgb, var(--accent-side) 12%, transparent);
-  --accent-side-border: color-mix(in srgb, var(--accent-side) 36%, transparent);
   /* 自定义背景只存四个"数据"，拼装在这里（同理：内联脚本只管填值） */
   --bg-solid: #0b1220;
   --bg-from: #4c8dff;
   --bg-to: #a78bfa;
   --bg-angle: 135deg;
+  /* 控制件的"轮廓色"：亮色下 --border (#e0e7f2) 贴白卡只有 1.24:1，开关的槽、分段控件的
+     轨道、未选中的单选圈都靠它表达 —— 实测 1.11~1.16，等于"看不见控件"。掺主文字色加深一档。 */
+  --ctl-line: var(--border);   /* 兜底：见下面 @supports（不支持 color-mix 时退回浅一档描边） */
   --switch-w: 44px;
   --switch-h: 24px;
   --switch-knob: 18px;
   --switch-travel: 20px;
+}
+
+/* ── 0b. color-mix 派生色（@supports 分支）──
+   支持 color-mix 时，强调色的柔和底/描边/焦点环与控件轮廓色都从 --accent / --text "现算"——
+   换强调色只需要重算一个值（首屏内联脚本也只抄一个值）。不支持的老浏览器留在上面 :root 的
+   rgba 兜底上（默认蓝那一套）。**别把这些写回上面那个块**：同块内后写的那条永远赢，
+   兜底就永远不生效（2026-10-08 审查发现这个坑）。 */
+@supports (color: color-mix(in srgb, red, blue)) {
+  :root {
+    --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+    --accent-border: color-mix(in srgb, var(--accent) 36%, transparent);
+    --accent-ring: color-mix(in srgb, var(--accent) 40%, transparent);
+    --accent-side-soft: color-mix(in srgb, var(--accent-side) 12%, transparent);
+    --accent-side-border: color-mix(in srgb, var(--accent-side) 36%, transparent);
+    --ctl-line: color-mix(in srgb, var(--text) 22%, var(--border));
+  }
 }
 
 /* ── 1. 界面字体 ──
@@ -3639,38 +3661,45 @@ html[data-background='solid'] body {
 }
 [data-theme='dark'][data-dark-intensity='oled'] body { background-image: none; }
 
-/* ── 4. 表面色板（只给 底/卡/面板/边框/文字，强调色独立） ── */
+/* ── 4. 表面色板（只给 底/卡/面板/边框/文字，强调色独立） ──
+   2026-10-08 重做：原来这五套是"在默认底色上挪几个 RGB 单位"凑出来的，实测两两之间
+   暗色 ΔL* 只有 0.2~2.8（中位 1.2，肉眼门槛约 3）、**亮色 ΔL* 0.0~0.1（完全同色）** ——
+   用户反馈"配色方案的效果不明显"就是这个原因。现在按"暗色走亮度阶梯、亮色走色相与彩度"
+   重排（亮色下背景都在 L*92~97，亮度分不开，只能靠冷暖与彩度区分）：
+     默认 L*5.5 中性蓝灰 → 石板 10.7 中性冷灰 → 玫瑰 13.5 紫调 → 青林 15.5 墨绿 → 极地 21.6 北欧蓝
+   亮色：默认 冷蓝白 / 石板 纯中性灰 / 极地 蓝灰 / 青林 米黄 / 玫瑰 粉白
+   判据写进了 test/appearance-schemes.test.mjs（两两必须可分辨），改值前先跑它。 */
 [data-scheme='slate'][data-theme='dark'] {
-  --bg: #0c0f14; --bg-2: #141922; --bg-3: #1c2230;
-  --border: #262e3c; --text: #e6eaf2; --muted: #98a3b6; --faint: #6d7889;
+  --bg: #191d24; --bg-2: #20252e; --bg-3: #282f39;
+  --border: #39424e; --text: #e9edf2; --muted: #9ea8b5;
 }
 [data-scheme='slate'][data-theme='light'] {
-  --bg: #f5f7fa; --bg-2: #ffffff; --bg-3: #eef1f6;
-  --border: #e1e6ee; --text: #101720; --muted: #5a6675; --faint: #8b95a4;
+  --bg: #ededed; --bg-2: #f8f8f8; --bg-3: #e3e3e3;
+  --border: #d5d5d5; --text: #202020; --muted: #5f5f5f;
 }
 [data-scheme='nord'][data-theme='dark'] {
-  --bg: #0e1621; --bg-2: #16212f; --bg-3: #1e2b3d;
-  --border: #2a3a50; --text: #e8eef7; --muted: #9aabc2; --faint: #7086a0;
+  --bg: #2e3440; --bg-2: #3b4252; --bg-3: #434c5e;
+  --border: #4c566a; --text: #eceff4; --muted: #aeb8c9;
 }
 [data-scheme='nord'][data-theme='light'] {
-  --bg: #f4f7fb; --bg-2: #ffffff; --bg-3: #eaf0f7;
-  --border: #dde6f0; --text: #14202e; --muted: #56697e; --faint: #8798aa;
+  --bg: #e5e9f0; --bg-2: #eceff4; --bg-3: #dde3ec;
+  --border: #cbd2de; --text: #2e3440; --muted: #556070;
 }
 [data-scheme='forest'][data-theme='dark'] {
-  --bg: #0d1512; --bg-2: #141f1b; --bg-3: #1c2b25;
-  --border: #274038; --text: #e6f0ea; --muted: #98b3a7; --faint: #6d8a7d;
+  --bg: #1b2a23; --bg-2: #22332b; --bg-3: #2a3d34;
+  --border: #3a4f44; --text: #e4ede7; --muted: #9db3a8;
 }
 [data-scheme='forest'][data-theme='light'] {
-  --bg: #f4f8f5; --bg-2: #ffffff; --bg-3: #ecf3ee;
-  --border: #dde8e0; --text: #12211a; --muted: #556b60; --faint: #84978c;
+  --bg: #f6f1e3; --bg-2: #fdf6e3; --bg-3: #ece5d2;
+  --border: #dbd3bf; --text: #3d4740; --muted: #5f6a59;
 }
 [data-scheme='rose'][data-theme='dark'] {
-  --bg: #17121a; --bg-2: #211a25; --bg-3: #2c2331;
-  --border: #3d3144; --text: #f0e9f3; --muted: #b3a0bb; --faint: #8a7a93;
+  --bg: #241f38; --bg-2: #2b2645; --bg-3: #352f52;
+  --border: #453d63; --text: #e6e1f5; --muted: #aca5c8;
 }
 [data-scheme='rose'][data-theme='light'] {
-  --bg: #faf6f9; --bg-2: #ffffff; --bg-3: #f4ecf2;
-  --border: #ecdcea; --text: #241a26; --muted: #6d5b70; --faint: #9b8aa0;
+  --bg: #fceef4; --bg-2: #fff4f8; --bg-3: #f4e3ea;
+  --border: #e6d2da; --text: #463039; --muted: #7a5f6b;
 }
 
 /* ── 5. 侧栏样式 + 侧栏强调色（应用范围选"仅侧栏"时，按钮保持默认蓝，只有侧栏跟着变） ── */
@@ -3680,9 +3709,10 @@ html[data-sidebar-style='accent'] #sidebar {
   border-right-color: color-mix(in srgb, var(--accent-side) 22%, var(--border));
 }
 #sidebar .tab.active {
-  background: var(--accent-side-soft);
+  /* 底色/左缘条都由 .side-pill 给（它会滑动，见「一级导航」区块）——这里只留文字颜色 */
+  background: transparent;
   color: var(--accent-side);
-  box-shadow: inset 0 0 0 1px var(--accent-side-border);
+  box-shadow: none;
 }
 #sidebar .side-head .brand-mark { box-shadow: 0 0 0 1px var(--accent-side-border); }
 
@@ -3756,7 +3786,8 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
       它们表达的是"选中若干项"，不是"开/关"，长成开关反而会读错。 ── */
 .checkbox-row > input[type='checkbox'],
 .plat-row > input[type='checkbox'],
-.opt-row-ctrl > input[type='checkbox'] {
+.opt-row-ctrl > input[type='checkbox'],
+input.sw[type='checkbox'] {
   -webkit-appearance: none;
   appearance: none;
   position: relative;
@@ -3768,7 +3799,7 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
   border: none;
   border-radius: 999px;
   background: var(--bg-3);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: inset 0 0 0 1px var(--ctl-line);
   cursor: pointer;
   transition:
     background-color var(--dur-interaction) var(--ease-in-out),
@@ -3776,7 +3807,8 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
 }
 .checkbox-row > input[type='checkbox']::after,
 .plat-row > input[type='checkbox']::after,
-.opt-row-ctrl > input[type='checkbox']::after {
+.opt-row-ctrl > input[type='checkbox']::after,
+input.sw[type='checkbox']::after {
   content: '';
   position: absolute;
   top: 3px;
@@ -3785,27 +3817,33 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
   height: var(--switch-knob);
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, .06), 0 1px 2px rgba(0, 0, 0, .22);
+  /* 圆点的描边从 6% 黑提到 14%：参照实现是 ring-black/10 + 一层阴影 —— 亮色下圆点贴浅底，
+     只靠 6% 的话"看不出这里有个圆点"（实测白点 vs 轨道 1.11:1）。 */
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, .14), 0 1px 2px rgba(0, 0, 0, .22);
   transition: transform 160ms var(--ease-spring);
 }
 .checkbox-row > input[type='checkbox']:checked,
 .plat-row > input[type='checkbox']:checked,
-.opt-row-ctrl > input[type='checkbox']:checked {
+.opt-row-ctrl > input[type='checkbox']:checked,
+input.sw[type='checkbox']:checked {
   background: var(--accent);
   box-shadow: inset 0 0 0 1px transparent;
   animation: none;   /* 旧的 checkPop 是给方框用的，开关上不需要 */
 }
 .checkbox-row > input[type='checkbox']:checked::after,
 .plat-row > input[type='checkbox']:checked::after,
-.opt-row-ctrl > input[type='checkbox']:checked::after { transform: translateX(var(--switch-travel)); }
+.opt-row-ctrl > input[type='checkbox']:checked::after,
+input.sw[type='checkbox']:checked::after { transform: translateX(var(--switch-travel)); }
 .checkbox-row > input[type='checkbox']:disabled,
 .plat-row > input[type='checkbox']:disabled,
-.opt-row-ctrl > input[type='checkbox']:disabled { opacity: .45; cursor: not-allowed; }
+.opt-row-ctrl > input[type='checkbox']:disabled,
+input.sw[type='checkbox']:disabled { opacity: .45; cursor: not-allowed; }
 .checkbox-row > input[type='checkbox']:disabled::after,
 .opt-row-ctrl > input[type='checkbox']:disabled::after { background: var(--muted); }
 .checkbox-row > input[type='checkbox']:focus-visible,
 .plat-row > input[type='checkbox']:focus-visible,
-.opt-row-ctrl > input[type='checkbox']:focus-visible {
+.opt-row-ctrl > input[type='checkbox']:focus-visible,
+input.sw[type='checkbox']:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 999px;
@@ -3834,7 +3872,7 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
   background: var(--bg-3);
   border: none;
   border-radius: calc(9px * var(--r-scale));
-  box-shadow: inset 0 0 0 1px var(--border), inset 0 1px 2px rgba(0, 0, 0, .07);
+  box-shadow: inset 0 0 0 1px var(--ctl-line), inset 0 1px 2px rgba(0, 0, 0, .07);
 }
 .seg-pill {
   position: absolute;
@@ -3968,7 +4006,6 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
 .tweak-row:first-child { border-top: none; }
 .tweak-name { flex: 1 1 auto; min-width: 0; font-size: var(--fs-md); }
 .tweak-var { font-family: var(--mono); font-size: 11px; color: var(--faint); }
-.tweak-default { font-size: 11px; color: var(--faint); border: 1px solid var(--border); border-radius: 999px; padding: 1px 7px; }
 .tweak-hex { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 66px; text-align: right; }
 .tweak-swatch {
   position: relative;
@@ -4027,12 +4064,14 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
 /* 滚动条：轨道透明、thumb 用 padding-box 裁出 2px 透明边（参照实现同款）。
    原来写成 `border: 2px solid var(--bg)`，等于给 thumb 描了一圈背景色的边 —— 深色下
    每条滚动条都像贴了条灰胶带。 */
-* { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text) 22%, var(--border)) transparent; }
 *::-webkit-scrollbar { width: 10px; height: 10px; }
 *::-webkit-scrollbar-track { background: transparent; }
 *::-webkit-scrollbar-corner { background: transparent; }
 *::-webkit-scrollbar-thumb {
-  background-color: var(--border);
+  /* 滑块原来就是 --border：深色下与底色 1.31:1，等于没有滚动条。掺 22% 主文字色后约 2.5:1
+     （参照实现用的是半透明白，约 2.02）—— 看得见，但不至于抢注意力。 */
+  background-color: color-mix(in srgb, var(--text) 22%, var(--border));
   border: 2px solid transparent;
   background-clip: padding-box;
   border-radius: 999px;
@@ -4042,3 +4081,418 @@ html[data-motion='off']::view-transition-new(root) { animation: none !important;
 /* 顶栏可隐藏项（设置 → 外观 → 顶栏） */
 html[data-hide-badges='1'] .top-status { display: none; }
 html[data-hide-theme-btn='1'] #theme-btn { display: none; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   侧栏 v2 / 表单控件 v2（2026-10-08 第二轮，逐项对着参照控制台实测）
+   ──────────────────────────────────────────────────────────────────────────────
+   参照实现（SnowLuma WebUI，实测计算值）：
+     一级导航 · 一项 = 图标 16px（在 48px 的图标列里居中）+ 主名 14px/500 + 一行说明 12px/低对比
+               · 项高 ≈53px、半径 12px、项间 4px、导航内边距 8px
+               · 选中态 = 整行淡强调底 + 左缘 4px 强调条 + 图标染强调色（不是"边框 + 内阴影"双重描边）
+               · 没有分组小标题，组与组之间只留空白
+     表单控件 · 高 40px、内边距 4~12px、半径 10px、字号 14px、**背景透明 + 一像素描边**
+               · 聚焦 = 描边转强调色 + 3px 半透明强调环
+               · 字段是"固定列数的网格 + 输入框填满所在列"，不是一个字段一条横幅
+   本区块是这两件事的唯一权威定义（上面那些历史规则已改成注释指针）。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. 一级导航 ── */
+/* 「悬停收成图标条」那套的尺寸与曲线 token。数值来自参照实现（SnowLuma WebUI 打包产物，
+   2026-10-08 实测）：aside 宽 248 / 收起 64，宽度过渡 260ms cubic-bezier(.4,0,.1,1)，
+   文字淡入淡出 200ms。滑块的曲线是 Framer spring(stiffness 380, damping 32) 的贝塞尔近似
+   （ζ≈0.82 → 约 4% 过冲、~0.42s 落定）——比 --ease-spring（1.56 的大回弹）收敛得多，
+   给"高亮滑过去"用正合适。 */
+:root {
+  /* ⚠️ 三个值必须自洽：内层内容盒宽 = 外框宽 − 2×左右内边距。
+     曾经把内层 min-width 直接写成 --side-w-full（=外框宽 248）→ 内层比内容盒宽 20px，
+     展开时底部那一排会顶出侧栏右缘，最右那个图标被裁掉一半（用户报的"左下角图标快超出侧栏"）。
+     以后改侧栏宽度只改这三个，别在别处再写死像素。 */
+  --side-w-full: 248px;
+  --side-w-rail: 64px;
+  --side-pad-x: 10px;
+  --side-w-inner: calc(var(--side-w-full) - 2 * var(--side-pad-x));
+  --side-dur-w: 260ms;
+  --side-ease-w: cubic-bezier(.4, 0, .1, 1);
+  --side-dur-fade: 200ms;
+  --side-dur-slide: 420ms;
+  --ease-side-spring: cubic-bezier(.3, 1.18, .4, 1);
+}
+
+#sidebar { width: var(--side-w-full); padding: 12px var(--side-pad-x) 10px; gap: 6px; }
+.side-head { padding: 2px 8px 10px; gap: 10px; }
+.side-head .brand-mark { width: 28px; height: 28px; border-radius: 8px; }
+.side-title strong { font-size: 13.5px; font-weight: 600; letter-spacing: 0; }
+.brand-sub { font-size: 11px; }
+
+/* #tabs 是滑块的 offsetParent（滑块按绝对定位放在它里面），所以它必须是定位元素 */
+#tabs { position: relative; display: flex; flex-direction: column; gap: 2px; padding: 0 2px; min-height: 0; overflow-y: auto; }
+
+/* 会滑动的选中块：一个元素同时承载"底块"与"左缘强调条"（参照实现里是两个 layoutId 元素，
+   换项时各自 spring 滑过去；我们合成一个，位移/高度一起补间，观感一致而 DOM 少一层）。
+   left/right 2px 与 #tabs 的 padding 同源 —— 正好盖住 .tab 那一行的范围。 */
+.side-pill {
+  position: absolute;
+  /* 左右内缩按容器给：主导航的项本身内缩 2px，设置页的分区菜单项是满宽（--pill-inset: 0） */
+  left: var(--pill-inset, 2px);
+  right: var(--pill-inset, 2px);
+  top: 0;
+  height: var(--side-pill-h, 0px);
+  transform: translateY(var(--side-pill-y, 0px));
+  border-radius: var(--r-card);
+  background: var(--accent-side-soft);
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    transform var(--side-dur-slide) var(--ease-side-spring),
+    height var(--side-dur-slide) var(--ease-side-spring),
+    width var(--side-dur-w) var(--side-ease-w),
+    opacity 150ms linear;
+}
+.side-pill-bar {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 16px;
+  border-radius: 0 3px 3px 0;
+  background: var(--accent-side);
+}
+
+.tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  /* 以下两条原来在文件前段那份 .tab 定义里（已并入此处）：按钮要继承界面字体；
+     两行标签（主名 + 说明）不许换行，宽度不够时靠省略号 */
+  font-family: inherit;
+  white-space: nowrap;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px 8px 12px;
+  border: 0;
+  border-radius: var(--r-card);
+  background: none;
+  text-align: left;
+  color: var(--muted);
+  font-size: var(--fs-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--dur-interaction) var(--ease-in-out),
+              background-color var(--dur-interaction) var(--ease-in-out);
+}
+.tab .ico { flex: 0 0 auto; width: 18px; height: 18px; opacity: .85; }
+.tab-label { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.tab-label b { font-size: var(--fs-md); font-weight: 500; line-height: 1.35; color: inherit; }
+.tab-label i {
+  font-style: normal;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (hover: hover) and (pointer: fine) {
+  /* 只有非选中项才有 hover 底：选中项底下是滑块，再叠一层 hover 会把它压暗成"两层色" */
+  .tab:not(.active):hover { background: var(--hover); color: var(--text); }
+  .tab:not(.active):hover .ico { opacity: 1; }
+  .tab:not(.active):hover .tab-label i { color: var(--muted); }
+}
+/* 选中：底块与左缘条由 .side-pill 给（会滑动），这里只负责文字与图标的颜色，
+   背景必须是透明的 —— 否则滑块滑过来时旧的那一格还留着自己的底色。
+   原来这里还挂了 inset 描边，与滑块的圆角底块叠在一起边界发毛，去掉。 */
+.tab.active {
+  background: transparent;
+  color: var(--accent-side);
+  /* 底色与左缘条归 .side-pill；这里不再写 border-color —— .tab 的 border 已经是 0（死声明） */
+  box-shadow: none;
+}
+/* 左缘强调条已并进 .side-pill（会跟着选中项滑动），这里不再逐项画一根 */
+.tab.active .ico { opacity: 1; color: var(--accent-side); }
+.tab.active .tab-label b { font-weight: 600; }
+.tab.active .tab-label i { color: color-mix(in srgb, var(--accent-side) 65%, var(--muted)); }
+/* 组与组之间只留空白（分组标题已取消） */
+.tab[data-group-start] { margin-top: 10px; }
+
+.side-foot { margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* ── 1b. 悬停展开的图标条（对齐参照实现；只在宽屏用，≤900px 的横向布局不参与） ──
+   手法与参照实现一致：aside 只改宽度并被裁切，**内层内容始终 248 宽** ——
+   标签因此不是"重排"而是"露出来"，再叠一条 200ms 的 opacity 淡入淡出，
+   否则收起的一瞬间能看到半截字被切掉。悬停/聚焦状态由 ui/core/side-nav.js 写在
+   #sidebar 的 data-side-open 上；是否启用这一套由外观轴 data-side-rail 决定。 */
+@media (min-width: 901px) {
+  #sidebar { overflow: hidden; transition: width var(--side-dur-w) var(--side-ease-w); }
+  /* 内层固定成**内容盒**宽：收起时靠 aside 裁切露出内容（不重排），展开时严丝合缝不越界 */
+  #sidebar > .side-head, #sidebar > #tabs, #sidebar > .side-foot { min-width: var(--side-w-inner); }
+  .tab-label, .side-title { transition: opacity var(--side-dur-fade) linear; }
+  #sidebar[data-side-open] { width: var(--side-w-full); }
+  html[data-side-rail='1'] #sidebar:not([data-side-open]) { width: var(--side-w-rail); }
+  html[data-side-rail='1'] #sidebar:not([data-side-open]) .tab-label,
+  html[data-side-rail='1'] #sidebar:not([data-side-open]) .side-title { opacity: 0; }
+  /* 收起时滑块从"撑满一行"变成图标下面的方块：可见区宽 = 64 − 10(侧栏左内边距) = 54，
+     每一项从 x=12 起（侧栏 10 + #tabs 的 2），所以方块宽 42 正好顶到可见区右缘。 */
+  html[data-side-rail='1'] #sidebar:not([data-side-open]) .side-pill { right: auto; width: 42px; }
+  html[data-side-rail='1'] #sidebar:not([data-side-open]) .side-pill-bar { display: none; }
+  /* 收起时底栏只留图标按钮：下拉框与"暂停"没有图标形态，与其露出半截不如收起来 ——
+     鼠标一移上去就展开，所有控件都在。 */
+  html[data-side-rail='1'] #sidebar:not([data-side-open]) .side-foot {
+    flex-direction: column; align-items: flex-start; min-width: 0; gap: 8px;
+  }
+  /* 收起时只留图标按钮，且要落在可见的 44px 里（44 − 34 = 10，两边各留 5px 视觉居中） */
+  html[data-side-rail='1'] #sidebar:not([data-side-open]) .side-foot { padding-left: 5px; }
+  html[data-side-rail='1'] #sidebar:not([data-side-open]) .side-foot .runtime-control,
+  html[data-side-rail='1'] #sidebar:not([data-side-open]) .side-foot #pause-btn { display: none; }
+}
+/* 关掉动效：宽度与滑块都直接落位（与参照实现的 duration:0 同一口径） */
+html[data-motion='off'] #sidebar, html[data-motion='reduced'] #sidebar,
+html[data-motion='off'] .side-pill, html[data-motion='reduced'] .side-pill,
+html[data-motion='off'] .tab-label, html[data-motion='reduced'] .tab-label,
+html[data-motion='off'] .side-title, html[data-motion='reduced'] .side-title { transition: none; }
+
+/* ── 2. 分段控件：文字不许溢出轨道 ──
+   实测：`.seg-item { flex: 1 1 0 }` 会把每一项压成等宽，而 `min-width: 0` 允许它小于自身文字 ——
+   "默认（系统）"需要 82px 却只分到 60px，字就顶出圆角轨道（用户看到的"字体超出边框"）。
+   改成"内容宽度是下限、多余空间再均分"，并在行上允许换行：宁可控件换到下一行，也不把字挤出去。 */
+.seg-item { flex: 1 1 auto; min-width: max-content; }
+.opt-row { flex-wrap: wrap; row-gap: 10px; }
+.opt-row-ctrl { flex-wrap: wrap; justify-content: flex-end; }
+
+/* ── 3. 表单控件 v2 ── */
+:root {
+  /* 下拉箭头：写死两份主题色（= --muted 的两套取值）。data URI 里用不了 currentColor，
+     而只为一个箭头去包一层 span 不值当；换配色时它不跟着变，但它只是个指示符。 */
+  --select-caret: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2396a5bf' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");
+}
+[data-theme='light'] {
+  --select-caret: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235b6b83' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9.5l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+input:not([type]),
+input[type='text'], input[type='password'], input[type='number'], input[type='search'],
+input[type='url'], input[type='email'], input[type='tel'], input[type='date'], input[type='time'],
+input[type='datetime-local'], select, textarea {
+  height: 40px;
+  padding: 0 12px;
+  /* 边框走 --ctl-line：纯 --border 在亮色下是 #e0e7f2 贴白卡，肉眼几乎看不到框，
+     "透明底 + 看不见的边"就等于没有输入框。 */
+  border: 1px solid var(--ctl-line);
+  border-radius: var(--r-input);
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.4;
+  box-shadow: none;
+  transition: border-color var(--dur-interaction) var(--ease-in-out),
+              background-color var(--dur-interaction) var(--ease-in-out),
+              box-shadow var(--dur-interaction) var(--ease-in-out);
+}
+textarea { height: auto; min-height: 92px; padding: 10px 12px; resize: vertical; }
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: var(--select-caret);
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 14px 14px;
+  padding-right: 32px;
+  cursor: pointer;
+}
+/* 聚焦：描边转强调色 + 3px 半透明强调环 + 底色微微抬起（透明底在聚焦时"亮"一下，
+   是"我在这里输入"最直接的提示，也省掉了常驻的灰底 —— 一页十几个框全是灰块会很重）。 */
+input:not([type]):focus, input[type='text']:focus, input[type='password']:focus, input[type='number']:focus,
+input[type='search']:focus, input[type='url']:focus, input[type='email']:focus, input[type='tel']:focus,
+input[type='date']:focus, input[type='time']:focus, input[type='datetime-local']:focus,
+select:focus, textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background-color: var(--bg-3);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+input:disabled, select:disabled, textarea:disabled { opacity: .55; cursor: not-allowed; }
+input::placeholder, textarea::placeholder { color: var(--faint); }
+input[type='number'] { font-variant-numeric: tabular-nums; }
+
+/* 单选/多选：自定义外观（原来直接用系统控件，深色下是系统蓝方块，和整页不是一套）。
+   单选做成"实心圆点 + 内圈底色"，与开关的圆点同族。 */
+.radio-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+  margin-bottom: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--r-input);
+  cursor: pointer;
+  transition: background-color var(--dur-interaction) var(--ease-in-out),
+              border-color var(--dur-interaction) var(--ease-in-out);
+}
+.radio-row input[type='radio'] {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  border: 1.5px solid var(--ctl-line);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: border-color var(--dur-interaction) var(--ease-in-out),
+              background-color var(--dur-interaction) var(--ease-in-out),
+              box-shadow var(--dur-interaction) var(--ease-in-out);
+}
+.radio-row input[type='radio']:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: inset 0 0 0 3px var(--bg-2);
+}
+.radio-row:has(input:checked) { background: var(--accent-soft); border-color: var(--accent-border); }
+@media (hover: hover) and (pointer: fine) {
+  .radio-row:hover:not(:has(input:checked)) { background: var(--hover); }
+}
+/* 句子里的内联数字（"我按渠道价：官方价 × [0.5]"）：跟着行高走，不撑成 40px 一行 */
+.radio-row span input[type='number'] { height: 28px; padding: 0 8px; font-size: 13px; }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   丝滑度 v1（2026-10-08 第三轮）：覆层进出场 + 视图切换
+   ──────────────────────────────────────────────────────────────────────────────
+   实测参照实现（SnowLuma WebUI）后得到的结论：它的"丝滑"不来自更长的时长，恰恰相反 ——
+   默认只有 **0.15s**、缓动是 `ease`/`ease-out`。它顺滑是因为**每一样覆层都有一套进出场**：
+
+     @keyframes enter { from { opacity: var(--tw-enter-opacity,1);
+                               transform: translate3d(…) scale3d(…);
+                               filter: blur(var(--tw-enter-blur,0)); } }
+     @keyframes exit  { to   { 同上，用 --tw-exit-* } }
+     弹出层 = fade-in-0（0→1）+ zoom-in-95（.95→1）+ slide-in-from-*（位移）+ 200ms ease-out
+     尺寸上：菜单/浮层 200ms、对话框 200ms、退场一律更快。
+
+   反过来看我们这边缺什么（都是实测出来的）：
+     · `<dialog>` 直接蹦出来，关掉是硬切 —— 全局三个对话框一点动画都没有
+     · 切页（.view 的 display 切换）是硬切
+     · 弹窗外壳用的是 260ms + `--ease-spring`（带过冲）—— 弹窗不该"弹"，那是玩具感
+     · 没有一处用 blur（参照实现的进场带 2~3px 模糊，两个状态叠在一起时才像一个物体在变化）
+
+   这一节按同一套语言补齐。时长刻意比原来的 token 短：丝滑感来自"每处都有"和"收尾干净"，
+   不来自把动作放慢。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── 三级文字的最淡一档 ──
+     由 --muted 与卡片底色按比例混合得到，而不是写死一个灰：色板切换、用户微调
+     --muted/--bg-2 之后它会自动跟着走，不必十处一起改（原来五套色板 × 明暗各写一个值）。
+     实测 WCAG 对比度（改了要重新量）：
+       深色 88% → 卡片 5.62 / 面板 4.87 ；亮色 92% → 卡片 4.55 / 面板 4.09
+     旧值是写死的 #6c7d99（深色 4.13）与 #8a99ad（亮色 2.90）—— 后者连 3:1 的图形门槛都不到，
+     而这一档被用在 167 处（侧栏每项的说明行、· 分隔符、输入框占位符…）。 */
+  --faint-mix: 88%;
+  --faint: color-mix(in srgb, var(--muted) var(--faint-mix), var(--bg-2));
+}
+:root[data-theme='light'] { --faint-mix: 97%; }   /* 亮色下 muted 本身只有 5.4，留不出多少余量：
+                                              取 97% 让占位符/说明行过 4.5，代价是与次级文字更接近 */
+
+:root {
+  /* 参照实现主题切换用的那条曲线（ease-out-expo）：起步快、收尾极慢，到位感最强 */
+  --ease-out-expo: cubic-bezier(.16, 1, .3, 1);
+  --dur-overlay: 200ms;        /* 进场 */
+  --dur-overlay-out: 150ms;    /* 退场总是更快（人已经决定要走，别拖） */
+  --shift-overlay: 6px;        /* 进场位移：参照实现是 slide-in 0.5rem ≈ 8px，取 6 更克制 */
+  --blur-overlay: 3px;         /* 进场模糊：把"两层叠着"糊成一个物体在变 */
+}
+
+/* ── 1. <dialog>：进场 + 退场 ──
+   这里**不用** `@starting-style` + `allow-discrete`：实测在 Chrome 里，对话框"打开"之后
+   会一直停在起始态（opacity 0 / scale .97 / blur 3px），也就是弹窗永远不显示 —— 那套写法
+   对 <dialog> 还不成熟。改用最可靠的两种手段：
+     · 进场 = 挂在 `dialog[open]` 上的 keyframes。元素从 display:none 变成 block 时 CSS 动画
+       会**重新开始**，正好是我们要的时机。
+     · 退场 = closeDialog()（ui/core/dom-util.js）先挂 `.closing` 播一段 out 动画，
+       动画结束再真正 close()。原生 close() 是瞬间 display:none，光靠 CSS 没有退场可言。 */
+dialog[open] { animation: dialogIn var(--dur-overlay) var(--ease-out-expo); }
+@keyframes dialogIn {
+  from { opacity: 0; transform: translateY(calc(var(--shift-overlay) * -1)) scale(.97); filter: blur(var(--blur-overlay)); }
+}
+dialog[open]::backdrop { animation: backdropIn var(--dur-overlay) var(--ease-out-quart); }
+@keyframes backdropIn { from { opacity: 0; } }
+dialog.closing { animation: dialogOut var(--dur-overlay-out) var(--ease-out-quart) forwards; pointer-events: none; }
+@keyframes dialogOut {
+  to { opacity: 0; transform: translateY(4px) scale(.98); filter: blur(2px); }
+}
+dialog.closing::backdrop { animation: backdropOut var(--dur-overlay-out) var(--ease-out-quart) forwards; }
+@keyframes backdropOut { to { opacity: 0; } }
+
+/* ── 2. 视图切换（切页）：**不做动画** ──
+   一开始我给 .view.active 加了一层 180ms 淡入（opacity 0→1）。实测（在会正常出帧的浏览器里
+   逐帧采样）它是有害的：点击到动画真正开始之间有一段主线程同步工作（切视图 + 渲染 + 拉数据），
+   而动画的 0% 是不透明 0 —— 于是那段时间用户看到的**是空白**。采样值：
+     t=0/151/182/214ms 全为 opacity 0，t=248ms 才 0.98。
+   也就是说它比"直接硬切"更糟：硬切至少立刻看到内容。
+   参照实现这边也不给页面内容做入场动画（路由切换是即时的），所以这里保持硬切。 */
+.view.active { animation: none; }
+
+/* ── 3. 弹窗外壳（.model-modal-overlay）──
+   原来是 `fadeIn 180ms` + `popIn 260ms var(--ease-spring)`：进场带弹簧过冲（弹窗会"弹"一下），
+   而且只有进场、没有退场。这里换成与参照实现同款的语言：进场 200ms ease-out-expo、退场 150ms、
+   带 3px 模糊、去掉过冲。退场由 closeModelModal 加 `.closing`（见 ui/app.js）。 */
+.model-modal-overlay { animation: overlayIn var(--dur-overlay) var(--ease-out-quart); }
+@keyframes overlayIn { from { opacity: 0; } }
+.model-modal { animation: modalIn var(--dur-overlay) var(--ease-out-expo); }
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(calc(var(--shift-overlay) * -1)) scale(.97); filter: blur(var(--blur-overlay)); }
+}
+.model-modal-overlay.closing { animation: overlayOut var(--dur-overlay-out) var(--ease-out-quart) forwards; pointer-events: none; }
+@keyframes overlayOut { to { opacity: 0; } }
+.model-modal-overlay.closing .model-modal { animation: modalOut var(--dur-overlay-out) var(--ease-out-quart) forwards; }
+@keyframes modalOut {
+  to { opacity: 0; transform: translateY(4px) scale(.98); filter: blur(2px); }
+}
+
+/* ── 4. 按 Esc / 点遮罩的退场也要走动画（同一套）──
+   没有动画能力的环境（老浏览器 / 用户开了"关闭全部动效"）下，.closing 只是个透明层，
+   所以 closeModelModal 里另有一条超时兜底，不会把节点卡在页面上。 */
+html[data-motion='off'] .model-modal-overlay,
+html[data-motion='off'] .model-modal,
+html[data-motion='off'] dialog[open],
+html[data-motion='off'] dialog.closing { animation: none; }
+html[data-motion='off'] dialog.closing { display: none; }
+html[data-motion='reduced'] .view.active { animation-duration: .01ms; }
+@media (prefers-reduced-motion: reduce) {
+  dialog[open], dialog.closing, .model-modal-overlay, .model-modal { animation-duration: .01ms; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   窄屏修正（2026-10-08）：把被"追加区块"架空的窄屏规则重新声明一遍
+   ──────────────────────────────────────────────────────────────────────────────
+   踩过的坑：侧栏 v2 那一块是**追加在文件末尾**的，而 `@media (max-width: 900px)`
+   （L371）比它早三千多行 —— 同选择器、同权重，写在后面的赢，于是窄屏那一整块被架空。
+   实测 820px 窗口：`#tabs` 仍是 `flex-direction: column`，侧栏变成 240×782 的竖列
+   （比视口还高），正文被顶到 y=836 —— 打开控制台得先滚过一整屏导航才看得到内容。
+
+   规则：给 `ui/style.css` 末尾追加区块时，凡是这批媒体查询里出现过的选择器
+   （#sidebar / .side-head / #tabs / .tab / .side-foot …），要么写进
+   `@media (min-width: 901px)`，要么在这里把窄屏取值再声明一次。改侧栏时这一节要同步。
+   ══════════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 900px) {
+  #sidebar { width: 100%; padding: 10px 12px; gap: 6px; }
+  /* 窄屏是"顶部一条可横滑的标签条"：滑块的位移只算 Y（宽屏那套），在这里会盖住整条导航 ——
+     直接不用滑块，选中态回到"逐项底色 + 强调色文字"。 */
+  .side-pill { display: none; }
+  /* 选择器要与「侧栏样式」那一节的 `#sidebar .tab.active`（带 id）同权重，否则被它压回透明 */
+  #sidebar .tab.active { background: var(--accent-side-soft); }
+  .side-head { padding: 0 2px 4px; }
+  /* 窄屏是"顶部一条可横滑的标签条"，不是竖列：不能继承上面的 column 与 width: 100% */
+  #tabs {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 6px;
+    padding: 0 0 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .tab { width: auto; flex-shrink: 0; }
+  .side-foot { margin-top: 0; padding-top: 4px; border-top: 0; }
+  /* 窄屏这一条横着铺满整屏：不给下拉框限宽的话它会拉成几百像素宽（里面只有"观察/启用"两个字） */
+  .side-foot .runtime-control { max-width: 200px; }
+}

@@ -15,9 +15,9 @@ import {
   UPDATE_PHASE_LABELS, UPDATE_STATUS_LABELS
 } from './core/constants.js';
 import {
-  afterRender, askForConfirmation, bindPeekToggle, hideLoading, initSessionScrollLoader, pollUntilReady,
-  revealLoadingIfSlow, scheduleChatsRefresh, scheduleSessionRender, setBoxError, setLoadingStatus,
-  syncGraduatedFeatureNavigation
+  afterRender, askForConfirmation, bindPeekToggle, closeDialog, hideLoading, initSessionScrollLoader,
+  pollUntilReady, revealLoadingIfSlow, scheduleChatsRefresh, scheduleSessionRender, setBoxError,
+  setLoadingStatus, syncGraduatedFeatureNavigation
 } from './core/dom-util.js';
 import { $, $$, esc } from './core/dom.js';
 import {
@@ -28,6 +28,8 @@ import { QARegistry } from './core/registry.js';
 import { applyIcons, iconSvg } from './core/icons.js';
 import { appearanceAttrs, appearancePatch, appearanceVars, resolveAppearance } from './core/appearance.js';
 import { applyWithReveal } from './core/theme-transition.js';
+// 侧栏那两个"参照控制台"的效果（悬停展开的图标条 + 会滑动的选中块）：实现在 core/side-nav.js
+import { initSideNav, syncSideNav } from './core/side-nav.js';
 import { pendingSessionDetail, refreshIntervalMs, startUpdateProgressTicker, state } from './core/state.js';
 
 // 导航/主题等静态节点上的 data-icon 在启动时统一注入 SVG（幂等，可重复调用）
@@ -43,7 +45,7 @@ import { loadMemoryView, renderMemoryList } from './pages/memory.js';
 import { renderExperimentalSettingsSectionImpl } from './pages/moments.js';
 import { loadSessionDetail, loadSessions } from './pages/sessions.js';
 import {
-  renderSettingsImpl, resolveTheme, startListPoller, syncPriceDialogBilling
+  renderSettingsImpl, resetMenuReveal, resolveTheme, startListPoller, syncPriceDialogBilling
 } from './pages/settings.js';
 import {
   ignoreUpdateVersion, pauseAutoUpdate, refreshStatusImpl, renderLifecycleOverviewImpl,
@@ -172,6 +174,34 @@ function setAppearance(patch = {}, ev = null, { reveal = false } = {}) {
   return desiredAppearance;
 }
 
+/**
+ * 侧栏"固定"按钮的当前态（图标点亮 + 无障碍属性 + 提示文案）。
+ * 与外观面板里那个开关同源（currentAppearance().sidebarPinned），所以两边永远一致。
+ */
+function syncSideRailButton() {
+  const btn = $('#side-pin-btn');
+  if (!btn) return;
+  const pinned = currentAppearance().sidebarPinned === true;
+  btn.classList.toggle('pinned', pinned);
+  btn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+  const label = pinned ? '取消固定侧栏（改回悬停展开）' : '固定侧栏（常驻展开）';
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+}
+
+/**
+ * 点侧栏的图钉：立刻生效（localStorage）+ 尽力写回服务端。
+ * 写回这一步与顶栏主题按钮同一口径（那边也是 POST /api/config 的 ui.theme）——
+ * 不然在侧栏钉住、刷新一次又变回图标条（服务端那份没变）。
+ */
+function toggleSideRail() {
+  const next = currentAppearance().sidebarPinned !== true;
+  setAppearance({ sidebarPinned: next });
+  syncSideRailButton();
+  api('/api/config', { method: 'POST', body: JSON.stringify({ ui: { sidebarPinned: next } }) })
+    .catch(() => { /* 后端不可达时静默：本地已经生效 */ });
+}
+
 /** 点击顶栏按钮：暗 → 亮 → 跟随系统 → 暗。波纹从按钮处铺开。 */
 function cycleTheme(ev) {
   const order = THEME_VALUES;
@@ -232,6 +262,8 @@ function switchTab(name) {
   $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === name));
   $$('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
   state.tab = name;
+  // 侧栏：把"会滑动的选中块"挪到新页签上，并同步 aria-current（都按 .active 现推，见 core/side-nav.js）
+  syncSideNav();
   if (name === 'overview') loadOverview();
   if (name === 'control') loadControlHub();
   if (name === 'sessions') loadSessions();
@@ -243,7 +275,11 @@ function switchTab(name) {
   if (name === 'incidents') loadIncidentFeaturePage();
   if (name === 'assets') loadAssetObservatory();
   if (name === 'usage') loadUsageView({ force: true });
-  if (name === 'settings') loadSettings();
+  if (name === 'settings') {
+    // 进设置页时忘掉"这个分区已经露过脸"：用户可能手动把菜单滚走了，当前项得再带进视野一次
+    resetMenuReveal();
+    loadSettings();
+  }
 }
 
 function updateProgressStage(update = {}) {
@@ -338,7 +374,15 @@ function renderControlHub(data = {}) {
         <span class="update-deploy-progress-elapsed" id="hub-deploy-progress-elapsed" aria-hidden="true">${esc(updateProgressElapsed(update))}</span>
       </div>
       <div class="update-deploy-settings">
-        <label><span>告警管理员 QQ</span><input type="text" id="auto-update-owner" inputmode="numeric" value="${esc(update.ownerUin || '')}" /></label>
+        <!-- 管理员 QQ 的唯一编辑入口在「设置 → 模型 API → 全局管理员 QQ」。这里原来渲染一个真输入框，
+             stable-features 随后会把它换成 hidden 镜像 —— 于是"第一次进来有这一格、切走再回来就没了"。
+             现在从一开始就是"提示 + hidden 镜像"：DOM 不再变化，保存路径（读 #auto-update-owner 的值）
+             与既有的 syncAdminInputs 同步逻辑照旧。 -->
+        <label><span>告警管理员 QQ</span>
+          <span class="hint" style="margin:0">统一在「设置 → 模型 API → 全局管理员 QQ」里配置
+            <button type="button" class="link-btn" data-open-settings="api">去设置</button></span>
+          <input type="hidden" id="auto-update-owner" data-global-admin-mirror="true" value="${esc(update.ownerUin || '')}" />
+        </label>
         <label><span>检查间隔（小时）</span><input type="number" id="auto-update-interval" min="1" max="168" value="${esc(update.intervalHours || 6)}" /></label>
       </div>
       <div class="control-result error hidden" id="hub-deploy-error" style="margin-top:8px"></div>
@@ -430,12 +474,8 @@ function bindControlHubHandlers() {
   $('#auto-update-run')?.addEventListener('click', runManualUpdate);
   $('#auto-update-resume')?.addEventListener('click', () => saveAutoUpdateSettings(true));
   $('#auto-update-pause')?.addEventListener('click', pauseAutoUpdate);
-  $$('#control-page [data-open-settings]').forEach((button) => {
-    button.addEventListener('click', () => {
-      state.settingsSection = button.dataset.openSettings;
-      switchTab('settings');
-    });
-  });
+  // 「去设置」这种跳转按钮改由全局委托处理（见 init）：它现在出现在控制页、人物印象页、
+  // 异常处理页、观测页——原来只绑 #control-page，别处的按钮点了没反应。
   // SnowLuma 改密钥的三格也是"正在输入"的 → 本地明文开关
   for (const field of ['current', 'new', 'confirm']) {
     bindPeekToggle(`snowluma-${field}-peek`, `snowluma-${field}-password`);
@@ -952,16 +992,23 @@ function connectSSE() {
 // 顶层语句只留"注册/绑定 DOM"这类不读 state 的动作，真要开跑的挪进 init()。
 // 真模块语义下加载整棵 ui/ 的用例（test/ui-real-modules.test.mjs）盯这件事。
 
-                                 // 用于切回用量页时先立即画出旧内容，避免"黑一下"
-
 async function loadSettings() {
-  const [cfg, tplData, provData, visionData, priceData] = await Promise.all([
-    api('/api/config'),
-    api('/api/persona-templates').catch(() => ({ templates: [], failed: true })),
-    api('/api/providers').catch(() => ({ providers: [] })),
-    api('/api/vision/results').catch(() => ({ results: {}, scanning: false })),
-    api('/api/model-prices').catch(() => ({ prices: [], current: null }))
-  ]);
+  let cfg; let tplData; let provData; let visionData; let priceData;
+  try {
+    [cfg, tplData, provData, visionData, priceData] = await Promise.all([
+      api('/api/config'),
+      api('/api/persona-templates').catch(() => ({ templates: [], failed: true })),
+      api('/api/providers').catch(() => ({ providers: [] })),
+      api('/api/vision/results').catch(() => ({ results: {}, scanning: false })),
+      api('/api/model-prices').catch(() => ({ prices: [], current: null }))
+    ]);
+  } catch (error) {
+    // 配置接口是这一页的根数据，挂掉时整页渲染不了：要**看得见**地说一句，
+    // 而不是留一个未处理的 Promise 拒绝（控制台里静默一片、页面还是上一次的内容）。
+    // 其余四个接口各自带 .catch，所以只有 /api/config 会走到这里（2026-10-08 二轮审查）。
+    setBoxError($('#settings-form'), `<div class="empty-hint">读取配置失败：${esc(error?.message || error)}</div>`);
+    return;
+  }
   state.config = cfg;
   // 外观以服务端为准再套一次（localStorage 那份只是"打开就生效"的快速通道）
   applyAppearance(cfg?.ui || {});
@@ -994,7 +1041,7 @@ async function loadIdentityFeaturePage(options = {}) {
       api('/api/config'),
       api('/api/identity-pilot/status'),
       api(`/api/assets/identities?limit=500&query=${query}`),
-      api(`/api/assets/memory?query=${query}`),
+      api(`/api/assets/memory?query=${query}&limit=500`),
       api('/api/chats').catch(() => ({ chats: [] }))
     ]);
     if (token !== state.identityLoadToken) return;
@@ -1061,20 +1108,15 @@ async function loadIncidentFeaturePage(options = {}) {
   }
 }
 
-/** 「跟随服务商默认」= 配置里没有具体的思考要求（'on'/true/未设置）。 */
-/** 当前地址对应的设置原值：优先"该供应商自己的条"，没有退回全局（与服务端 effectiveThinkingRaw 同口径）。 */
- 
+/** 当前地址对应的设置原值：优先"该供应商自己的条"，没有退回全局（与服务端 effectiveThinkingRaw 同口径）。
+ *  「跟随服务商默认」＝ 配置里没有具体思考要求（'on' / true / 未设置）。 */
 function currentThinkingRaw(c) {
   const host = hostOfUrl(c.api?.baseUrl);
   const map = c.api?.thinkingByService;
   if (host && map && typeof map === 'object' && map[host] != null) return map[host];
   return c.api?.thinking;
 }
-/** 思考模式分段选择（ChatGPT 式：一排档位块，选中项实心高亮）。
- *  只列当前渠道可用的档位；「跟随服务商默认」不是强度轴上的一个点，单独用勾选框表达；
- *  渠道没有可调档位时（未实测 / 官方不支持）不出控件，如实说明。 */
 /** 当前渠道可用的档位（内置=预设清单；自定义/表外=映射里的键）。 */
- 
 function thinkingStops(c) {
   const service = uiServiceOfUrl(c.api?.baseUrl);
   const params = c.api?.thinkingParams && typeof c.api.thinkingParams === 'object' && !Array.isArray(c.api.thinkingParams)
@@ -1084,8 +1126,10 @@ function thinkingStops(c) {
     : (service ? service.levels : []);
   return levels.filter((l) => ['off', 'low', 'medium', 'high', 'max'].includes(l));
 }
-/** 渲染一条档位分段。withOn=true 时最左多一格「默认」（"聊天单独设档"的两条用它表达各行的默认）。 */
- 
+/** 渲染一条档位分段（ChatGPT 式：一排档位块，选中项实心高亮）。
+ *  只列当前渠道可用的档位；「跟随服务商默认」不是强度轴上的一个点，单独用勾选框表达；
+ *  渠道没有可调档位时（未实测 / 官方不支持）不出控件，如实说明。
+ *  withOn=true 时最左多一格「默认」（"聊天单独设档"的两条用它表达各行的默认）。 */
 function renderThinkingSeg(id, stops, cur, service, withOn) {
   const offApprox = Boolean(service && service.canDisable === false);
   const label = (v2) => (v2 === 'on' ? '默认'
@@ -1101,8 +1145,19 @@ function renderThinkingSeg(id, stops, cur, service, withOn) {
 }
 
 // ── 模型选择/添加/删除 模态框 ──
+/**
+ * 关弹窗。先加 `.closing` 播退场（150ms：整层淡出 + 卡片微收 + 糊一下），再摘节点。
+ * 为什么需要兜底计时器：`.closing` 只是个"变透明"的类，万一过渡没跑（用户开了"关闭全部动效"、
+ * 或者浏览器不支持 `@starting-style` 那套），节点会一直挂在页面上 —— 那是"关不掉的弹窗"，
+ * 比没有动画严重得多。所以 220ms 后无条件摘掉，且只摘一次。
+ */
 function closeModelModal(overlay) {
-  if (overlay) overlay.remove();
+  if (!overlay || overlay.dataset.closing === '1') return;
+  overlay.dataset.closing = '1';
+  overlay.classList.add('closing');
+  const done = () => { if (overlay.isConnected) overlay.remove(); };
+  overlay.addEventListener('transitionend', (e) => { if (e.target === overlay) done(); });
+  setTimeout(done, 220);
 }
 
 /**
@@ -1156,15 +1211,42 @@ async function init() {
   // 再用后端配置覆盖（若用户换了设备，以后端为准）。
   applyTheme(getThemePref());
   applyAppearance(getAppearancePref());
+  // 侧栏：绑定"悬停展开/失焦收起"与滑块对位（幂等，切页签时还会再同步一次）
+  initSideNav();
   try {
     const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)');
     // 仅在"跟随系统"时响应系统主题变化
     mq?.addEventListener?.('change', () => { if (getThemePref() === 'system') applyTheme('system'); });
   } catch { /* 老浏览器不支持 addEventListener，忽略 */ }
   $('#theme-btn')?.addEventListener('click', cycleTheme);
+  // 侧栏图钉：点一下切换固定/悬停展开；外观面板改的同一项也要让这颗按钮跟着亮/灭
+  $('#side-pin-btn')?.addEventListener('click', toggleSideRail);
+  document.addEventListener('qqa:appearance', syncSideRailButton);
+  syncSideRailButton();
+
+  // 浮层（模型选择、确认框、定价弹窗…）都能用 Esc 关掉：三个构造器都把"怎么收尾"挂在
+  // `.model-modal-close` 那颗按钮上，点它就等于走各家自己的收尾路径（Promise 不会悬着）。
+  // 原生 <dialog> 自己处理 Esc，这里只管 .model-modal-overlay 这一类（2026-10-08 审查）。
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Escape') return;
+    const overlays = document.querySelectorAll('.model-modal-overlay');
+    overlays[overlays.length - 1]?.querySelector('.model-modal-close')?.click();
+  });
+
+  // 「去设置」按钮：全局委托一次。用 closest 现查，所以对"渲染时机"不敏感
+  //（换成每页各自绑定，就会出现"某页的按钮点了没反应"）。
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target instanceof Element ? ev.target.closest('[data-open-settings]') : null;
+    if (!btn) return;
+    // 入口不限于按钮：总览页的「去更新 / 看详情」是 <a href="#">，不拦默认行为就会把
+    // 地址栏改成 `#` 并塞一条历史记录（对 <button> 调 preventDefault 无副作用）。
+    ev.preventDefault();
+    state.settingsSection = btn.dataset.openSettings;
+    switchTab('settings');
+  });
 
   // 「发现新版本」弹窗的三个按钮
-  $('#update-notice-later')?.addEventListener('click', () => $('#update-notice')?.close());
+  $('#update-notice-later')?.addEventListener('click', () => closeDialog($('#update-notice')));
   $('#update-notice-run')?.addEventListener('click', runUpdateFromNotice);
   $('#update-notice-ignore')?.addEventListener('click', ignoreUpdateVersion);
 
@@ -1173,7 +1255,7 @@ async function init() {
   // 弹窗里的按钮点了没反应"。
   $('#price-dialog-save')?.addEventListener('click', savePriceDialog);
   $('#price-dialog-delete')?.addEventListener('click', deletePriceDialog);
-  $('#price-dialog-cancel')?.addEventListener('click', () => $('#price-dialog')?.close());
+  $('#price-dialog-cancel')?.addEventListener('click', () => closeDialog($('#price-dialog')));
   $('#price-dialog-billing')?.addEventListener('change', syncPriceDialogBilling);
 
   // 地址栏带 ?token= 时先自动登录（供快捷方式/脚本免输令牌）；

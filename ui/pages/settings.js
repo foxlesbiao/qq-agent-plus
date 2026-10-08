@@ -28,6 +28,8 @@ import { renderPersonaSection } from './persona.js';
 import { hydratePlatformGates, hydratePlatformVoiceSelect, renderPlatformSection } from './platform.js';
 import { bindSnowlumaActions, hydrateSnowlumaPanel } from './snowluma.js';
 import { applyIcons } from '../core/icons.js';
+// 分区菜单的"选中块滑过去"与主导航共用同一份实现（2026-10-08）
+import { positionNavPill } from '../core/nav-pill.js';
 import { enhanceSeg } from '../core/segment.js';
 import { bindAppearanceControls, renderAppearanceBlock } from './settings-appearance.js';
 import { loadSessions } from './sessions.js';
@@ -64,7 +66,7 @@ function renderSettingsSidebar() {
   const s = state.status;
   const sidebar = $('#settings-sidebar');
   if (!sidebar) return;
-  // 分组（2026-10-08）：17 个分区平铺一长条最劝退，按"对话 / 记忆与人设 / 运行 / 平台 /
+  // 分组（2026-10-08）：18 个分区平铺一长条最劝退，按"对话 / 记忆与人设 / 运行 / 平台 /
   // 系统"五组归位，每组一个小标题。分组只影响侧栏观感，分区 id 与行为一个都没动
   // （ui-smoke 断言 .settings-menu-item[data-section=...] 仍在，锚点不受影响）。
   const menu = [
@@ -83,7 +85,11 @@ function renderSettingsSidebar() {
     <div class="settings-menu">
       ${menu.map(([group, items]) => `
         <div class="settings-menu-group">${esc(group)}</div>
-        ${items.map(([id, label]) => `<button class="settings-menu-item ${state.settingsSection === id ? 'active' : ''}" data-section="${id}">${label}</button>`).join('')}
+        ${items.map(([id, label]) => {
+          const on = state.settingsSection === id;
+          // aria-current="page"：一组同类元素里只标一个"当前项"（Primer/MDN 的口径）
+          return `<button class="settings-menu-item ${on ? 'active' : ''}" data-section="${id}"${on ? ' aria-current="page"' : ''}>${label}</button>`;
+        }).join('')}
       `).join('')}
     </div>`;
   sidebar.querySelectorAll('.settings-menu-item').forEach((el) => {
@@ -93,6 +99,66 @@ function renderSettingsSidebar() {
       renderSettings();
     });
   });
+  syncMenuPill();
+  bindMenuPillResync();
+  revealActiveMenuItem();
+}
+
+/**
+ * 分区菜单的滑块。与主导航同一份实现（ui/core/nav-pill.js），这里多一步：把**上一个滑块节点**
+ * 接回来 —— 这个菜单每次点击都会重建整块 DOM，节点若不回收，动画就变成"直接出现在终点"。
+ */
+let menuPill = null;
+function syncMenuPill() {
+  const menu = document.querySelector('#settings-sidebar .settings-menu');
+  if (!menu) return;
+  menuPill = positionNavPill(menu, {
+    activeSelector: ':scope > .settings-menu-item.active',
+    previous: menuPill
+  });
+}
+
+/** 外观一变（换字体/密度 → 菜单行高变了）滑块要重新对位，与主导航同一口径。只注册一次。 */
+let menuPillResyncBound = false;
+function bindMenuPillResync() {
+  if (menuPillResyncBound) return;
+  menuPillResyncBound = true;
+  document.addEventListener('qqa:appearance', () => {
+    try { syncMenuPill(); } catch { /* 菜单不在这一页，忽略 */ }
+  });
+}
+
+/**
+ * 把当前分区带进视野，只滚这根侧栏自己（不动外面那层表单的滚动位置）。
+ * 语义对齐 scrollIntoView({ block: 'nearest' })：只在跑出视野时滚、且滚最小距离 ——
+ * 不给它加这一步时，点「外观」「系统」这种靠后的分区，高亮会落在折叠线以下，等于没有指示。
+ * 只在"分区真的换了"时执行一次：否则每次保存/外观变更都会把用户手动滚到的位置拽回来。
+ */
+let revealedSection = null;
+/** 进设置页时清掉"这个分区已经露过脸"的记忆：用户手动把菜单滚走、离开再回来时，
+ *  当前项可能又跑到折叠线外了 —— 那种情况下应该再带一次进视野。 */
+function resetMenuReveal() {
+  revealedSection = null;
+}
+function revealActiveMenuItem() {
+  const sec = state.settingsSection || 'api';
+  if (sec === revealedSection) return;
+  revealedSection = sec;
+  const sidebar = $('#settings-sidebar');
+  const item = sidebar?.querySelector('.settings-menu-item.active');
+  if (!sidebar || !item) return;
+  sidebar.scrollTop += revealDelta(sidebar.getBoundingClientRect(), item.getBoundingClientRect());
+}
+
+/**
+ * "把 item 带进 box 的视野"要滚多少像素（0 ＝ 已经在视野里，正数往下滚、负数往上）。
+ * 抽成纯函数是为了能测：happy-dom 没有布局引擎，只能用假几何喂它（见 test/console-side-nav）。
+ * 语义与 scrollIntoView({ block: 'nearest' }) 一致：只在跑出视野时滚、且滚最小距离。
+ */
+function revealDelta(box, item, pad = 8) {
+  if (item.top < box.top + pad) return -(box.top + pad - item.top);
+  if (item.bottom > box.bottom - pad) return item.bottom - box.bottom + pad;
+  return 0;
 }
 
 function renderSettingsImpl() {
@@ -213,11 +279,11 @@ function renderApiSection(c) {
           <div id="thinking-split-note">${isSplitThinking(c) ? splitRowsHtml(c).note : ''}</div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:6px;flex-wrap:wrap">
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:normal">
-              <input type="checkbox" id="cfg-thinking-split" ${isSplitThinking(c) ? 'checked' : ''} />
+              <input class="sw" type="checkbox" id="cfg-thinking-split" ${isSplitThinking(c) ? 'checked' : ''} />
               <span>按任务分别设档（聊天 / 判断总结 / 写作 / 其他）</span>
             </label>
             <label id="cfg-thinking-default-row" style="display:${isSplitThinking(c) ? 'none' : 'flex'};align-items:center;gap:6px;font-size:13px;font-weight:normal">
-              <input type="checkbox" id="cfg-thinking-default" ${thinkingIsDefault(c) ? 'checked' : ''} />
+              <input class="sw" type="checkbox" id="cfg-thinking-default" ${thinkingIsDefault(c) ? 'checked' : ''} />
               <span>跟随服务商默认（不干预）</span>
             </label>
             <button class="btn btn-small" id="probe-thinking-btn" type="button" style="flex:none">测试思考能力</button>
@@ -615,7 +681,16 @@ function syncThinkingUi(url, paramsOverride, splitOverride) {
   if (splitCbNow) splitCbNow.checked = split;
   const rows = split ? splitRowsHtml(fake) : null;
   const slot = document.getElementById('thinking-seg-slot');
-  if (slot) slot.innerHTML = split ? rows.inner : thinkingSegHtml(fake);
+  if (slot) {
+    slot.innerHTML = split ? rows.inner : thinkingSegHtml(fake);
+    // 整块 innerHTML 会连**滑块**一起换掉（滑块是 enhanceSeg 插进去的子元素），
+    // 而选中态现在完全靠滑块托底（.seg-item.selected 是"白字 + 透明底"）。
+    // 不补这一次，重画之后选中档就是白字贴浅色轨道 —— 看不见。
+    // 必须用 enhanceSeg（幂等）：它除了插滑块、定位，还会挂上"点击后重新对位"与方向键/Home/End
+    // 两个监听 —— refreshSeg 只定位不挂监听，重建出来的新节点上这些全是缺的（方向键按了没反应、
+    // 点别的档位滑块不动）。2026-10-08 审查修正。
+    enhanceSeg(slot);
+  }
   const splitNote = document.getElementById('thinking-split-note');
   if (splitNote) splitNote.innerHTML = split ? rows.note : '';
   const defRow = document.getElementById('cfg-thinking-default-row');
@@ -1369,6 +1444,6 @@ function openPriceDialog({ model, vendor } = {}) {
 
 export {
   openBlocklistModal, openModelAddModal, openModelDeleteModal, openModelPicker, openPriceDialog,
-  openWhitelistPicker, renderSettingsImpl, renderTimeRuleEditor, resolveTheme, startListPoller,
-  syncPriceDialogBilling, syncThinkingUi
+  openWhitelistPicker, renderSettingsImpl, renderTimeRuleEditor, resetMenuReveal, resolveTheme,
+  startListPoller, syncPriceDialogBilling, syncThinkingUi
 };

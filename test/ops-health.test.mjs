@@ -10,12 +10,12 @@ const { runHealthCheck } = await import('../src/core/health-check.js');
 const { openDatabase } = await import('../src/core/sqlite.js');
 const { readOwnerUin } = await import('../src/core/notify-owner.js');
 
-function makeDataDir({ withDb = true, withUpdaterState = false, withMarker = false, outboundAgoMs = 0, inboundAgoMs = 0, inboundState = 'pending', inboundAvailableInMs = null, runtimePaused = false, budgetDegraded = false, extraInbound = null } = {}) {
+function makeDataDir({ withDb = true, withUpdaterState = false, withMarker = false, outboundAgoMs = 0, inboundAgoMs = 0, inboundState = 'pending', inboundAvailableInMs = null, runtimePaused = false, budgetDegraded = false, budgetPolicy = 'degrade', extraInbound = null } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-health-'));
   if (runtimePaused || budgetDegraded) {
     fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
       runtime: { mode: 'active', paused: runtimePaused },
-      api: { budget: budgetDegraded ? { enabled: true, dailyYuan: 1, onExceed: 'degrade' } : {} }
+      api: { budget: budgetDegraded ? { enabled: true, dailyYuan: 1, onExceed: budgetPolicy } : {} }
     }));
   }
   if (budgetDegraded) {
@@ -327,6 +327,11 @@ test('通知一直失败：记下 notifyError，且不谎报在 notified 里', a
 test('health.json 落盘含 streaks 与最后结果，权限 0600', async () => {
   const dir = makeDataDir();
   await runHealthCheck({ dataDir: dir, fetchImpl: okFetch, statfs: okStatfs, notify: null });
+  // 标题里的 0600 得真判一次：这是"部署机上别人读不到巡检状态"的那条属性。
+  // Windows 的 statSync().mode 没有 POSIX 权限语义，所以只在类 Unix 上断言（CI 是 Linux）。
+  if (process.platform !== 'win32') {
+    assert.equal(fs.statSync(path.join(dir, 'health.json')).mode & 0o777, 0o600, 'health.json 应当是 0600');
+  }
   const state = JSON.parse(fs.readFileSync(path.join(dir, 'health.json'), 'utf8'));
   assert.equal(typeof state.lastRunAt, 'number');
   assert.ok(Array.isArray(state.lastResults));
@@ -379,4 +384,27 @@ test('巡检：探测带超时，挂死的服务拖不住整轮', async () => {
   assert.equal(r.healthy, false);
   assert.equal(r.code, 1);
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('预算策略 block 时同样豁免"到期未处理"（保留未读是设计使然，不该误报停滞）', async () => {
+  // 2026-10-08 二轮审查：只豁免 degrade 时，把超限策略设成 block 的用户每天都会收到一条
+  // "收发链路可能停滞"的误报 —— block 的语义就是"今天不处理、消息留到明天"。
+  const blocked = makeDataDir({
+    outboundAgoMs: 7 * 60 * 60 * 1000, inboundAgoMs: 70 * 60 * 1000, budgetDegraded: true, budgetPolicy: 'block'
+  });
+  const blockedRun = await runHealthCheck({
+    dataDir: blocked, fetchImpl: okFetch, statfs: okStatfs, notify: null,
+    outboundStaleMs: 6 * 60 * 60 * 1000
+  });
+  const blockedItem = blockedRun.checks.find((c) => c.name === 'outbound-freshness');
+  assert.equal(blockedItem.ok, true, `block 策略下不该报停滞：${blockedItem.detail}`);
+  assert.match(blockedItem.detail, /预算/);
+
+  // 反向：没有超预算时，同样的"到期未处理"必须照报（豁免不能变成"一律放行"）
+  const normal = makeDataDir({ outboundAgoMs: 7 * 60 * 60 * 1000, inboundAgoMs: 70 * 60 * 1000 });
+  const normalRun = await runHealthCheck({
+    dataDir: normal, fetchImpl: okFetch, statfs: okStatfs, notify: null,
+    outboundStaleMs: 6 * 60 * 60 * 1000
+  });
+  assert.equal(normalRun.checks.find((c) => c.name === 'outbound-freshness').ok, false);
 });

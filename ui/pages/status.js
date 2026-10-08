@@ -10,7 +10,7 @@ import {
 } from '../app.js';
 import { api } from '../core/api.js';
 import { THREAD_STATE_LABEL } from '../core/constants.js';
-import { askForConfirmation, setStatusLabel, updateOnebotStatusLine } from '../core/dom-util.js';
+import { askForConfirmation, closeDialog, setStatusLabel, updateOnebotStatusLine } from '../core/dom-util.js';
 import { $, esc } from '../core/dom.js';
 import {
   chatNameOf, fmtRemainingMs, fmtTime, fmtTok, fmtTokens, fmtYuan, formatChatTitle, mulOf, onebotIssueText
@@ -203,7 +203,7 @@ async function runUpdateFromNotice() {
     // 提交成功就关掉提示框，切到「控制 → 更新部署」：进度（阶段 + 已耗时）显示在那一块，
     // 由状态派生、整页重绘也不会丢。以前这里留着框只把按钮点灰，用户看不到任何进展
     // （2026-09-22 反馈）。
-    $('#update-notice')?.close();
+    closeDialog($('#update-notice'));
     switchTab('control');
   } catch (error) {
     // 提交失败：框留着，错误直接显示在框里
@@ -218,7 +218,7 @@ async function ignoreUpdateVersion() {
   try {
     await api('/api/auto-update/ignore', { method: 'POST', body: JSON.stringify({ version }) });
   } catch { /* 忽略失败就当作稍后处理，下次打开仍会提示 */ }
-  $('#update-notice')?.close();
+  closeDialog($('#update-notice'));
 }
 
 // ── 状态栏 ──

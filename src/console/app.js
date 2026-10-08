@@ -2259,8 +2259,11 @@ export function createApp({
     }
   });
   router.add('GET', '/api/assets/memory', async (req, res, params, url) => {
+    // limit：这个接口要遍历"每个会话 × 每个成员"，不带上限时多群实例会一次吐出上千行
+    // （前端还要把它们全渲染成表格）。默认 500，与身份列表同一口径（2026-10-08 审查）。
     return json(res, 200, assetObserver.memorySummary({
-      query: url.searchParams.get('query') || ''
+      query: url.searchParams.get('query') || '',
+      limit: Math.max(1, Math.min(2000, Number(url.searchParams.get('limit')) || 500))
     }));
   });
   router.add('POST', '/api/assets/memory', async (req, res) => {
