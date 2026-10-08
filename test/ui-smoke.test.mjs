@@ -184,6 +184,37 @@ test('真实 DOM 冒烟：外观（明暗/色板/强调色/圆角/密度/微调�
   } finally { window.happyDOM?.abort?.(); }
 });
 
+test('真实 DOM 冒烟：波纹回调延迟执行时，连续操作仍以最后一次为准', { skip: SKIP }, async () => {
+  // 真浏览器里 View Transitions 的更新回调是在下一个渲染时机才跑的，所以"排队时的那份外观"
+  // 可能已经过时了。实测踩过：快速连点三个配色方案，最后生效的是第一个 —— 回调拿的是排队时的
+  // 旧快照。这里装一个"延迟执行"的 View Transition 把这个时序钉住。
+  const { window } = loadPage();
+  await settle();
+  try {
+    window.switchTab('settings');
+    await settle(60);
+    window.document.querySelector('.settings-menu-item[data-section="appearance"]').click();
+    await settle(160);
+    const doc = window.document;
+    const pending = [];
+    doc.startViewTransition = (cb) => {
+      pending.push(cb);
+      return { finished: new Promise(() => {}), updateCallbackDone: new Promise(() => {}) };
+    };
+    for (const scheme of ['nord', 'rose', 'slate']) {
+      doc.querySelector(`#appearance-schemes .scheme-card[data-scheme="${scheme}"]`).click();
+      await settle(25);
+    }
+    assert.ok(pending.length >= 1, '第一次点击应当开了一次过渡（回调被挂起）');
+    for (const cb of pending.splice(0)) cb();   // 现在才让浏览器执行更新回调
+    await settle(80);
+    assert.equal(doc.documentElement.getAttribute('data-scheme'), 'slate',
+      '延迟执行的回调必须应用"最新那一份"，而不是排队时的快照');
+    assert.equal(doc.querySelectorAll('#appearance-schemes .scheme-card.on')[0]?.dataset.scheme, 'slate',
+      '视觉选中态与生效值也要一致');
+  } finally { window.happyDOM?.abort?.(); }
+});
+
 test('真实 DOM 冒烟：api() 走 fetch 桩', { skip: SKIP }, async () => {
   const { window, fetchLog } = loadPage();
   await settle();

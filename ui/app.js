@@ -122,6 +122,8 @@ function getAppearancePref() {
 function applyAppearance(pref = {}) {
   const app = resolveAppearance(pref);
   const root = document.documentElement;
+  // 应用即同步"想要的外观"：setAppearance 的合并基准就是它（见那里的注释）
+  desiredAppearance = appearancePatch(app);
   for (const [k, v] of Object.entries(appearanceVars(app))) {
     if (v === null) root.style.removeProperty(k);
     else root.style.setProperty(k, v);
@@ -136,6 +138,15 @@ function applyAppearance(pref = {}) {
   return app;
 }
 
+/**
+ * "想要的外观"（= 合并基准）。
+ * 为什么不能直接用已生效的那份：走波纹时 applyAppearance 是被延后到浏览器的更新回调里执行的，
+ * 在那之前 state.appearance 还是旧值。若以旧值做基准，回调一跑就会把用户紧接着做的下一次
+ * 修改覆盖掉（实测：快速连点三个配色方案，最后生效的是第一个）。
+ * 所以基准取"最近一次想要的状态"：连续操作会累积，延迟执行的回调拿到的也是最新的那一份。
+ */
+let desiredAppearance = null;
+
 /** 当前生效的外观（还没算过就先从 localStorage 算一份）。 */
 function currentAppearance() {
   return state.appearance || resolveAppearance(getAppearancePref());
@@ -148,17 +159,19 @@ function currentAppearance() {
  * 换色板走 View Transitions 的圆形波纹；连续型控件（滑条）不要开，否则拖一下就闪一次。
  */
 function setAppearance(patch = {}, ev = null, { reveal = false } = {}) {
-  const next = { ...appearancePatch(currentAppearance()), ...patch };
-  const run = () => applyAppearance(next);
+  desiredAppearance = { ...(desiredAppearance || appearancePatch(currentAppearance())), ...patch };
+  // 注意 run 读的是 desiredAppearance 而不是快照：波纹的回调可能在几十~几百毫秒后才执行，
+  // 那期间用户还可能再点一次 —— 那时要应用的是"最新那一份"，不是排队时的那一份。
+  const run = () => applyAppearance(desiredAppearance);
   if (reveal) applyWithReveal(run, ev);
   else run();
-  return next;
+  return desiredAppearance;
 }
 
 /** 点击顶栏按钮：暗 → 亮 → 跟随系统 → 暗。波纹从按钮处铺开。 */
 function cycleTheme(ev) {
   const order = THEME_VALUES;
-  const cur = currentAppearance().mode;
+  const cur = (desiredAppearance || appearancePatch(currentAppearance())).mode;
   const next = order[(order.indexOf(cur) + 1) % order.length];
   setAppearance({ mode: next }, ev, { reveal: true });
   // 尽力同步到后端，失败不影响本地使用
