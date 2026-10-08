@@ -79,8 +79,17 @@ function applyWithReveal(apply, ev) {
   }
   setRevealVars(revealOrigin(ev));
   busy = true;
+  // 回调只会跑一次；applyAppearance 本身是幂等的，所以"多补一次"是安全的，
+  // 而"漏掉一次"就会让用户点了没反应 —— 所以下面挂了两层兜底。
+  let applied = false;
+  const once = () => { if (applied) return; applied = true; apply(); };
   try {
-    const t = document.startViewTransition(() => apply());
+    const t = document.startViewTransition(once);
+    // ① 浏览器跳过一次过渡时（连续操作、上一次还没结束）回调可能不被调用：
+    //    updateCallbackDone 会 reject —— 那里补上，保证变更一定发生。
+    if (t && typeof t.updateCallbackDone?.then === 'function') t.updateCallbackDone.then(() => {}, once);
+    // ② 再兜一层计时器：实现差异 / 页面被挂起时不至于卡死在这里。
+    setTimeout(once, BUSY_FALLBACK_MS);
     // finished 在过渡被跳过时也会 resolve；catch 兜住浏览器取消过渡的 rejection。
     // 另外挂一条兜底计时器：万一 finished 一直不 settle（实现差异 / 页面被挂起），
     // 也不至于把波纹功能永久关掉 —— 那种失败模式极难发现（只是"以后换主题都不动了"）。

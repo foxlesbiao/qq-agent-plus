@@ -48,7 +48,7 @@ function renderAppearanceBlock(c) {
         <div class="tweak-name">${esc(v.label)} <span class="tweak-var">${esc(v.key)}</span></div>
         <span class="tweak-default">默认</span>
         <label class="tweak-swatch" title="选择 ${esc(v.label)}" style="background:var(${esc(v.key)})">
-          <input type="color" data-tweak="${esc(v.key)}" value="${esc(saved || '#888888')}" aria-label="${esc(v.label)}颜色" />
+          <input type="color" data-tweak="${esc(v.key)}"${saved ? ' data-dirty="1"' : ''} value="${esc(saved || '#888888')}" aria-label="${esc(v.label)}颜色" />
         </label>
         <span class="tweak-hex" data-tweak-hex="${esc(v.key)}">${saved ? esc(saved) : '默认'}</span>
         <button type="button" class="tweak-reset" data-tweak-reset="${esc(v.key)}" ${saved ? '' : 'disabled'} title="恢复配色默认值">重置</button>
@@ -239,6 +239,10 @@ function bindAppearanceControls() {
   const tweakMap = () => {
     const out = {};
     for (const input of document.querySelectorAll('#appearance-tweaks [data-tweak]')) {
+      // 只收"被动过"的那几个：色值框没动过时显示的是占位色 #888888，把它当成用户的选择
+      // 会让**每一次**外观变更都把六个变量一起覆盖成中灰（实测：点一下配色方案，
+      // --bg/--border 全变成 #888888，界面糊成一片灰，色板怎么换都没反应）。
+      if (input.dataset.dirty !== '1') continue;
       const hex = String(input.value || '').trim();
       if (/^#[0-9a-fA-F]{6}$/.test(hex)) out[input.dataset.tweak] = hex;
     }
@@ -409,6 +413,7 @@ function bindAppearanceControls() {
   tweakBox?.addEventListener('input', (ev) => {
     const input = ev.target.closest('[data-tweak]');
     if (!input) return;
+    input.dataset.dirty = '1';   // 用户真的动过它 —— 从这一刻起它才是一个"覆盖"
     const sw = input.closest('.tweak-swatch');
     if (sw) sw.style.background = input.value;
     apply(ev, false);
@@ -418,14 +423,12 @@ function bindAppearanceControls() {
     if (!btn || btn.disabled) return;
     const key = btn.dataset.tweakReset;
     const input = tweakBox.querySelector(`[data-tweak="${key}"]`);
-    if (input) input.value = '#888888';
     const sw = input?.closest('.tweak-swatch');
-    // 重置 = 移除这个内联变量（setAppearance 收到空值 → appearanceVars 给 null → removeProperty）
-    const next = { ...readUI(), tweaks: { ...readUI().tweaks } };
-    delete next.tweaks[key];
-    setAppearance(next, null, { reveal: false });
+    // 重置 = 抹掉"动过"的标记并清空色值框 → readUI 不再收它 → 变量值为 null → 内联属性被摘掉，
+    // 控制权还给色板（不必再手工 delete 一次 map）
+    if (input) { input.value = '#888888'; delete input.dataset.dirty; }
     if (sw) sw.style.background = `var(${key})`;
-    syncLabels();
+    apply(ev, false);
   });
 
   // ⑧ 开关（顶栏 / 无障碍）：开关自己就是 checkbox，直接读值

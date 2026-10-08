@@ -137,6 +137,13 @@ test('真实 DOM 冒烟：外观（明暗/色板/强调色/圆角/密度/微调�
     doc.querySelector('#appearance-density .seg-item[data-v="roomy"]').click();
     assert.equal(doc.documentElement.dataset.density, 'roomy', '密度立刻生效');
 
+    // ⑤.5 关键回归：没动过主题微调时，patch 里的 tweaks 必须是空的
+    //     （实测踩过：六个色值框的占位色 #888888 被当成用户选择，一点外观变更就把
+    //       --bg/--border 全刷成中灰，界面糊成一片，色板怎么换都没反应）
+    const uiNow = window.currentAppearance();
+    // 注意用长度判断：沙箱里的对象与测试进程里的对象原型不同，deepStrictEqual 会误判
+    assert.equal(Object.keys(uiNow.tweaks || {}).length, 0, '没动过微调就一个变量都不该被覆盖');
+
     // ⑥ 主题微调：选一个颜色 → 该变量落到 <html> 上
     const bgTweak = doc.querySelector('#appearance-tweaks [data-tweak="--bg"]');
     assert.ok(bgTweak, '主题微调要有 --bg 一行');
@@ -173,7 +180,7 @@ test('真实 DOM 冒烟：外观（明暗/色板/强调色/圆角/密度/微调�
     assert.equal(patch.ui?.theme, doc.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark',
       '明暗要存在老字段 ui.theme 上（首屏内联脚本读的就是它）');
     assert.equal('mode' in (patch.ui || {}), false, '不该再多出一个 ui.mode（两个真源）');
-    assert.equal(patch.ui?.tweaks && typeof patch.ui.tweaks, 'object', '主题微调要进 patch.ui');
+    assert.equal(Object.keys(patch.ui?.tweaks || {}).length, 0, '重置过之后 tweaks 应当只剩用户真正动过的（这里是空）');
   } finally { window.happyDOM?.abort?.(); }
 });
 

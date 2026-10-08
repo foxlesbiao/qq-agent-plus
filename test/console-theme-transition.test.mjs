@@ -9,7 +9,7 @@ import { test } from 'node:test';
 const { applyWithReveal, motionDisabled, revealOrigin } = await import('../ui/core/theme-transition.js');
 
 /** 装一个假的浏览器环境（只提供这段代码真正用到的那几样）。 */
-function fakeBrowser({ motion = '', reduceMedia = false, withVT = true, viewport = [1000, 500] } = {}) {
+function fakeBrowser({ motion = '', reduceMedia = false, withVT = true, viewport = [1000, 500], skipUpdate = false, deferUpdate = true } = {}) {
   const vars = new Map();
   const calls = [];
   const style = {
@@ -34,7 +34,12 @@ function fakeBrowser({ motion = '', reduceMedia = false, withVT = true, viewport
       let done;
       const finished = new Promise((res) => { done = res; });
       settle.push(() => done());
-      return { finished, ready: Promise.resolve() };
+      // skipUpdate 模拟"上一次过渡还没结束就来了新的一次" —— 浏览器会跳过这一次，
+      // 此时 updateCallbackDone 是 rejected（而回调有可能一次都不跑）。
+      const updateCallbackDone = skipUpdate
+        ? Promise.reject(new Error('skipped'))
+        : new Promise((res) => { if (!deferUpdate) res(); else settle.push(() => res()); });
+      return { finished, ready: Promise.resolve(), updateCallbackDone };
     };
   }
   globalThis.window = window;
@@ -154,4 +159,30 @@ test('非函数入参不炸：静默返回 false', () => {
     assert.equal(applyWithReveal(null, null), false);
     assert.equal(applyWithReveal(undefined), false);
   } finally { env.restore(); }
+});
+
+test('过渡被浏览器跳过一次时，外观变更照样落地（不许"点了没反应"）', async () => {
+  const env = fakeBrowser({ skipUpdate: true });
+  try {
+    let applied = 0;
+    const used = applyWithReveal(() => { applied++; }, { clientX: 10, clientY: 10, detail: 1 });
+    assert.equal(used, true, '仍然是"走了过渡"这条路径');
+    // updateCallbackDone 已 rejected → 兜底分支应当立刻补上这次变更
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(applied, 1, '浏览器跳过过渡时必须由兜底补上，否则用户点了没反应');
+    // 而且只补一次（applyAppearance 幂等，但重复调用没必要）
+    await new Promise((r) => setTimeout(r, 5));
+    assert.equal(applied, 1, '兜底不该反复执行');
+  } finally { await env.release(); env.restore(); }
+});
+
+test('回调没被调用时，兜底计时器最后一定会把变更补上', async () => {
+  const env = fakeBrowser({ deferUpdate: false });
+  try {
+    let applied = 0;
+    // 故意让 stub 一次性解析完 updateCallbackDone，但从不调用回调 —— 模拟"回调丢了"
+    applyWithReveal(() => { applied++; }, { clientX: 1, clientY: 1, detail: 1 });
+    await new Promise((r) => setTimeout(r, 800));   // 越过 BUSY_FALLBACK_MS
+    assert.equal(applied, 1, '兜底计时器必须把变更补上');
+  } finally { await env.release(); env.restore(); }
 });
