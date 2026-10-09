@@ -543,16 +543,16 @@ function bindAppearanceListener() {
  */
 const SCHEME_PREVIEW = {
   dark: {
-    // 默认色板＝ style.css 的基础主题块（2026-10-09 值班台色板）。这条表与 CSS 的一致性
-    // 由 test/appearance-schemes.test.mjs 盯着，改了一边不改另一边会直接红。
-    default: { bg: '#0f141b', card: '#161d26' },
+    // 默认色板＝ style.css 的基础主题块。这条表与 CSS 的一致性由
+    // test/appearance-schemes.test.mjs 盯着，改了一边不改另一边会直接红。
+    default: { bg: '#0b1220', card: '#111b2d' },
     slate: { bg: '#191d24', card: '#20252e' },
     rose: { bg: '#241f38', card: '#2b2645' },
     forest: { bg: '#1b2a23', card: '#22332b' },
     nord: { bg: '#2e3440', card: '#3b4252' }
   },
   light: {
-    default: { bg: '#eef2f8', card: '#ffffff' },
+    default: { bg: '#f4f7fc', card: '#ffffff' },
     slate: { bg: '#ededed', card: '#f8f8f8' },
     rose: { bg: '#fceef4', card: '#fff4f8' },
     forest: { bg: '#f6f1e3', card: '#fdf6e3' },
