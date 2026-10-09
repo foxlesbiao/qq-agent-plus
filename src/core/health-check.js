@@ -4,6 +4,7 @@
 // fetchImpl / statfs 可注入：测试不打真实网络。
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { openDatabase } from './sqlite.js';
 import { budgetStatus } from './budget.js';
 import {
@@ -21,6 +22,20 @@ const NOTIFY_AFTER_STREAK = 3;                   // 连续失败到第 3 次才�
 // 控制台半死不活（接受连接但不响应）时，一轮巡检会被它拖住整个超时窗口 ——
 // 而 qq-agent-health.timer 是 5 分钟一次，等于巡检自己叠在一起排不上。
 const FETCH_TIMEOUT_MS = 10 * 1000;
+
+/**
+ * 更新路径的 `sudo -n docker` 回退通不通（与 src/core/snowluma-update.js 的 runDocker 同一条路）。
+ * 用 `-n`：绝不弹密码提示；超时也压住，不让一次巡检被 sudo 拖住。
+ */
+function probeSudoDocker() {
+  try {
+    const res = spawnSync('sudo', ['-n', 'docker', 'info', '--format', '{{.ServerVersion}}'],
+      { timeout: 8000, stdio: 'ignore' });
+    return res?.status === 0;
+  } catch {
+    return false;
+  }
+}
 
 function loadState(dataDir) {
   try {
@@ -132,6 +147,39 @@ export async function runHealthCheck(opts = {}) {
     }
   } catch (error) {
     add('protocol-version', true, `跳过：${error?.message ?? error}`);
+  }
+
+  // ②b Docker 套接字可读写性（Issue #30）。
+  //     协议端是靠 docker 管的，控制台里的「更新协议端」要能连上守护进程。
+  //     这里用 fs.access 而不是跑 `docker info`：要的就是“这个进程的组对不对”
+  //     这一个事实，不依赖守护进程本身健不健康，也不引入外部命令。
+  //     ⚠️ 这一项只代表**拉起巡检的那个进程**有没有权限。巡检由 systemd timer 拉起，
+  //     组同样来自 systemd --user 管理器 —— 所以它恰好能提前抓到
+  //     “管理员后加进 docker 组、但用户管理器没重建”那种状态（交互 shell 里 docker 好用、
+  //     只有控制台里报 permission denied），而那正是只会在点下“更新协议端”那一刻才爆发的坑。
+  try {
+    const dockerHost = String(process.env.DOCKER_HOST || '');
+    const sock = dockerHost.startsWith('unix://') ? dockerHost.slice('unix://'.length) : '/var/run/docker.sock';
+    fs.accessSync(sock, fs.constants.R_OK | fs.constants.W_OK);
+    add('docker-socket', true, `可读写 ${sock}`);
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      // 没装 docker、或用了远程 DOCKER_HOST ——与 protocol-version 的“跳过”同一口径：
+      // 这不是异常，不该把巡检报红。
+      add('docker-socket', true, '没有 docker 套接字（未装 docker 或用了远程 DOCKER_HOST，跳过）');
+    } else if (probeSudoDocker()) {
+      // ⚠️ 关键：不能只因为"直连不可用"就报失败。更新路径有一条 `sudo -n docker` 回退
+      //（Issue #30，与 deploy-all.sh 同一条路），那条路通则功能就是**能用**的。
+      // 只报直连失败会造出一条**永不过期的误报**：巡检每 5 分钟失败一次、连击 3 次通知 owner，
+      // 而因为那个条件不会自己恢复，也永远不会有"已恢复"通知。
+      add('docker-socket', true,
+        `直连不可用（${error?.code || '不可读'}），但 sudo -n docker 可用 —— 更新协议端会走回退；`
+        + '永久修法见 docs/LINUX.md「控制台里更新协议端报 docker 权限不足」');
+    } else {
+      add('docker-socket', false,
+        `${error?.code || '不可读'}：直连与 sudo -n docker 回退都不可用，控制台里更新协议端会失败；`
+        + '见 docs/LINUX.md「控制台里更新协议端报 docker 权限不足」');
+    }
   }
 
   // ③ 入站处理水位：判据是"**到期的入站消息有没有被处理**"，而不是"入站新 → 出站必须新"，

@@ -25,8 +25,54 @@ export const SNOWLUMA_BASELINE_IMAGE = 'motricseven7/snowluma:v1.14.22';
  */
 export const SNOWLUMA_MIN_RECOMMENDED = '1.14.20';
 
+/**
+ * 升级前备份保留份数。与 deploy.sh 的 rollback 快照同口径（3 份）：备份目录只含
+ * .env 与 docker-compose.yml，体积不是问题，真正的风险是次数——每次升级/每次失败都新建
+ * 一份且永不清理，反复升级会把数据盘与目录数一起堆上去。留 3 份够回退，也不至于无限增长。
+ */
+export const SNOWLUMA_BACKUP_KEEP = 3;
+
 const IMAGE_KEY = 'SNOWLUMA_IMAGE';
 const CONTAINER_KEY = 'SNOWLUMA_CONTAINER';
+
+/**
+ * docker 连不上守护进程时的可执行提示（Issue #30）。
+ *
+ * 为什么值得专门认这一条：控制台进程是 systemd **用户服务**，它的补充组在 `systemd --user`
+ * 管理器启动那一刻就冻结了（开了 linger 时＝开机那一刻）。管理员后来 `usermod -aG docker`
+ * 之后，新开的交互 shell 有 docker 组、`docker pull` 完全正常，但那个一直在跑的用户管理器
+ * 不会跟着更新 —— 于是**只有控制台里更新协议端会炸**，报
+ * `permission denied while trying to connect to the Docker daemon socket`。
+ *
+ * 那段原始 stderr 会把人引向“docker.sock 权限配错了”，而配置其实是对的、
+ * 只是跑控制台的那个进程没拿到组。把它换成能直接执行的步骤，才不会再收到同一个 issue。
+ */
+export const DOCKER_SOCKET_HINT = [
+  '连不上 Docker 守护进程（权限不足）。',
+  '这不是 docker.sock 的权限配错了，而是跑控制台的那个进程没有 docker 组：',
+  '控制台是 systemd 用户服务，它的补充组在 systemd --user 管理器启动时就固定了；',
+  '如果你是后来才把自己加进 docker 组的，那个一直在跑的管理器不会跟着更新 ——',
+  '交互 shell 里 docker 正常、只有控制台里不行，就是这个原因。',
+  '解决（任选其一，都会短暂重启控制台）：',
+  '  sudo systemctl restart user@$(id -u).service',
+  '  sudo loginctl terminate-user $USER      # 同上，下次登录时重建',
+  '  或直接重启机器',
+  '验证（输出里应出现 docker 组的 gid）：',
+  '  systemctl --user show -p MainPID --value qq-agent-linux \\',
+  '    | xargs -I{} grep ^Groups /proc/{}/status',
+  '  getent group docker'
+].join('\n');
+
+/** stderr/stdout 是不是“docker 套接字权限不足”（本机 unix socket 与 TCP 两种措辞都认）。 */
+export function isDockerSocketDenied(text) {
+  const raw = String(text || '');
+  // 先要求文本里出现 docker：`connect: permission denied` 这一条单看太宽了 ——
+  // 出网策略（SELinux / 防火墙 / 代理）也会给出同样的措辞，那时把用户引去
+  // "重启 user manager" 就是把人带错方向。带上 docker 上下文之后就不会误伤。
+  if (!/docker/i.test(raw)) return false;
+  return /permission denied while trying to connect to the Docker daemon socket|Got permission denied while trying to connect|connect: permission denied/i
+    .test(raw);
+}
 
 /** 从镜像串里取 tag / registry 前缀 / 仓库路径。`a/b/c:tag` → registry='a/b/'，repo='c'。 */
 export function parseImage(image = '') {
@@ -133,8 +179,62 @@ export function renderEnvWithImage(raw = '', image = '') {
   return next.join('\n');
 }
 
-/** 备份 .env 与 compose 文件到 <composeDir>/backups/<ts>/（更新前的保险）。 */
-export function backupComposeFiles(composeDir, ts = Date.now()) {
+/**
+ * 轮转 <composeDir>/backups/ 下的旧备份，只保留最新的 keep 份，返回被删的绝对路径。
+ *
+ * 必须在**创建时**调用（而不是升级成功之后）：连续失败的升级每次都会新建一份完整备份，
+ * 等成功了再清会把数据盘慢慢占满（deploy.sh 的 rollback 快照注释写了同一条教训）。
+ * 刚创建的那份由 protect 显式钉住，即使时间戳撞车也不会被删。
+ *
+ * 删除范围限死在 `<composeDir>/backups/` 的**直接子目录**，且目录名必须是纯数字时间戳：
+ * composeDir 为空、相对路径、或解析后不在 backupsRoot 下的，一律不删——一次配错的路径
+ * 不能变成对别处的 rm -rf（与 deploy.sh 的绝对路径校验是同一意图）。
+ * 清理失败只经 log 记一笔，绝不让升级流程失败（备份是保险，保险坏了不该拦下升级）。
+ */
+export function pruneComposeBackups(composeDir, { keep = SNOWLUMA_BACKUP_KEEP, protect = '', log = () => {} } = {}) {
+  const limit = Math.floor(Number(keep));
+  const root = String(composeDir || '').trim();
+  if (!Number.isFinite(limit) || limit < 1 || !root || !path.isAbsolute(root)) {
+    return { removed: [], kept: [] };
+  }
+  const backupsRoot = path.resolve(root, 'backups');
+  const protectPath = protect ? path.resolve(protect) : '';
+  let dirents = [];
+  try {
+    dirents = fs.readdirSync(backupsRoot, { withFileTypes: true });
+  } catch (error) {
+    // 目录不存在是正常情况（第一次升级）；其它错误也只是清理失败，不该中断升级
+    if (error?.code !== 'ENOENT') log(`[snowluma] 读取备份目录失败，跳过清理：${error?.message ?? error}`);
+    return { removed: [], kept: [] };
+  }
+  const entries = [];
+  for (const dirent of dirents) {
+    // 只看备份目录本身：isDirectory() 对符号链接为 false（不会顺着链接删出去），
+    // 纯数字名把范围再收一层——rm -rf 的目标只能是 <backups>/<timestamp>/
+    if (!dirent.isDirectory() || !/^\d{10,}$/.test(dirent.name)) continue;
+    const full = path.join(backupsRoot, dirent.name);
+    if (path.dirname(path.resolve(full)) !== backupsRoot) continue;
+    entries.push(full);
+  }
+  // 目录名就是创建时间戳：数值大的更新，保留前 limit 份，其余删掉
+  entries.sort((a, b) => Number(path.basename(b)) - Number(path.basename(a)));
+  const removed = [];
+  for (const target of entries.slice(limit)) {
+    if (target === protectPath) continue;                 // 新创建的那份必须保留
+    if (path.dirname(target) !== backupsRoot) continue;    // 再校验一次，别越出 backups/ 一步
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+      removed.push(target);
+    } catch (error) {
+      log(`[snowluma] 清理旧备份失败（忽略）：${path.basename(target)} ${error?.message ?? error}`);
+    }
+  }
+  const removedSet = new Set(removed);
+  return { removed, kept: entries.filter((entry) => !removedSet.has(entry)) };
+}
+
+/** 备份 .env 与 compose 文件到 <composeDir>/backups/<ts>/（更新前的保险），并轮转旧备份。 */
+export function backupComposeFiles(composeDir, ts = Date.now(), { keep = SNOWLUMA_BACKUP_KEEP, log = () => {} } = {}) {
   const dir = path.join(composeDir, 'backups', String(ts));
   fs.mkdirSync(dir, { recursive: true });
   const copied = [];
@@ -144,7 +244,9 @@ export function backupComposeFiles(composeDir, ts = Date.now()) {
     fs.copyFileSync(from, path.join(dir, name));
     copied.push(name);
   }
-  return { dir, copied };
+  // 创建时就轮转，并把刚创建的这份钉住
+  const pruned = pruneComposeBackups(composeDir, { keep, protect: dir, log });
+  return { dir, copied, pruned };
 }
 
 /** 探测协议端是否已经起来：WebUI 的公开接口能返回 JSON 就算就绪（无需鉴权）。 */
@@ -178,18 +280,62 @@ export function createSnowlumaUpdater(options = {}) {
   const exec = options.exec || defaultExec;
   const probe = options.probe || probeWebui;
   const log = options.log || (() => {});
+  // 直接 docker 撞上“套接字没权限”时，要不要回退到 `sudo -n docker`。
+  // 关掉它：QQ_AGENT_NO_SUDO_DOCKER=1。
+  const noSudoDocker = process.env.QQ_AGENT_NO_SUDO_DOCKER === '1';
+  let usedSudoDocker = false;
   const readyTimeoutMs = Number(options.readyTimeoutMs) || 120000;
   const readyPollMs = Number(options.readyPollMs) || 2000;
   let busy = null;                  // 同一时刻只允许一个更新在跑
   let lastResult = null;            // 最近一次更新结果（供"回滚到上一版"用）
 
+  /**
+   * 跑一条 docker 命令：先按当前进程的身份跑；如果撞上“套接字没权限”这种只有组缺失才会有的错，
+   * 再退回 `sudo -n docker`（一次性、非交互；没免密 sudo 就立刻失败，不会挂住）。
+   *
+   * 为什么必须有这条回退（Issue #30）：非 root 进程**无法**给自己补上缺失的补充组 ——
+   * 实测 `systemd-run --user -p SupplementaryGroups=docker` 报
+   * “Changing group credentials failed: Operation not permitted”（`sg` 在 Ubuntu 上也不是 setgid 的）。
+   * 所以在“后来才被加进 docker 组、但 systemd --user 管理器没重建”的机器上，直接 docker 永远不行。
+   * 而 deploy-all.sh 早就在用 `sudo docker` 这条同样的路（见那儿的探测梯子）——
+   * 把同一条路给运行时用上，Issue #30 那个按钮才真的能用，而不只是改一句报错。
+   */
+  function runDocker(args, opts) {
+    const res = exec('docker', args, opts);
+    if (res.ok || noSudoDocker) return res;
+    if (!isDockerSocketDenied(`${res.stderr || ''}${res.stdout || ''}`)) return res;
+    const viaSudo = exec('sudo', ['-n', 'docker', ...args], opts);
+    if (viaSudo.ok) {
+      usedSudoDocker = true;
+      log('[snowluma] 直接连 docker 权限不足（这个进程没有 docker 组），已回退到 sudo -n docker；'
+        + '永久修法见 docs/LINUX.md「控制台里更新协议端报 docker 权限不足」');
+      return viaSudo;
+    }
+    // 两条路都不通：把两边的报错合起来回传，别把 sudo 那半截丢了 ——
+    // “连提权都失败”比“权限不足”更接近真相。
+    return {
+      ...viaSudo,
+      stderr: `${String(res.stderr || '').trim()}\n${String(viaSudo.stderr || '').trim()}`.trim()
+    };
+  }
+
   function compose(...args) {
-    return exec('docker', ['compose', '--project-directory', dir, '--env-file', path.join(dir, '.env'),
+    return runDocker(['compose', '--project-directory', dir, '--env-file', path.join(dir, '.env'),
       '-f', path.join(dir, 'docker-compose.yml'), ...args], { cwd: dir, timeout: 300000 });
   }
 
+  /**
+   * docker 的原始输出 → 给用户看的文案。
+   * 认得出是“进程没 docker 组”就给可执行步骤（Issue #30），否则照旧截断回传。
+   */
+  function describeDockerFailure(text, fallback) {
+    const raw = String(text || '').trim();
+    if (isDockerSocketDenied(raw)) return `${DOCKER_SOCKET_HINT}\n\n（已尝试 sudo -n docker 回退，同样失败）\n原始输出：${raw.slice(0, 300)}`;
+    return (raw || fallback).slice(0, 500);
+  }
+
   function inspect(field) {
-    const res = exec('docker', ['inspect', '-f', `{{${field}}}`, container], { timeout: 15000 });
+    const res = runDocker(['inspect', '-f', `{{${field}}}`, container], { timeout: 15000 });
     return res.ok ? res.stdout.trim() : '';
   }
 
@@ -257,7 +403,21 @@ export function createSnowlumaUpdater(options = {}) {
       // （这是好事：没必要为了"更新"平白断一次连接）。要强制重建得手动 --force-recreate。
       log(`[snowluma] 已经是目标镜像 ${target}：只拉取/校验，compose 不会白重启容器`);
     }
-    const backup = backupComposeFiles(dir);
+    // 预检（Issue #30）：在**动任何文件之前**先确认这个进程能不能连上守护进程。
+    // 只拦“没权限”这一种 —— 守护进程挂了/镜像仓库不通交给后面真正的 pull 报，
+    // 在这里提前失败只会让原因变含糊。用 docker info 而不是探 socket 文件：
+    // 前者同时覆盖“socket 在但守护进程没起”与自定义 DOCKER_HOST 的情况。
+    const probeRes = runDocker(['info', '--format', '{{.ServerVersion}}'], { timeout: 15000 });
+    if (!probeRes.ok && isDockerSocketDenied(`${probeRes.stderr || ''}${probeRes.stdout || ''}`)) {
+      log(`[snowluma] ${DOCKER_SOCKET_HINT}`);
+      const result = {
+        ok: false, stage: 'preflight', error: DOCKER_SOCKET_HINT,
+        from, to: target, restored: true, viaSudo: usedSudoDocker, log: [DOCKER_SOCKET_HINT]
+      };
+      lastResult = result;
+      return result;
+    }
+    const backup = backupComposeFiles(dir, Date.now(), { log });
     const envFile = path.join(dir, '.env');
     const originalEnv = fs.readFileSync(envFile, 'utf8');
     const lines = [];
@@ -271,20 +431,20 @@ export function createSnowlumaUpdater(options = {}) {
       push(`pull ${pull.ok ? 'ok' : `失败(code=${pull.code})`}`);
       if (!pull.ok) {
         fs.writeFileSync(envFile, originalEnv, 'utf8');
-        const result = { ok: false, stage: 'pull', error: (pull.stderr || pull.stdout || '拉取镜像失败').trim().slice(0, 500), from, to: target, restored: true, backupDir: backup.dir, log: lines };
+        const result = { ok: false, stage: 'pull', error: describeDockerFailure(pull.stderr || pull.stdout, '拉取镜像失败'), from, to: target, restored: true, viaSudo: usedSudoDocker, backupDir: backup.dir, log: lines };
         lastResult = result;
         return result;
       }
 
       const up = compose('up', '-d');
       push(`up -d ${up.ok ? 'ok' : `失败(code=${up.code})`}`);
-      if (!up.ok) throw new Error((up.stderr || up.stdout || 'compose up 失败').trim().slice(0, 500));
+      if (!up.ok) throw new Error(describeDockerFailure(up.stderr || up.stdout, 'compose up 失败'));
 
       const ready = await waitReady();
       push(`就绪等待 ${ready.waitedMs}ms → ${ready.ok ? '已就绪' : '超时'}`);
       if (!ready.ok) throw new Error(`容器没有在 ${readyTimeoutMs}ms 内就绪（状态 ${ready.state || 'unknown'}）`);
 
-      const result = { ok: true, from, to: target, waitedMs: ready.waitedMs, backupDir: backup.dir, log: lines };
+      const result = { ok: true, from, to: target, waitedMs: ready.waitedMs, viaSudo: usedSudoDocker, backupDir: backup.dir, log: lines };
       lastResult = result;
       return result;
     } catch (error) {

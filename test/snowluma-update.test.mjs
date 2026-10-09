@@ -291,3 +291,143 @@ test('rollback：回滚到上一次更新前的镜像（没有记录时如实拒
   assert.equal(back.ok, true, JSON.stringify(back));
   assert.equal(readComposeEnv(dir).image, 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.15', '回到更新前的镜像');
 });
+
+// ── Issue #30：docker 套接字权限不足（systemd 用户服务的组是"启动那刻"冻结的） ──
+
+test('isDockerSocketDenied：认得出本机 unix socket 与 TCP 两种措辞，别的不误判', async () => {
+  const { isDockerSocketDenied } = await import('../src/core/snowluma-update.js');
+  assert.equal(isDockerSocketDenied(
+    'permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock'), true);
+  assert.equal(isDockerSocketDenied('Got permission denied while trying to connect to the Docker daemon socket'), true);
+  // `connect: permission denied` 单独出现时**不算** —— 出网策略（SELinux/防火墙/代理）
+  // 也是这个措辞，误判会把用户引去重启 user manager（审查指出的过宽问题）。
+  // 带上 docker 上下文才算。
+  assert.equal(isDockerSocketDenied('connect: permission denied'), false, '没有 docker 上下文不许判成缺组');
+  assert.equal(isDockerSocketDenied('error during connect: dial unix /var/run/docker.sock: connect: permission denied'), true);
+  // 反向：别的 docker 失败不许被当成"没权限"，否则会把用户引去改错东西
+  assert.equal(isDockerSocketDenied('manifest unknown'), false);
+  assert.equal(isDockerSocketDenied('Cannot connect to the Docker daemon at tcp://…'), false);
+  assert.equal(isDockerSocketDenied('port is already allocated'), false);
+  assert.equal(isDockerSocketDenied(''), false);
+  assert.equal(isDockerSocketDenied(undefined), false);
+});
+
+test('Issue #30：预检拦住"没权限"，给可执行步骤，且一个新文件都不动', async () => {
+  const { DOCKER_SOCKET_HINT } = await import('../src/core/snowluma-update.js');
+  const dir = makeProject({ image: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.15' });
+  const envPath = path.join(dir, '.env');
+  const before = fs.readFileSync(envPath, 'utf8');
+  const calls = [];
+  const updater = createSnowlumaUpdater({
+    composeDir: dir,
+    container: 'qq-agent-snowluma',
+    exec(cmd, args) {
+      calls.push([cmd, ...args].join(' '));
+      if (cmd === 'docker' && args[0] === 'info') {
+        return { ok: false, code: 1, stdout: '', stderr: 'permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock' };
+      }
+      // 回退尝试也要报失败（模拟“没有免密 sudo”）：这时才该给出人工修复步骤
+      if (cmd === 'sudo') {
+        return { ok: false, code: 1, stdout: '', stderr: 'sudo: a password is required' };
+      }
+      // inspect 是 status() 用来读“当前镜像/容器状态”的只读调用，允许它；
+      // 真正要钉死的是：预检没过就绝不允许 compose pull / up（那才会改东西）。
+      if (cmd === 'docker' && args[0] === 'inspect') {
+        return { ok: true, code: 0, stdout: args.join(' ').includes('.Config.Image') ? 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.15\n' : 'exited\n', stderr: '' };
+      }
+      throw new Error(`预检没过却继续调了 docker：${cmd} ${args.join(' ')}`);
+    },
+    probe: async () => ({ ok: true, status: 200 }),
+    log: () => {},
+    readyPollMs: 1,
+    readyTimeoutMs: 30
+  });
+
+  const res = await updater.update({ to: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.22' });
+
+  assert.equal(res.ok, false);
+  assert.equal(res.stage, 'preflight', '要在 preflight 阶段就挡住，而不是走到 pull 才报');
+  assert.ok(res.error.includes('systemctl restart user@'), '要给能直接执行的修复命令');
+  assert.ok(res.error.includes(DOCKER_SOCKET_HINT));
+  assert.equal(fs.readFileSync(envPath, 'utf8'), before, '.env 必须原样未动');
+  assert.equal(fs.existsSync(path.join(dir, 'backups')), false, '预检没过不该产生备份目录');
+  assert.deepEqual(calls.filter((c) => c.includes('compose')), [], '预检没过绝不允许走到 compose pull / up');
+  assert.equal(calls.filter((c) => c.startsWith('docker info')).length, 1, '只允许探一次');
+});
+
+test('Issue #30：没有 docker 组但 sudo -n 可用时，更新走 sudo 回退并且真的能跑完', async () => {
+  // 这是这条 issue 的**真正的修法**：非 root 进程无法给自己补上缺失的补充组
+  // （实测 systemd-run --user -p SupplementaryGroups=docker 报 Operation not permitted），
+  // 所以唯一的“当下就能用”的路是走 sudo —— deploy-all.sh 早就在用同一条路。
+  const dir = makeProject({ image: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.15' });
+  const docker = fakeDocker({ dir });
+  const baseExec = docker.exec;
+  const seen = [];
+  docker.exec = (cmd, args, opts) => {
+    seen.push([cmd, ...args].join(' '));
+    // 直接 docker：一律“套接字没权限”；sudo -n docker：转交给假 docker 本体
+    if (cmd === 'docker') {
+      return { ok: false, code: 1, stdout: '', stderr: 'permission denied while trying to connect to the Docker daemon socket' };
+    }
+    if (cmd === 'sudo' && args[0] === '-n' && args[1] === 'docker') {
+      const inner = args.slice(2);
+      if (inner[0] === 'info') return { ok: true, code: 0, stdout: '24.0.7\n', stderr: '' };
+      return baseExec('docker', inner, opts);
+    }
+    return { ok: false, code: -1, stdout: '', stderr: `unhandled ${cmd}` };
+  };
+
+  const res = await makeUpdater(dir, docker).update({ to: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.22' });
+  assert.equal(res.ok, true, 'sudo 回退可用时，更新应当成功（这就是 issue #30 的修法）');
+  assert.equal(res.viaSudo, true, '结果要如实标记“这次是走 sudo 跑的”');
+  assert.ok(seen.some((c) => c.startsWith('sudo -n docker compose')), 'compose 要走 sudo');
+  // 直接 docker 失败后必须落到 sudo，而不是卡在原地说“权限不足”
+  assert.ok(seen.some((c) => c.startsWith('docker info')));
+  assert.ok(seen.some((c) => c.startsWith('sudo -n docker info')));
+});
+
+test('QQ_AGENT_NO_SUDO_DOCKER=1 时不走 sudo 回退（给不想让服务提权的部署留开关）', async () => {
+  const prev = process.env.QQ_AGENT_NO_SUDO_DOCKER;
+  process.env.QQ_AGENT_NO_SUDO_DOCKER = '1';
+  try {
+    const dir = makeProject({ image: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.15' });
+    const docker = fakeDocker({ dir });
+    const baseExec = docker.exec;
+    const seen = [];
+    docker.exec = (cmd, args, opts) => {
+      seen.push([cmd, ...args].join(' '));
+      if (cmd === 'docker') return { ok: false, code: 1, stdout: '', stderr: 'permission denied while trying to connect to the Docker daemon socket' };
+      if (cmd === 'sudo') return baseExec('docker', args.slice(2), opts);
+      return { ok: false, code: -1, stdout: '', stderr: 'unhandled' };
+    };
+    const res = await makeUpdater(dir, docker).update({ to: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.22' });
+    assert.equal(res.ok, false);
+    assert.equal(res.stage, 'preflight');
+    assert.equal(seen.some((c) => c.startsWith('sudo')), false, '开关打开时不许出现任何 sudo 调用');
+  } finally {
+    if (prev === undefined) delete process.env.QQ_AGENT_NO_SUDO_DOCKER;
+    else process.env.QQ_AGENT_NO_SUDO_DOCKER = prev;
+  }
+});
+
+test('Issue #30：pull 阶段才发现没权限（例如 docker info 恰好能过）也要给可执行提示', async () => {
+  const dir = makeProject({ image: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.15' });
+  const docker = fakeDocker({ dir });
+  const baseExec = docker.exec;
+  // 场景：docker info 过得去（所以预检放行），但真正 pull 的时候才撚上权限错误 ——
+  // 比如守护进程中途被重启、或运维改回了 socket 权限。要钉的是“pull 失败也得给可执行步骤”。
+  // sudo 回退也失败（没有免密 sudo）。
+  docker.exec = (cmd, args, opts) => {
+    if (cmd === 'sudo') return { ok: false, code: 1, stdout: '', stderr: 'sudo: a password is required' };
+    if (cmd === 'docker' && args[0] === 'info') return { ok: true, code: 0, stdout: '24.0.7\n', stderr: '' };
+    if (cmd === 'docker' && args[0] === 'compose' && args.includes('pull')) {
+      return { ok: false, code: 1, stdout: '', stderr: 'permission denied while trying to connect to the Docker daemon socket' };
+    }
+    return baseExec(cmd, args, opts);
+  };
+  const res = await makeUpdater(dir, docker).update({ to: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.22' });
+  assert.equal(res.ok, false);
+  assert.equal(res.stage, 'pull');
+  assert.ok(res.error.includes('systemctl restart user@'), 'pull 失败也要把原始 stderr 换成可执行步骤');
+  assert.ok(res.error.includes('sudo -n docker 回退'), '要说清“连 sudo 都试过了”，否则用户会以为没试');
+});

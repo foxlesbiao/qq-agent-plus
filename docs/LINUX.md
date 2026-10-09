@@ -561,3 +561,69 @@ Three additional failure modes require attention:
 
 A logged-out QQ account is not a connection failure: the socket stays up and only
 `get_login_info` is missing. Watch it with `node src/ops.js watch-login`.
+
+## 控制台里更新协议端报 docker 权限不足
+
+症状：控制台 →「更新协议端」失败，日志里是
+
+```text
+unable to get image: permission denied while trying to connect to the Docker
+daemon socket at unix:///var/run/docker.sock
+```
+
+而同一个账号在交互 shell 里 `docker pull` / `docker ps` **完全正常**。
+
+**这不是 `docker.sock` 权限配错了，而是跑控制台的那个进程没有 `docker` 组。**
+
+控制台是 systemd **用户服务**，它的补充组（supplementary groups）在 `systemd --user`
+管理器启动那一刻就固定了 —— 开了 linger 的机器上就是**开机那一刻**。所以：
+
+1. 你把自己加进 docker 组（`sudo usermod -aG docker $USER`）之后，
+2. 新开的交互 shell 拿到了 `docker` 组，命令行一切正常，但
+3. 那个一直在跑的 `systemd --user`（以及它下面的控制台/协议端服务）**不会跟着更新**。
+
+于是只有控制台里那条路径会 `permission denied`。查证：
+
+```bash
+# 交互 shell 有 docker 组（应当能看到 999 或你的 docker gid）
+id
+# 控制台进程有没有 —— 输出里没有 docker 的 gid 即中招
+systemctl --user show -p MainPID --value qq-agent-linux \
+  | xargs -I{} grep ^Groups /proc/{}/status
+getent group docker            # 拿到 docker 组的 gid 用于比对
+```
+
+修复（任选其一，都会**短暂重启**控制台与协议端）：
+
+```bash
+sudo systemctl restart user@$(id -u).service   # 重建用户管理器与它下面的服务
+sudo loginctl terminate-user $USER             # 同上，下次登录时重建
+# 或直接重启机器
+```
+
+重启后再跑一次上面的 `grep ^Groups` 确认 `docker` 的 gid 已经出现。
+
+### 自动回退：没有 docker 组也照样能更新
+
+从 v0.8.1 之后起，更新路径**不再只依赖那个组**：直接调 `docker` 撞上"套接字没权限"时，会
+自动回退到 `sudo -n docker`（非交互，一次；没有免密 sudo 就立刻失败，不会挂住）。
+`deploy-all.sh` 早就在用同一条路（它的探测梯子里就有 `sudo docker`），这里只是把同一条路
+给运行时也用上 —— **所以只要你的账号有免密 sudo，上面的按钮现在直接就能用，不必先重启
+user manager**。
+
+不想让服务走提权路径的部署，设 `QQ_AGENT_NO_SUDO_DOCKER=1`（写进
+`qq-agent-linux.service` 的 `Environment=`）即可关掉这条回退，那就必须先做上面的人工修复。
+
+为什么不能做得更干净：非 root 进程**无法**给自己补上缺失的补充组 —— 实测
+`systemd-run --user -p SupplementaryGroups=docker id` 报
+`Changing group credentials failed: Operation not permitted`，而 Ubuntu 上 `sg` 也不是 setgid
+的。所以在进程内"自己修好组"这条路是不存在的，回退到 sudo 是唯一能当下就通的方案。
+
+### 另外两处让问题更早暴露
+
+- **更新前预检**：`snowluma-update.js` 在动 `.env` 之前先探一次 `docker info`（含回退），
+  两条路都不通才给出上面的人工修复步骤，而不是抛一段原始 stderr。
+- **巡检新增 `docker-socket` 一项**：每 5 分钟一次的健康检查会 `fs.access` 这个套接字。
+  直连不可用时它会**再探一次 `sudo -n docker`**（就是上面那条回退），通了就记 ok 并在详情里说明
+  "更新会走回退" —— 不这么做的话，一条"功能其实能用"的状态会变成每 5 分钟一次、连击 3 次就私聊
+  owner、而且**永远不会恢复**的误报。两条路都不通才报红。

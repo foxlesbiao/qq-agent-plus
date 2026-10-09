@@ -802,7 +802,14 @@ wait_http "http://127.0.0.1:$SNOWLUMA_PORT/api/ui/public" 90 \
   || die "SnowLuma WebUI did not become ready; run: cd $SNOWLUMA_DIR && docker compose logs"
 wait_http "http://127.0.0.1:$NOVNC_PORT/" 30 \
   || die "noVNC did not become ready; run: cd $SNOWLUMA_DIR && docker compose logs"
-if [[ "$EXISTING_STACK" == true && "$SNOWLUMA_PASSWORD" != "$(stored_value SNOWLUMA_WEBUI_BOOTSTRAP_PASSWORD)" \
+# 2026-10-06 复审 P3：原判据用 stored_value 读 SNOWLUMA_WEBUI_BOOTSTRAP_PASSWORD，但 .env
+# 已在 613-636 行把该键改写成新密码，于是「新密码 != stored_value」恒为假，整个轮换分支
+# （含 rotate-snowluma-password.mjs）永不执行：容器里还是旧密码，而 .env 与
+# deployment-access.txt 记的是新密码，凭据静默失配且无任何报错。这里改用 553-556 行
+# 在改写 .env 之前捕获的旧密码 SNOWLUMA_CURRENT_PASSWORD 来比较。
+# 另加 -n 守卫：密码未变时 553 行分支不进入，该变量为空，若不判空则空串 != 新密码 会误触发
+# 轮换（重跑脚本是常态，不能每次都轮换）；真正需要轮换却取不到旧密码时，558 行已提前 die。
+if [[ "$EXISTING_STACK" == true && -n "$SNOWLUMA_CURRENT_PASSWORD" \
   && "$SNOWLUMA_CURRENT_PASSWORD" != "$SNOWLUMA_PASSWORD" ]]; then
   # 密码走环境变量而不是命令行参数：/proc/<pid>/cmdline 对本机所有用户可读。
   export QQ_AGENT_SNOWLUMA_CURRENT_PASSWORD="$SNOWLUMA_CURRENT_PASSWORD"
