@@ -6,9 +6,16 @@ import { normalizeThinkingIntent, resolveThinkingPatch, modelServiceById, modelS
 import { resolveModelPrice, priceAt } from '../pricing/model-prices.js';
 import { setTimeout as delay } from 'node:timers/promises';
 import { assertTimeAllowed, watchTimeWindow } from '../core/time-gate.js';
+import { readJsonBounded, readTextBounded } from '../core/http-body.js';
 import { createLogger } from '../core/logger.js';
 
 const log = createLogger('llm');
+
+// 聊天响应可能是长文，给宽松但有限的上限：8 MiB 已远超正常回答，
+// 又能拦住畸形上游一口气吐几百 MB 把常驻进程读爆。
+const CHAT_RESPONSE_MAX_BYTES = 8 * 1024 * 1024;
+// /models 只是一串模型 id，2 MiB 绰绰有余。
+const MODELS_JSON_MAX_BYTES = 2 * 1024 * 1024;
 
 function joinUrl(base, path) {
   return `${String(base).replace(/\/+$/, '')}${path}`;
@@ -450,7 +457,7 @@ export async function chatCompletion({
     });
     let res = await send(body);
     if (!res.ok) {
-      let text = await res.text();
+      let text = await readTextBounded(res, CHAT_RESPONSE_MAX_BYTES);
       // 模型级差异：个别模型/网关不认识思考参数会整次 400 —— 一个可选参数不该让消息发不出去。
       // 去掉"我们自己加的"思考参数重试一次（extraBody 是用户显式填的，不动）。
       const patchKeys = thinking.patch ? Object.keys(thinking.patch) : [];
@@ -468,11 +475,11 @@ export async function chatCompletion({
           log.warn('[llm] 模型拒绝思考参数，已去掉后重试（每个模型提示一次）：', api.model, '|', text.slice(0, 160));
         }
         res = await send(retryBody);
-        if (!res.ok) text = await res.text();
+        if (!res.ok) text = await readTextBounded(res, CHAT_RESPONSE_MAX_BYTES);
       }
       if (!res.ok) throw new Error(`模型 API HTTP ${res.status}：${text.slice(0, 500)}`);
     }
-    const data = await res.json();
+    const data = await readJsonBounded(res, CHAT_RESPONSE_MAX_BYTES);
     const choice = data?.choices?.[0];
     if (!choice) throw new Error('模型 API 响应缺少 choices');
     return {
@@ -502,7 +509,7 @@ export async function listModels() {
     signal: AbortSignal.timeout(15000)
   });
   if (!res.ok) throw new Error(`获取模型列表失败：HTTP ${res.status}`);
-  const data = await res.json();
+  const data = await readJsonBounded(res, MODELS_JSON_MAX_BYTES);
   const list = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
   return list.map((m) => ({ id: String(m.id ?? m.model ?? m) })).filter((m) => m.id);
 }

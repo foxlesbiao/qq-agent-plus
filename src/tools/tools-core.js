@@ -137,7 +137,7 @@ async function stickerLookupHint(ctx, key) {
 
 import { normalizeMessageList, safeSlice, sanitizeUserText, textWithQuote, unquoteJsonString } from '../core/util.js';
 import { repairUnescapedStringQuotes } from '../core/json-repair.js';
-import { validateImageUrl } from '../llm/safe-fetch.js';
+import { assertPublicUrlLiteral, validateImageUrl } from '../llm/safe-fetch.js';
 import { webSearch, webFetch } from '../llm/web-search.js';
 import { expandForwardNodes, extractMediaFromSegments } from '../onebot/onebot.js';
 import { readForwardMessages } from '../onebot/forward-reader.js';
@@ -900,6 +900,14 @@ export function buildToolDefs() {
             if (!target) return ok(`消息 ${mid} 里没有可用的图片。`);
             file = /^https?:\/\//i.test(String(target.url || '')) ? String(target.url) : String(target.file || '');
             if (!file) return err('这张图拿不到可用的地址');
+            // 走 url 时是协议端去取，不经 safe-fetch —— 同上，先挡内网（2026-10-09 审查）
+            if (/^https?:\/\//i.test(file)) {
+              try {
+                assertPublicUrlLiteral(file, { label: '图片地址' });
+              } catch (error) {
+                return err(`这张图的地址不能用：${error?.message ?? error}`);
+              }
+            }
           }
           const avatarLimit = platformQuotaLimit(getConfig(), 'avatarsPerWeek');
           avatarQuota.configure({ globalMax: avatarLimit, perChatMax: Infinity });
@@ -1104,6 +1112,9 @@ export function buildToolDefs() {
           for (const image of candidates) {
             ctx.signal?.throwIfAborted();
             try {
+              // 同 send_group_file / set_my_avatar：地址交给协议端去取，不经 safe-fetch，
+              // 内网防护得自己来（2026-10-09 全面审查）
+              if (/^https?:\/\//i.test(image)) assertPublicUrlLiteral(image, { label: '图片地址' });
               const res = await ctx.onebot.call('ocr_image', { image }, 30000, ctx.signal);
               for (const t of (Array.isArray(res?.texts) ? res.texts : [])) {
                 const line = String(t?.text ?? '').trim();
@@ -1271,6 +1282,18 @@ export function buildToolDefs() {
           if (text && url) return err('text 和 url 只能给一个');
           const stamp = new Date().toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }).replace(/\//g, '');
           const name = safeSlice(String(args.name ?? '').trim(), 60) || `文本${stamp}.txt`;
+          // ⚠️ url 是模型给的（可能被群消息/网页内容里的提示词注入带偏），而它会被**原样交给
+          // 协议端**去下载 —— 那个请求发生在我们的网络层之外，safe-fetch 的内网/SSRF 防护
+          // 一点也盖不到。不挡的话就是一条现成的 SSRF：诱导模型传 http://169.254.169.254/…
+          // 或 docker bridge 网关上的宿主服务，响应被当文件发进群 = 数据外带
+          //（2026-10-09 全面审查）。text 走 base64 那条路没有外部地址，不需要校验。
+          if (url && /^https?:\/\//i.test(url)) {
+            try {
+              assertPublicUrlLiteral(url, { label: '文件地址' });
+            } catch (error) {
+              return err(`这个文件地址不能发：${error?.message ?? error}`);
+            }
+          }
           const file = url || `base64://${Buffer.from(text, 'utf8').toString('base64')}`;
           // 走发送队列（限频/禁言预检/outbox）：群文件在群里可见，与发消息同类
           // （2026-10-07 复审 P2）。
@@ -1418,6 +1441,14 @@ export function buildToolDefs() {
           if (!target) return ok(`消息 ${args.messageId} 里没有可上传的图片。`);
           const file = /^https?:\/\//i.test(String(target.url || '')) ? String(target.url) : String(target.file || '');
           if (!file) return err('这张图拿不到可上传的地址');
+          // 群相册上传也是把地址交给协议端去取，同 set_my_avatar（2026-10-09 全面审查）
+          if (/^https?:\/\//i.test(file)) {
+            try {
+              assertPublicUrlLiteral(file, { label: '图片地址' });
+            } catch (error) {
+              return err(`这张图的地址不能用：${error?.message ?? error}`);
+            }
+          }
           let albumId = String(args.albumId ?? '').trim();
           let albumName = String(args.albumName ?? '').trim();
           if (!albumId) {

@@ -404,10 +404,26 @@ export class ChatStore {
     });
   }
 
-  recoverExpired(now = Date.now()) {
+  /**
+   * 回收「过期且没交回」的租约：硬崩溃/SIGKILL 留下的残行，以及执行真的卡死超过租约的情况。
+   *
+   * `live`＝本进程此刻仍在执行的那些租约 id，**必须排除**。理由：租约是 runTimeoutMs+60s，
+   * 而那句 `setTimeout(() => controller.abort(...))` 只有在下一个 `signal.throwIfAborted()`
+   * 检查点才生效 —— 执行卡在一个不响应 abort 的 await 里（工具内没有 signal 的长网络/转码）时，
+   * 租约会先到期。此时回收会以 hasEffects()==false 把消息放回 pending、把 run 置 failed，
+   * 可那个执行还活着：它稍后照样把消息发出去，收尾的 ackLease/failLease 因为 state 已不是
+   * 'leased' 而 0 行生效 —— 同一个批次于是留在 pending，被下一个 drain 再处理一遍（重复回复）。
+   * 把「还在跑的」留给它自己的收尾路径处理，才不会有这个窗口（2026-10-09 全面审查）。
+   */
+  recoverExpired(now = Date.now(), { live = null } = {}) {
     const runs = this.db.prepare("SELECT id FROM runs WHERE state='leased' AND expires_at<=?").all(now);
-    for (const run of runs) this.failLease(run.id, 'Lease expired or process interrupted', { delayMs: 0 });
-    return runs.length;
+    let recovered = 0;
+    for (const run of runs) {
+      if (live && live.has(run.id)) continue;
+      this.failLease(run.id, 'Lease expired or process interrupted', { delayMs: 0 });
+      recovered += 1;
+    }
+    return recovered;
   }
 
   retryFailed(chatKey) {

@@ -30,6 +30,9 @@ function makeOrch({ onExceed = 'block', usage }) {
       unreadCount: () => 5,
       getChatMeta: () => ({ unread: 5, lastTs: 0 }),
       recoverExpired: () => 0,
+      // Orchestrator 的兜底回收/积压排期会先问一句「这个会话是不是已经有活跃租约」
+      // （2026-10-09 审查新增的闸门）。这是真 store 接口的一部分，桩也得给一个。
+      hasLeasedRun: () => false,
       expireConversationThreads: () => 0
     },
     sessions: { todayUsage: () => usage },
@@ -67,7 +70,10 @@ test('A1（行为）：「今天别再花钱」期间，恢复后排期与兜底
   // 兜底回收循环那一轮（startRecoveryLoop 的 setInterval 体）用同一套判据：
   // 逐会话判「这个唤醒会不会被预算闸门丢掉」（block 全丢；degrade 丢群里没 @ 的）
   const src = fs.readFileSync('src/core/orchestrator.js', 'utf8');
-  const body = src.slice(src.indexOf('this.retryTimer = setInterval('), src.indexOf('this.retryTimer = setInterval(') + 1100);
+  // 窗口取 1700：它是「定时器回调那一段」的长度上界，不是一条会跟着源码长大的断言。
+  // 2026-10-09 给这个循环补 hasLeasedRun 闸门（附带说明注释）后旧窗口 1100 切不到预算那行了 ——
+  // 那种情况下继续缩注释去迁就窗口，就是把「断言看得见这段代码」偷换成「代码别写注释」。
+  const body = src.slice(src.indexOf('this.retryTimer = setInterval('), src.indexOf('this.retryTimer = setInterval(') + 1700);
   assert.match(body, /if \(this\.#budgetWouldDrop\(key\)\) continue;/,
     '兜底回收循环要逐会话挡（block 与 degrade 的空转都算）；degrade 下提到 @ 的群仍要排');
 

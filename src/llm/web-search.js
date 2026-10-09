@@ -4,6 +4,21 @@
 import { getConfig } from '../core/config.js';
 import { safeFetch } from './safe-fetch.js';
 import { assertTimeAllowed, withTimeWindow } from '../core/time-gate.js';
+import { readJsonBounded, readTextBounded } from '../core/http-body.js';
+
+// 各上游响应体量上限（防畸形/超大响应把常驻进程读爆，只设超时挡不住这一点）。
+// 搜索 API 返回的是结构化短文本，2 MiB 已远超正常结果；Bing 抓的是 HTML 结果页，1 MiB 足够。
+const SEARCH_JSON_MAX_BYTES = 2 * 1024 * 1024;
+const BING_HTML_MAX_BYTES = 1024 * 1024;
+
+// provider 的 JSON 解析：只有 JSON 语法错误才转成「无法解析」，超限错误原样抛出 ——
+// 两者对外含义不同，把超限伪装成解析失败会误导排障。
+function readSearchJson(res, message) {
+  return readJsonBounded(res, SEARCH_JSON_MAX_BYTES).catch((error) => {
+    if (error?.code === 'BODY_TOO_LARGE') throw error;
+    throw new Error(message);
+  });
+}
 
 /** 查询词清洗：去 CQ 码、控制字符、超长截断。 */
 export function sanitizeQuery(query) {
@@ -79,7 +94,7 @@ export async function bingSearch(query) {
     signal: AbortSignal.timeout(15000)
   });
   if (!res.ok) throw new Error(`搜索服务 HTTP ${res.status}`);
-  const html = await res.text();
+  const html = await readTextBounded(res, BING_HTML_MAX_BYTES);
   const results = [];
   const blocks = html.split('<li class="b_algo"').slice(1);
   for (const block of blocks) {
@@ -154,10 +169,10 @@ async function deepSeekSearchRequest(query, signal) {
     signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(10000, Number(cfg.timeoutMs) || 60000))])
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await readTextBounded(res, SEARCH_JSON_MAX_BYTES).catch(() => '');
     throw new Error(`DeepSeek 搜索 HTTP ${res.status}：${text.slice(0, 300)}`);
   }
-  const data = await res.json().catch(() => { throw new Error('DeepSeek 搜索返回了无法解析的 JSON'); });
+  const data = await readSearchJson(res, 'DeepSeek 搜索返回了无法解析的 JSON');
   const outputText = String(data?.output_text ?? '').trim();
   if (!outputText) {
     // 兼容不同字段位置
@@ -194,10 +209,10 @@ export async function zhipuSearch(query) {
     signal: AbortSignal.timeout(Math.max(10000, Number(cfg.timeoutMs) || 20000))
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await readTextBounded(res, SEARCH_JSON_MAX_BYTES).catch(() => '');
     throw new Error(`智谱搜索 HTTP ${res.status}：${text.slice(0, 300)}`);
   }
-  const data = await res.json().catch(() => { throw new Error('智谱搜索返回了无法解析的 JSON'); });
+  const data = await readSearchJson(res, '智谱搜索返回了无法解析的 JSON');
   const arr = Array.isArray(data?.search_result) ? data.search_result : [];
   const results = arr
     .filter((r) => r?.link || r?.url)
@@ -229,10 +244,10 @@ export async function bochaSearch(query) {
     signal: AbortSignal.timeout(Math.max(10000, Number(cfg.timeoutMs) || 20000))
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await readTextBounded(res, SEARCH_JSON_MAX_BYTES).catch(() => '');
     throw new Error(`博查搜索 HTTP ${res.status}：${text.slice(0, 300)}`);
   }
-  const data = await res.json().catch(() => { throw new Error('博查搜索返回了无法解析的 JSON'); });
+  const data = await readSearchJson(res, '博查搜索返回了无法解析的 JSON');
   if (data?.code && Number(data.code) !== 200) {
     throw new Error(`博查搜索 API 错误（code ${data.code}）：${data.message || data.msg || '未知'}`);
   }
@@ -271,10 +286,10 @@ export async function baiduSearch(query) {
     signal: AbortSignal.timeout(Math.max(10000, Number(cfg.timeoutMs) || 20000))
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await readTextBounded(res, SEARCH_JSON_MAX_BYTES).catch(() => '');
     throw new Error(`百度搜索 HTTP ${res.status}：${text.slice(0, 300)}`);
   }
-  const data = await res.json().catch(() => { throw new Error('百度搜索返回了无法解析的 JSON'); });
+  const data = await readSearchJson(res, '百度搜索返回了无法解析的 JSON');
   if (data?.error_code && Number(data.error_code) !== 0) {
     throw new Error(`百度搜索 API 错误（code ${data.error_code}）：${data.error_msg || data.message || '未知'}`);
   }
@@ -307,10 +322,10 @@ export async function metasoSearch(query) {
     signal: AbortSignal.timeout(Math.max(10000, Number(cfg.timeoutMs) || 20000))
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await readTextBounded(res, SEARCH_JSON_MAX_BYTES).catch(() => '');
     throw new Error(`秘塔搜索 HTTP ${res.status}：${text.slice(0, 300)}`);
   }
-  const data = await res.json().catch(() => { throw new Error('秘塔搜索返回了无法解析的 JSON'); });
+  const data = await readSearchJson(res, '秘塔搜索返回了无法解析的 JSON');
   const arr = Array.isArray(data?.results) ? data.results
     : Array.isArray(data?.data) ? data.data
     : Array.isArray(data?.sources) ? data.sources
@@ -354,10 +369,10 @@ export async function doubaoSearch(query) {
     signal: AbortSignal.timeout(Math.max(10000, Number(cfg.timeoutMs) || 20000))
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await readTextBounded(res, SEARCH_JSON_MAX_BYTES).catch(() => '');
     throw new Error(`豆包搜索 HTTP ${res.status}：${text.slice(0, 300)}`);
   }
-  const data = await res.json().catch(() => { throw new Error('豆包搜索返回了无法解析的 JSON'); });
+  const data = await readSearchJson(res, '豆包搜索返回了无法解析的 JSON');
   // 火山这套接口失败时也返回 HTTP 200，错误信息在 ResponseMetadata.Error 里、
   // Result 为 null（Issue #8）：invalid_api_key / 10403 服务未开通 / 10406 10412
   // 额度用尽 / 700429 QPS 超限——处置方式完全不同，必须把真实错误抛出来。
@@ -440,10 +455,10 @@ async function customSearchRequest(query, providerId, signal) {
     signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(10000, Number(cfg.timeoutMs) || 20000))])
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await readTextBounded(res, SEARCH_JSON_MAX_BYTES).catch(() => '');
     throw new Error(`自定义搜索 HTTP ${res.status}：${text.slice(0, 300)}`);
   }
-  const data = await res.json().catch(() => { throw new Error('自定义搜索返回了无法解析的 JSON'); });
+  const data = await readSearchJson(res, '自定义搜索返回了无法解析的 JSON');
 
   // 兜住各家字段名
   const arr = Array.isArray(data?.results) ? data.results
@@ -483,7 +498,7 @@ async function bingSearchWithUrl(query, searchUrl) {
     signal: AbortSignal.timeout(15000)
   });
   if (!res.ok) throw new Error(`自定义搜索（bing 类型）HTTP ${res.status}`);
-  const html = await res.text();
+  const html = await readTextBounded(res, BING_HTML_MAX_BYTES);
   const results = [];
   for (const block of html.split('<li class="b_algo"').slice(1)) {
     const hrefMatch = block.match(/<a[^>]+href="(https?:\/\/[^"]+)"/i);
@@ -523,10 +538,10 @@ export async function tavilySearch(query) {
     signal: AbortSignal.timeout(Math.max(10000, Number(cfg.timeoutMs) || 20000))
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => '');
+    const text = await readTextBounded(res, SEARCH_JSON_MAX_BYTES).catch(() => '');
     throw new Error(`Tavily HTTP ${res.status}：${text.slice(0, 300)}`);
   }
-  const data = await res.json().catch(() => { throw new Error('Tavily 返回了无法解析的 JSON'); });
+  const data = await readSearchJson(res, 'Tavily 返回了无法解析的 JSON');
   const arr = Array.isArray(data?.results) ? data.results : [];
   const results = arr
     .filter((r) => r?.url)

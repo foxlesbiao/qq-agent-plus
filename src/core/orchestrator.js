@@ -383,6 +383,10 @@ export class Orchestrator {
     this.retryTimer = null;
     this.consolidating = new Set();    // 正在整理记忆的 chatKey
     this.runningChats = new Set();     // 正在运行的 chatKey
+    // 本进程此刻仍在执行的租约 id。兜底回收必须绕开它们 —— 否则「租约先到期、执行还活着」
+    // 的窗口里回收会把消息放回 pending，而那个执行稍后照样发出去 → 同一批被答两遍。
+    // 详见 store.recoverExpired 的注释（2026-10-09 全面审查）。
+    this.liveLeases = new Set();
     this.activeRuns = new Map();       // chatKey -> sessionId
     this.runSeq = new Map();           // chatKey -> 第几次处理（跨重启清零即可）
     // 预判时掷出的随机骰子：{ chatKey -> { roll, at } }。
@@ -458,6 +462,9 @@ export class Orchestrator {
   drainBacklogAfterResume() {
     for (const chatKey of this.store.listChats()) {
       if (this.store.unreadCount(chatKey) <= 0) continue;
+      // 同兜底回收：已有活跃租约的会话由那次执行的收尾自己 drain，这里再排一次只会
+      // 空转出一个立刻被中止的会话（2026-10-09 全面审查，与上面 ticker 同一类问题）。
+      if (this.store.hasLeasedRun(chatKey)) continue;
       if (this.#budgetWouldDrop(chatKey)) continue;   // 同兜底回收：会丢的唤醒就不排
       this.scheduleWake(chatKey, 0);
     }
@@ -485,13 +492,13 @@ export class Orchestrator {
 
   startRecoveryLoop() {
     clearInterval(this.retryTimer);
-    this.store.recoverExpired();
+    this.store.recoverExpired(Date.now(), { live: this.liveLeases });
     this.store.expireConversationThreads?.();
     this.retryTimer = setInterval(() => {
       // 兜底回收不能把进程带走：SQLITE_BUSY、磁盘满、库损坏都可能在恢复期间抛出，
       // 而 server.js 的 uncaughtException 会直接 process.exit(1)。下一个 tick 再试即可。
       try {
-        this.store.recoverExpired();
+        this.store.recoverExpired(Date.now(), { live: this.liveLeases });
         this.store.expireConversationThreads?.();
         if (this.paused || this.aborted) return;
         // ⚠️ 「今天别再花钱」（onExceed=block）时**不能**继续给有未读的会话排唤醒：
@@ -502,7 +509,10 @@ export class Orchestrator {
         // 建好的等待会话被立刻丢弃 → 未读原地不动 → 下个 tick 再来。所以这里**逐会话**判
         // 「这个唤醒会不会被预算闸门丢掉」，会丢的就不排（2026-10-04 复审 P2）。
         for (const key of this.store.listChats()) {
+          // ⚠️ hasLeasedRun：硬崩溃后 runs 表会留下未过期的 leased 残行，此时排唤醒 →
+          // claimUnread 返回 null → 静默中止，每 5 秒建一个空会话（详见 store.recoverExpired）。
           if (!canRun(key) || this.runningChats.has(key) || this.pendingWake.has(key)
+            || this.store.hasLeasedRun(key)
             || !this.#chatRuntimeDecision(key).allowed
             || this.store.unreadCount(key) <= 0) continue;
           if (this.#budgetWouldDrop(key)) continue;
@@ -1227,6 +1237,10 @@ export class Orchestrator {
     }
 
     this.runningChats.add(chatKey);
+    // 租约在这里登记为「在跑」：再往后的任何出口（准备段抛错、主 try 的 finally）都会注销它。
+    // 登记点放在 claimUnread 之后是安全的 —— 租约 `expires_at` 至少还有 runTimeoutMs+60s，
+    // 而 recoverExpired 只回收 `expires_at <= now` 的行，这段间隔不可能被扫到。
+    if (lease?.id) this.liveLeases.add(lease.id);
     // 2026-10-06 复审 P2：add 与主 try 之间原本是一大段无保护的同步准备 —— sqlite 读线程
     // （#applyWaitingConversation → getConversationThread 里还有 BEGIN IMMEDIATE）、会话落盘、
     // emit 监听器都可能抛（磁盘满/库损坏/监听器异常）。一旦抛出，主 try 的 finally 不会执行，
@@ -1290,6 +1304,7 @@ export class Orchestrator {
       if (controller) this.controllers.delete(chatKey);
       this.activeRuns.delete(chatKey);
       this.runningChats.delete(chatKey);
+      if (lease?.id) this.liveLeases.delete(lease.id);
       try {
         if (session && session.status === 'running') this.sessions.finish(session.id, 'error');
         if (lease) {
@@ -1376,6 +1391,7 @@ export class Orchestrator {
       this.controllers.delete(chatKey);
       this.activeRuns.delete(chatKey);
       this.runningChats.delete(chatKey);
+      if (lease?.id) this.liveLeases.delete(lease.id);
       this.emit('chat-update', chatKey);
     }
 

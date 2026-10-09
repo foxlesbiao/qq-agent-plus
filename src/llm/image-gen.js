@@ -14,9 +14,14 @@ import { watchTimeWindow } from '../core/time-gate.js';
 import { imageGenKeyResolve } from '../core/config.js';
 import { imageGenServiceOfBaseUrl, imageGenServiceNeedsKey } from './image-gen-presets.js';
 import { safeFetchBinary } from './safe-fetch.js';
+import { readTextBounded } from '../core/http-body.js';
 
 export const MAX_PROMPT_CHARS = 800;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;   // 与表情库落盘上限一致
+// 生图接口可能直接回 b64_json（16 MiB 图片编成 base64 约 21 MiB 字符），上限给到 16 MiB：
+// 既容纳正常大图，又能拦住畸形响应把常驻进程读爆。
+// （图片字节本身另有 MAX_IMAGE_BYTES 与 safeFetchBinary 的限量，这里只管文本读取。）
+const IMAGE_RESPONSE_MAX_BYTES = 16 * 1024 * 1024;
 
 export function imageGenConfigured(cfg) {
   const g = cfg?.imageGen || {};
@@ -180,7 +185,7 @@ export async function generateImage({
       }),
       signal: controller.signal
     });
-    const text = await res.text();
+    const text = await readTextBounded(res, IMAGE_RESPONSE_MAX_BYTES);
     let parsed = null;
     try { parsed = JSON.parse(text); } catch { /* 下面按原文报错 */ }
     if (!res.ok) {

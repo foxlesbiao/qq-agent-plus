@@ -287,3 +287,50 @@ export async function validateImageUrl(raw) {
   const { url: safeUrl } = await validateFetchUrl(url.toString());
   return safeUrl.toString();
 }
+
+/**
+ * 通用「必须是公网 http(s) 地址」校验 —— 给**不经过 safe-fetch 抓取**、而是把地址
+ * 原文交给协议端（OneBot）去下载的工具用。
+ *
+ * 为什么必须有这一层：safe-fetch 只管自己发出的请求。`send_group_file` / `set_my_avatar` /
+ * `read_image_text` / `upload_to_group_album` 这类工具是把 `file`/`image` 参数原样交给协议端
+ * 的 API，由协议端去取 —— 该请求完全在我们的网络层之外，safe-fetch 的内网/SSRF 防护一点也
+ * 盖不到。而协议端（Docker 容器）是能顺着 docker bridge 访问宿主的，于是「模型被群消息里的
+ * 提示词注入 → 调用工具时给一个内网地址」就成了一条现成的 SSRF + 数据外带通道（把内网响应
+ * 当文件发进群）。2026-10-09 全面审查发现。
+ *
+ * 与 validateImageUrl 分开而不是复用它：这个的报错文案必须是通用的（不是「图片地址」），
+ * 否则用户发文件失败时看到一句“图片地址不合法”会一头雾水。
+ *
+ * 内网例外沿用同一个开关（security.allowPrivateImageHosts，默认关）：本地测试/自建图床
+ * 靠它放行，生产默认是 fail-closed 的。
+ *
+ * **为什么是同步的、而且不做 DNS**（2026-10-09 审查里踩过一次才定下来）：
+ * 一开始这层复用了 validateFetchUrl（带 DNS 解析）。实测有两个问题：
+ *   ① 它把每一次工具调用（读图/换头像/发文件/传相册）都绑到了“我们这边 DNS 可用”上，
+ *      离线或内网部署下这些功能全部直接失败（test/sim-group-tools 当场变红就是这个原因）；
+ *   ② 它并不能真的防 DNS rebinding —— 地址最终是**协议端**去解析的，我们解析到的 IP
+ *      约束不了它的解析结果。多花一次网络往返，买到的安全感是假的。
+ * 字面量检查零成本、零依赖，且能拦住实际攻击 payload 的绝大多数（提示词注入里几乎只会写
+ * 127.0.0.1 / 169.254.169.254 / 10.x / 172.17.0.1 / localhost 这类字面量）。
+ */
+export function assertPublicUrlLiteral(raw, { label = '地址' } = {}) {
+  let url;
+  try {
+    url = new URL(String(raw ?? '').trim());
+  } catch {
+    throw new Error(`${label}不合法`);
+  }
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error(`只允许 http(s) 的${label}`);
+  if (url.username || url.password) throw new Error(`${label}不能包含凭据`);
+  if (getConfig().security?.allowPrivateImageHosts === true) return url.toString();
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  // isPrivateIp 对非 IP 的字面量（普通域名）返回 false，只有真的是 IP 时才判内网
+  if (isPrivateIp(host)) throw new Error(`${label}指向内网或本机，已拒绝`);
+  const lower = host.toLowerCase();
+  if (lower === 'localhost' || lower.endsWith('.localhost')
+    || lower.endsWith('.local') || lower.endsWith('.internal')) {
+    throw new Error(`${label}指向内网或本机，已拒绝`);
+  }
+  return url.toString();
+}
