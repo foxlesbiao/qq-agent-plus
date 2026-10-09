@@ -73,6 +73,23 @@ test('协议端基线只有一份真源：core 常量与 deploy-all.sh 的镜像
   assert.ok(deployAll.includes(`snowluma:${tag}`), `deploy-all.sh 里应引用当前基线 snowluma:${tag}`);
 });
 
+test('设计标度只有一份 CSS 真源：主题块不许再重复定义 --r-*（2026-10-09 复核）', () => {
+  // 暗色块里曾残留圆角三档与刻度默认：同特异性下后出现的 :root 覆盖了它们 → 全是死声明，
+  // 且 --r-lg 死值 14px / 生效值 12px —— 改主题块那份会"改了没反应"（复核时发现）。
+  const css = read('ui/style.css');
+  // ⚠️ 锚点别用注释文本：read() 会把 /* */ 剥成空格（这次就踩了——模式里的 `/* 间距`
+  // 在剥注释后的文本里不存在）。用变量定位，顺带把 CRLF 也容忍掉。
+  const darkMatch = /\[data-theme='dark'\]\s*\{([\s\S]*?)\r?\n\}/.exec(css);
+  assert.ok(darkMatch, '找不到暗色主题块');
+  assert.equal(/--r-(sm|md|lg|input|card|xl):/.test(darkMatch[1]), false,
+    '暗色块不许再重复定义圆角标度（真源在 :root）');
+  // 刻度兜底在 :root 设计标度节里：位置必须在 --sp-1 之后（跑回主题块就是位序倒了）
+  assert.ok(/--r-scale:\s*1;/.test(css) && /--zoom:\s*1;/.test(css));
+  const spIdx = css.indexOf('--sp-1:');
+  const scaleIdx = css.indexOf('--r-scale: 1;');
+  assert.ok(spIdx > 0 && scaleIdx > spIdx, '--r-scale 兜底要落在 :root 设计标度节里（--sp-1 之后）');
+});
+
 test('deploy-all 轮换失败不再假回滚：保持三方凭据一致，trap 尊重旗标', () => {
   // 2026-10-09 审查：回拷 .env 会把"config.json/compose 是新凭据"搞成不一致，
   // 下次部署被自家预检拒、新控制台令牌只剩 config.json 一份。
