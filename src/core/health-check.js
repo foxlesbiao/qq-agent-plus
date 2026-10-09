@@ -37,6 +37,28 @@ function probeSudoDocker() {
   }
 }
 
+/**
+ * 控制台**主进程**是否被 NoNewPrivileges 加固：加固时 `sudo -n docker` 在那边**必失败**
+ * （内核禁止 setuid 提权），巡检就不能拿"巡检进程自己能 sudo"当"功能可用"的证据 ——
+ * 那会造出一条永不过期的假绿：巡检报"更新会走回退"，用户点按钮照样失败
+ *（2026-10-09 审查；标准 unit 由 install-service.mjs 生成，默认带 NNP）。
+ * 路径：systemctl show MainPID → /proc/<pid>/status 的 NoNewPrivs。
+ * 拿不到（非 Linux / 服务没在跑）时按"未加固"处理 —— 保持旧行为。
+ */
+function mainServiceHasNoNewPrivs(service) {
+  try {
+    const name = String(service || '').trim();
+    if (!name) return false;
+    const out = spawnSync('systemctl', ['--user', 'show', '-p', 'MainPID', '--value', name],
+      { timeout: 5000, encoding: 'utf8' });
+    const pid = Number(String(out?.stdout || '').trim());
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    return /NoNewPrivs:\s*1/.test(fs.readFileSync(`/proc/${pid}/status`, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
 function loadState(dataDir) {
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(dataDir, 'health.json'), 'utf8'));
@@ -95,6 +117,8 @@ export async function runHealthCheck(opts = {}) {
     onebotHttpPort = 3390,
     onebotToken = '',
     snowlumaDir = '',
+    service = '',
+    noNewPrivsStatus = null,   // 可注入（测试）：null＝自动探测主服务进程
     outboundStaleMs = OUTBOUND_STALE_MS,
     notify = null,
     fetchImpl = globalThis.fetch,
@@ -163,10 +187,16 @@ export async function runHealthCheck(opts = {}) {
     fs.accessSync(sock, fs.constants.R_OK | fs.constants.W_OK);
     add('docker-socket', true, `可读写 ${sock}`);
   } catch (error) {
+    // 主进程被 NNP 加固时回退必失败（2026-10-09 审查）：先判，别让"巡检能 sudo"造成假绿。
+    const hardened = noNewPrivsStatus ?? mainServiceHasNoNewPrivs(service);
     if (error?.code === 'ENOENT') {
       // 没装 docker、或用了远程 DOCKER_HOST ——与 protocol-version 的“跳过”同一口径：
       // 这不是异常，不该把巡检报红。
       add('docker-socket', true, '没有 docker 套接字（未装 docker 或用了远程 DOCKER_HOST，跳过）');
+    } else if (hardened) {
+      add('docker-socket', false,
+        `${error?.code || '不可读'}：控制台主进程被 NoNewPrivileges 加固，sudo 回退不可用，`
+        + '更新协议端会失败；修法见 docs/LINUX.md「控制台里更新协议端报 docker 权限不足」');
     } else if (probeSudoDocker()) {
       // ⚠️ 关键：不能只因为"直连不可用"就报失败。更新路径有一条 `sudo -n docker` 回退
       //（Issue #30，与 deploy-all.sh 同一条路），那条路通则功能就是**能用**的。

@@ -60,6 +60,11 @@ if (!commands) {
 // qq-* 目录；启动时就存在的（用户或上一次留下的）一律不动，清理只针对新建的。
 const baseTmp = os.tmpdir();
 const preexisting = new Set(fs.readdirSync(baseTmp).filter((n) => n.startsWith('qq-')));
+// ⚠️ 运行中的服务也会在系统 tmp 下建工作目录（image-downsample 的 qq-ffmpeg-/qq-ffprobe-、
+// 运维脚本的 qq-agent-face-names-/qq-agent-model-key-）。它们和"漏网测试子进程的产物"
+// 从名字上无法区分，只能按已知前缀排除：在部署机上跑 npm test 时误删正在跑的 ffmpeg
+// 工作目录，会让那次图片/GIF 处理直接失败（2026-10-09 审查）。新增运行时 tmp 前缀时同步这里。
+const RUNTIME_TMP_PREFIXES = ['qq-ffmpeg-', 'qq-ffprobe-', 'qq-agent-face-names-', 'qq-agent-model-key-'];
 const tmpRoot = fs.mkdtempSync(path.join(baseTmp, 'qq-test-root-'));
 let cleaned = false;
 function rmBestEffort(target) {
@@ -84,6 +89,7 @@ function cleanup() {
   try {
     for (const entry of fs.readdirSync(baseTmp, { withFileTypes: true })) {
       if (!entry.isDirectory() || !entry.name.startsWith('qq-')) continue;
+      if (RUNTIME_TMP_PREFIXES.some((p) => entry.name.startsWith(p))) continue;   // 可能是运行中服务的目录，别动
       if (preexisting.has(entry.name) || entry.name === path.basename(tmpRoot)) continue;
       rmBestEffort(path.join(baseTmp, entry.name));
     }

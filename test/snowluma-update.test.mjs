@@ -347,7 +347,10 @@ test('Issue #30：预检拦住"没权限"，给可执行步骤，且一个新文
 
   assert.equal(res.ok, false);
   assert.equal(res.stage, 'preflight', '要在 preflight 阶段就挡住，而不是走到 pull 才报');
-  assert.ok(res.error.includes('systemctl restart user@'), '要给能直接执行的修复命令');
+  // 断言"有可执行的修复命令"要钉到**正向命令**上：2026-10-09 换文案后，
+  // 用 includes('systemctl restart user@') 会被"不要用 restart"的警告句满足（假绿）。
+  assert.ok(res.error.includes('sudo systemctl stop user@') && res.error.includes('sudo systemctl start user@'),
+    '要给能直接执行的修复命令（stop → sleep → start 三段式）');
   assert.ok(res.error.includes(DOCKER_SOCKET_HINT));
   assert.equal(fs.readFileSync(envPath, 'utf8'), before, '.env 必须原样未动');
   assert.equal(fs.existsSync(path.join(dir, 'backups')), false, '预检没过不该产生备份目录');
@@ -384,6 +387,66 @@ test('Issue #30：没有 docker 组但 sudo -n 可用时，更新走 sudo 回退
   // 直接 docker 失败后必须落到 sudo，而不是卡在原地说“权限不足”
   assert.ok(seen.some((c) => c.startsWith('docker info')));
   assert.ok(seen.some((c) => c.startsWith('sudo -n docker info')));
+});
+
+test('NNP 加固的 unit 里一次 sudo 都不试，报错直接指向真正的修法（2026-10-09 审查）', async () => {
+  // NoNewPrivileges 下 sudo 必失败（内核禁止 setuid 提权），而标准 unit 默认带加固。
+  // 试一次注定失败的提权只会把用户引向"是不是 sudo 没配"——真正的修法是重启 user manager。
+  const dir = makeProject({ image: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.15' });
+  const docker = fakeDocker({ dir });
+  const seen = [];
+  docker.exec = (cmd, args) => {
+    seen.push([cmd, ...args].join(' '));
+    if (cmd === 'docker') {
+      return { ok: false, code: 1, stdout: '', stderr: 'permission denied while trying to connect to the Docker daemon socket' };
+    }
+    return { ok: false, code: -1, stdout: '', stderr: `unhandled ${cmd}` };
+  };
+  const updater = createSnowlumaUpdater({
+    composeDir: dir,
+    container: 'qq-agent-snowluma',
+    webuiPort: 5099,
+    exec: docker.exec,
+    probe: async () => ({ ok: true, status: 200 }),
+    hasNoNewPrivs: () => true,          // 模拟 install-service.mjs 生成的加固 unit
+    log: () => {}
+  });
+  const res = await updater.update({ to: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.22' });
+  assert.equal(res.ok, false);
+  assert.equal(seen.some((c) => c.startsWith('sudo')), false, '加固时必须一次 sudo 都不试');
+  assert.match(String(res.error || ''), /NoNewPrivileges/, '报错要指出加固这个真因');
+  assert.equal(/已尝试 sudo/.test(String(res.error || '')), false,
+    '没试过就不许说"已尝试 sudo 回退"（会把用户引向 sudo 配置错误）');
+});
+
+test('dockerSocketHintLocal：按本机诊断给出精确命令，且通用提示不再埋 terminate-user 的雷', async () => {
+  const { dockerSocketHintLocal, DOCKER_SOCKET_HINT } = await import('../src/core/snowluma-update.js');
+  // ① 诊断不可用（非 Linux / 命令缺失）：不给本机段
+  assert.equal(dockerSocketHintLocal({ userInGroup: null }), '');
+  assert.equal(dockerSocketHintLocal({}), '');
+  // ② 已在 docker 组：只差让管理器读到 —— 给 stop/sleep/start 三步，且不该再叫用户 usermod
+  const one = dockerSocketHintLocal({ user: 'ubuntu', groupExists: true, userInGroup: true });
+  assert.match(one, /sudo systemctl stop user@/);
+  assert.match(one, /sleep 3/);
+  assert.match(one, /sudo systemctl start user@/);
+  assert.equal(/systemctl restart user@/.test(one), false,
+    '不许给 restart：实测会撞 219/CGROUP 且失败后不自动恢复');
+  assert.equal(/usermod/.test(one), false, '已经在组里就不该再让用户 usermod');
+  // ③ 不在组：加组 + 重建四步
+  const two = dockerSocketHintLocal({ user: 'ubuntu', groupExists: true, userInGroup: false });
+  assert.match(two, /sudo usermod -aG docker ubuntu/);
+  assert.match(two, /sudo systemctl stop user@/);
+  assert.match(two, /sudo systemctl start user@/);
+  // ④ 没有 docker 组（非标准安装）：指向文档，不给命令
+  const none = dockerSocketHintLocal({ user: 'ubuntu', groupExists: false, userInGroup: false });
+  assert.match(none, /LINUX\.md/);
+  // ⑤ 2026-10-09 实测：terminate-user 不会自动重建、restart 会撞 219/CGROUP —— 都不许当修复手段
+  assert.equal(/sudo loginctl terminate-user/.test(DOCKER_SOCKET_HINT), false,
+    'DOCKER_SOCKET_HINT 不许再教 terminate-user');
+  assert.equal(/sudo systemctl restart user@/.test(DOCKER_SOCKET_HINT), false,
+    'restart user@ 是 219/CGROUP 的雷（实测），不许再当修复命令');
+  assert.match(DOCKER_SOCKET_HINT, /sudo systemctl stop user@/);
+  assert.match(DOCKER_SOCKET_HINT, /sudo systemctl start user@/);
 });
 
 test('QQ_AGENT_NO_SUDO_DOCKER=1 时不走 sudo 回退（给不想让服务提权的部署留开关）', async () => {

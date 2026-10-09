@@ -62,6 +62,33 @@ const badFetch = async () => { throw new Error('ECONNREFUSED'); };
 const okStatfs = () => ({ bavail: 100, bsize: 1024 * 1024 * 1024 });          // 100GB
 const lowStatfs = () => ({ bavail: 0.2, bsize: 1024 * 1024 * 1024 });          // 0.2GB
 
+test('docker-socket：主进程被 NNP 加固时报红并指向修法，不再拿巡检的 sudo 当证据', async (t) => {
+  // 2026-10-09 审查：巡检 unit 没有 NNP，而控制台主 unit 有（标准部署）—— 旧逻辑会让
+  // "巡检进程能 sudo" 被当成"更新会走回退"，用户点按钮照样失败，是一条永不过期的假绿。
+  if (process.platform === 'win32') return t.skip('需要 POSIX 权限位造 EACCES（Windows 无法复现）');
+  if (process.getuid?.() === 0) return t.skip('root 无视权限位，造不出 EACCES');
+  const dir = makeDataDir({});
+  const sock = path.join(dir, 'fake-docker.sock');
+  fs.writeFileSync(sock, '');
+  fs.chmodSync(sock, 0o000);
+  const prevHost = process.env.DOCKER_HOST;
+  process.env.DOCKER_HOST = `unix://${sock}`;
+  try {
+    const r = await runHealthCheck({
+      dataDir: dir, fetchImpl: okFetch, statfs: okStatfs, notify: null,
+      service: 'qq-agent-linux.service', noNewPrivsStatus: true
+    });
+    const item = r.checks.find((c) => c.name === 'docker-socket');
+    assert.ok(item, '巡检必须包含 docker-socket 一项');
+    assert.equal(item.ok, false, '主进程加固且直连不可用 → 报红（旧行为在这里出假绿）');
+    assert.match(String(item.detail), /NoNewPrivileges/);
+  } finally {
+    if (prevHost === undefined) delete process.env.DOCKER_HOST;
+    else process.env.DOCKER_HOST = prevHost;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('全绿：控件/OneBot/水位/磁盘/完整性都过 → healthy，退出码 0', async () => {
   const dir = makeDataDir();
   const r = await runHealthCheck({ dataDir: dir, fetchImpl: okFetch, statfs: okStatfs, notify: null });

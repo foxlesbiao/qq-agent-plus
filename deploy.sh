@@ -587,5 +587,57 @@ if [[ -n "${QQ_AGENT_SOURCE_REVISION:-}" && -f "$INSTALL_DIR/.deployment.json" &
 fi
 systemctl --user --no-pager status "$SERVICE.service" || true
 MODE="$("$NODE_BIN" -e 'const c=require(process.argv[1]);process.stdout.write(c.runtime.mode)' "$DATA_DIR/config.json" 2>/dev/null)" || MODE="unknown"
+# ── docker 组自愈：控制台的「更新协议端」按钮靠服务进程直连 /var/run/docker.sock ──────────
+# 背景（Issue #30）：服务进程的补充组在 user manager 启动那一刻冻结；而标准部署从不碰
+# docker 组成员关系 —— 那个按钮从第一天起就会报 permission denied。收尾做两件事（幂等、尽力而为）：
+#   ① 把部署用户加进 docker 组（getent / usermod 是 systemd 家族各发行版 —— Ubuntu/Debian/
+#      CentOS/Fedora/Arch —— 的通用件；没有 docker 组的环境静默跳过）；
+#   ② user manager 若还带着旧组快照就重建它（重建后 linger 自动拉起服务，新进程带上新组）。
+# ⚠️ 重建必须 stop → sleep 3 → start，**不能用 systemctl restart**：2026-10-09 实测（systemd 249）
+#    用 restart 时新管理器会因旧实例 cgroup 未回收而以 status=219/CGROUP 启动失败，且失败后
+#    不会自动回来（服务停摆到人工 start）；停、留回收间隔、再单独起，是实测可靠的姿势。
+#    脚本自身不受影响：ssh 会话在独立的 session scope（实测 cgroup 为 session-*.scope），
+#    重建只动 user@.service 的 cgroup。
+# ⚠️ 自动更新（QQ_AGENT_SOURCE_REVISION 有值）场景**跳过重建**：无人值守时不做停服动作，
+#    只加组（等下次交互部署或机器重启时自然生效）。
+if getent group docker >/dev/null 2>&1; then
+  # 收尾段仍在 set -e 之下：每个可能失败的赋值都要自带保护，否则会把退出码弄坏
+  DOCKER_GID="$(getent group docker 2>/dev/null | cut -d: -f3 || true)"
+  if [[ -n "$DOCKER_GID" ]]; then
+    if ! id -nG "$(id -un)" | tr ' ' '\n' | grep -qx docker; then
+      if sudo usermod -aG docker "$(id -un)" >/dev/null 2>&1; then
+        printf '已把 %s 加入 docker 组（控制台「更新协议端」需要）\n' "$(id -un)"
+      else
+        printf '警告：把自己加入 docker 组失败；控制台「更新协议端」会报权限不足（可手工执行：sudo usermod -aG docker %s）\n' "$(id -un)" >&2
+      fi
+    fi
+    if [[ -z "${QQ_AGENT_SOURCE_REVISION:-}" ]]; then
+      MANAGER_UNIT="user@$(id -u).service"
+      SVC_PID="$(systemctl --user show "$SERVICE.service" -p MainPID --value 2>/dev/null || true)"
+      SVC_GROUPS=""
+      if [[ "$SVC_PID" =~ ^[0-9]+$ && -r "/proc/$SVC_PID/status" ]]; then
+        SVC_GROUPS=" $(grep '^Groups:' "/proc/$SVC_PID/status" 2>/dev/null | cut -d: -f2 | tr '\t' ' ' || true) "
+      fi
+      if [[ -n "$SVC_GROUPS" && "$SVC_GROUPS" != *" $DOCKER_GID "* ]]; then
+        printf '重建 user manager 让 docker 组生效（服务会停约 10 秒后自动恢复）……\n'
+        if sudo systemctl stop "$MANAGER_UNIT" 2>/dev/null; then
+          sleep 3
+          if ! sudo systemctl start "$MANAGER_UNIT" 2>/dev/null; then
+            sudo systemctl start "$MANAGER_UNIT" 2>/dev/null \
+              || printf '警告：user manager 没能启动；请执行：sudo systemctl start %s\n' "$MANAGER_UNIT" >&2
+          fi
+          sleep 4
+          if systemctl --user is-active --quiet "$SERVICE.service" 2>/dev/null; then
+            printf '服务已随新管理器恢复（docker 组已生效，控制台可用）\n'
+          else
+            printf '服务正在启动，几秒后可用（若长时间不可用：systemctl --user status %s）\n' "$SERVICE.service" >&2
+          fi
+        else
+          printf '警告：停 user manager 失败；请手工执行：sudo systemctl stop %s && sleep 3 && sudo systemctl start %s\n' "$MANAGER_UNIT" "$MANAGER_UNIT" >&2
+        fi
+      fi
+    fi
+  fi
+fi
 printf '\nConsole: http://%s:%s (%s mode)\nToken: %s/manage.sh token\n' "$HEALTH_HOST" "$PORT" "$MODE" "$INSTALL_DIR"
 [[ -z "$ROLLBACK_DIR" ]] || printf 'Rollback snapshot: %s\n' "$ROLLBACK_DIR"

@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 
 /** 项目测过的协议端基线：ops deploy 与"建议版本"都用它（单一真源）。 */
@@ -51,17 +52,84 @@ export const DOCKER_SOCKET_HINT = [
   '连不上 Docker 守护进程（权限不足）。',
   '这不是 docker.sock 的权限配错了，而是跑控制台的那个进程没有 docker 组：',
   '控制台是 systemd 用户服务，它的补充组在 systemd --user 管理器启动时就固定了；',
-  '如果你是后来才把自己加进 docker 组的，那个一直在跑的管理器不会跟着更新 ——',
+  '你把自己加进 docker 组之后，那个一直在跑的管理器不会跟着更新 ——',
   '交互 shell 里 docker 正常、只有控制台里不行，就是这个原因。',
-  '解决（任选其一，都会短暂重启控制台）：',
-  '  sudo systemctl restart user@$(id -u).service',
-  '  sudo loginctl terminate-user $USER      # 同上，下次登录时重建',
+  '解决（会短暂重启控制台与协议端；最新版 deploy.sh / deploy-all.sh 在收尾时会自动做这件事，',
+  '更早装好的机器才需要手工执行）：',
+  '  sudo systemctl stop user@$(id -u).service',
+  '  sleep 3',
+  '  sudo systemctl start user@$(id -u).service',
   '  或直接重启机器',
+  '⚠️ 不要用 systemctl restart user@ 代替：2026-10-09 实测（systemd 249）stop 与 start 挨太近时，',
+  '   新管理器会因旧实例 cgroup 未回收而以 status=219/CGROUP 启动失败，且失败后不会自动回来',
+  '   （服务停摆到人工 start）；分开两步、留 3 秒间隔才稳。',
+  '⚠️ 也不要用 loginctl terminate-user：它同样不会把管理器自动带回来，服务会停到你下次登录。',
   '验证（输出里应出现 docker 组的 gid）：',
-  '  systemctl --user show -p MainPID --value qq-agent-linux \\',
+  '  systemctl --user show qq-agent-linux.service -p MainPID --value \\',
   '    | xargs -I{} grep ^Groups /proc/{}/status',
   '  getent group docker'
 ].join('\n');
+
+/**
+ * 本机诊断：账号在不在 docker 组 —— 用来把修复步骤精确到"这一台还差什么"。
+ * getent/id 是各 systemd 发行版的通用件（Ubuntu/Debian/CentOS/Fedora/Arch…）；
+ * 命令不可用（非 Linux、极简容器）时返回 null 字段 = "不知道"，调用方退回通用提示。
+ */
+export function dockerGroupDiagnosis() {
+  let user = '';
+  try { user = os.userInfo().username; } catch { user = String(process.env.USER || ''); }
+  try {
+    const res = spawnSync('getent', ['group', 'docker'], { encoding: 'utf8', timeout: 5000 });
+    if (!res || res.error || res.status === null) return { user, groupExists: null, userInGroup: null };
+    if (res.status !== 0) return { user, groupExists: false, userInGroup: false };
+    const members = String(res.stdout || '').split(':')[3] || '';
+    let inGroup = members.split(',').map((s) => s.trim()).filter(Boolean).includes(user);
+    if (!inGroup) {
+      // 也可能把 docker 设成了主组（少见但合法）
+      const primary = spawnSync('id', ['-gn'], { encoding: 'utf8', timeout: 5000 });
+      if (primary?.status === 0 && String(primary.stdout || '').trim() === 'docker') inGroup = true;
+    }
+    return { user, groupExists: true, userInGroup: inGroup };
+  } catch {
+    return { user, groupExists: null, userInGroup: null };
+  }
+}
+
+/**
+ * 按本机诊断生成"精确到这一台"的修复步骤（附在通用提示前面）；诊断不可用时返回空串。
+ * 三条 2026-10-09 实测过的铁律写进文案：
+ *   · NoNewPrivileges 加固的 unit 里 sudo 必失败 → 没有免密捷径，必须人工做一次；
+ *   · 重建管理器必须 stop → sleep 3 → start：restart 会撞 status=219/CGROUP（旧实例 cgroup
+ *     回收竞态），失败后管理器不会自动回来（服务停摆到人工 start）；
+ *   · loginctl terminate-user 同样不会自动重建（服务停到下次登录）。
+ */
+export function dockerSocketHintLocal(diag = {}) {
+  if (diag.userInGroup !== true && diag.userInGroup !== false) return '';
+  if (diag.groupExists === false) {
+    return '本机没有 docker 组（非标准 Docker 安装？）：请对照 docs/LINUX.md 的「控制台里更新协议端报 docker 权限不足」手工排查。';
+  }
+  const user = String(diag.user || '').trim() || '$USER';
+  let uid = '';
+  try { uid = String(process.getuid?.() ?? ''); } catch { uid = ''; }
+  if (!/^\d+$/.test(uid)) uid = '$(id -u)';
+  if (diag.userInGroup === false) {
+    return [
+      '按这台机器现在的状态，依次执行（这是唯一修法 —— 本服务被 NoNewPrivileges 加固，sudo 回退不可用）：',
+      `  1) sudo usermod -aG docker ${user}`,
+      `  2) sudo systemctl stop user@${uid}.service`,
+      `  3) sleep 3`,
+      `  4) sudo systemctl start user@${uid}.service`,
+      '（服务会停约 10 秒后自动恢复。）'
+    ].join('\n');
+  }
+  return [
+    `按这台机器现在的状态，依次执行（${user} 已在 docker 组，缺的只是让管理器读到它）：`,
+    `  sudo systemctl stop user@${uid}.service`,
+    `  sleep 3`,
+    `  sudo systemctl start user@${uid}.service`,
+    '（服务会停约 10 秒后自动恢复。）'
+  ].join('\n');
+}
 
 /** stderr/stdout 是不是“docker 套接字权限不足”（本机 unix socket 与 TCP 两种措辞都认）。 */
 export function isDockerSocketDenied(text) {
@@ -266,6 +334,19 @@ function probeWebui(port, timeoutMs = 2500) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /**
+ * 本进程是否被 NoNewPrivileges 加固（读 /proc/self/status；非 Linux 读不到＝未加固）。
+ * 加固时 `sudo` 这类 setuid 提权**必失败**（内核禁止），所以任何"先试 sudo 再说"的
+ * 回退都该先过这一关（deploy.sh 对同一条限制早有先例 —— Issue #15）。
+ */
+function processHasNoNewPrivs() {
+  try {
+    return /NoNewPrivs:\s*1/.test(fs.readFileSync('/proc/self/status', 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 协议端更新器。exec 可注入（测试用替身）；probe 同理。
  * 只做"改 .env + compose pull/up + 等就绪 + 失败自动回滚"，不碰容器名/端口/数据卷。
  */
@@ -280,6 +361,8 @@ export function createSnowlumaUpdater(options = {}) {
   const exec = options.exec || defaultExec;
   const probe = options.probe || probeWebui;
   const log = options.log || (() => {});
+  // NNP 探测同样留注入点（测试替身；命名跟 exec/probe 一样走"const 局部量"的扫描约定）。
+  const hasNoNewPrivs = options.hasNoNewPrivs || processHasNoNewPrivs;
   // 直接 docker 撞上“套接字没权限”时，要不要回退到 `sudo -n docker`。
   // 关掉它：QQ_AGENT_NO_SUDO_DOCKER=1。
   const noSudoDocker = process.env.QQ_AGENT_NO_SUDO_DOCKER === '1';
@@ -304,6 +387,18 @@ export function createSnowlumaUpdater(options = {}) {
     const res = exec('docker', args, opts);
     if (res.ok || noSudoDocker) return res;
     if (!isDockerSocketDenied(`${res.stderr || ''}${res.stdout || ''}`)) return res;
+    // ⚠️ NoNewPrivileges 加固的 unit 里 sudo 必失败（内核禁止 setuid 提权）：先判再试。
+    // 不判的话这里每次都白跑一次注定失败的提权，错误文案还会写成"已尝试 sudo 回退，
+    // 同样失败"，把用户引向"是不是 sudo 没配"——真正的修法是重启 user manager
+    //（2026-10-09 审查；本项目的标准 unit 由 install-service.mjs 生成，**默认带 NNP**）。
+    if (hasNoNewPrivs()) {
+      return {
+        ...res,
+        stderr: `${String(res.stderr || '').trim()}\n`
+          + '（本服务被 NoNewPrivileges 加固，sudo 回退不可用；'
+          + '永久修法见 docs/LINUX.md「控制台里更新协议端报 docker 权限不足」）'
+      };
+    }
     const viaSudo = exec('sudo', ['-n', 'docker', ...args], opts);
     if (viaSudo.ok) {
       usedSudoDocker = true;
@@ -330,7 +425,17 @@ export function createSnowlumaUpdater(options = {}) {
    */
   function describeDockerFailure(text, fallback) {
     const raw = String(text || '').trim();
-    if (isDockerSocketDenied(raw)) return `${DOCKER_SOCKET_HINT}\n\n（已尝试 sudo -n docker 回退，同样失败）\n原始输出：${raw.slice(0, 300)}`;
+    if (isDockerSocketDenied(raw)) {
+      // "已尝试 sudo 回退"只在真的试过时才说：NNP 加固时 runDocker 直接跳过 sudo，
+      // 说"已尝试、同样失败"会把用户引向"是不是 sudo 没配"（2026-10-09 审查）。
+      const retryNote = hasNoNewPrivs()
+        ? '（NoNewPrivileges 加固下 sudo 回退不可用，未尝试提权）'
+        : '（已尝试 sudo -n docker 回退，同样失败）';
+      // 本机精确步骤放最前面（用户在报错里照第一段做即可），通用说明随后（2026-10-09）。
+      const local = dockerSocketHintLocal(dockerGroupDiagnosis());
+      return [local, DOCKER_SOCKET_HINT, retryNote, `原始输出：${raw.slice(0, 300)}`]
+        .filter(Boolean).join('\n\n');
+    }
     return (raw || fallback).slice(0, 500);
   }
 
@@ -409,10 +514,13 @@ export function createSnowlumaUpdater(options = {}) {
     // 前者同时覆盖“socket 在但守护进程没起”与自定义 DOCKER_HOST 的情况。
     const probeRes = runDocker(['info', '--format', '{{.ServerVersion}}'], { timeout: 15000 });
     if (!probeRes.ok && isDockerSocketDenied(`${probeRes.stderr || ''}${probeRes.stdout || ''}`)) {
-      log(`[snowluma] ${DOCKER_SOCKET_HINT}`);
+      // 走 describeDockerFailure 而不是直接塞 HINT：它会把"是否真的试过 sudo 回退"如实带出来
+      //（NNP 加固时 runDocker 直接跳过 sudo，文案不能再写"已尝试"——2026-10-09 审查）。
+      const detail = describeDockerFailure(`${probeRes.stderr || ''}${probeRes.stdout || ''}`, DOCKER_SOCKET_HINT);
+      log(`[snowluma] ${detail}`);
       const result = {
-        ok: false, stage: 'preflight', error: DOCKER_SOCKET_HINT,
-        from, to: target, restored: true, viaSudo: usedSudoDocker, log: [DOCKER_SOCKET_HINT]
+        ok: false, stage: 'preflight', error: detail,
+        from, to: target, restored: true, viaSudo: usedSudoDocker, log: [detail]
       };
       lastResult = result;
       return result;

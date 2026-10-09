@@ -157,7 +157,7 @@ cleanup_fresh_stack() {
 deploy_all_exit() {
   local status=$?
   [[ -n "${MODEL_KEY_FILE:-}" ]] && rm -f "$MODEL_KEY_FILE"
-  if [[ "${ENV_REWRITTEN:-false}" == true && "${DEPLOY_COMPLETED:-false}" != true && -f "$ENV_FILE.pre-deploy" ]]; then
+  if [[ "${ENV_REWRITTEN:-false}" == true && "${DEPLOY_COMPLETED:-false}" != true && "${KEEP_ENV_ON_ROTATE_FAILURE:-false}" != true && -f "$ENV_FILE.pre-deploy" ]]; then
     cp -p "$ENV_FILE.pre-deploy" "$ENV_FILE"
     printf '部署未完成：.env 已回滚为部署前内容（备份保留在 %s.pre-deploy），可直接重跑 deploy-all.sh。\n' "$ENV_FILE" >&2
   fi
@@ -817,8 +817,12 @@ if [[ "$EXISTING_STACK" == true && -n "$SNOWLUMA_CURRENT_PASSWORD" \
   rotate_args=(--url "http://127.0.0.1:$SNOWLUMA_PORT")
   [[ -z "$SNOWLUMA_TOTP" ]] || rotate_args+=(--totp "$SNOWLUMA_TOTP")
   if ! "$NODE_BIN" "$SOURCE_DIR/scripts/rotate-snowluma-password.mjs" "${rotate_args[@]}"; then
-    cp -p "$ENV_FILE.pre-deploy" "$ENV_FILE"
-    die 'SnowLuma password rotation failed; the previous stack environment was restored'
+    # 2026-10-09 审查：原先这里回拷 .env 是**假回滚** —— 此刻 config.json / compose / 容器
+    # 都已是新凭据，只退回 .env 会让下次部署被自家预检拒（"凭据被外部改过"），而新的控制台
+    # 令牌又只留在 config.json 里、access 文件还没生成。保持三方一致（都用新凭据）才是可恢复
+    # 状态：WebUI 密码维持旧值，带上**实际在用**的旧密码重跑即可完成轮换。
+    KEEP_ENV_ON_ROTATE_FAILURE=true
+    die 'SnowLuma password rotation failed. Every other credential was left in place and stays consistent; the WebUI password is unchanged. Retry with --snowluma-current-password set to the password the WebUI actually uses.'
   fi
 fi
 systemctl --user restart "$SERVICE.service"

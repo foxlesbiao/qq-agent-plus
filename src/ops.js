@@ -1738,6 +1738,14 @@ async function waitForUrl(url, timeoutSec, child) {
 
 function openBrowser(url) {
   const command = IS_WINDOWS ? 'cmd' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  // cmd.exe 把 & | ^ < > " 当元字符，而 Node 只对含空格/制表符的参数加引号 —— URL 里
+  // 带控制台令牌时，`/c start "" http://…?token=a&<命令>` 会被当命令分隔符执行本地命令
+  // （2026-10-09 审查）。控制台自己轮换的令牌不含这些字符，但运维注入的令牌可能：
+  // 拒绝并让用户手动复制，别赌。
+  if (IS_WINDOWS && /["&|^<>]/.test(String(url))) {
+    noteLine('（地址里含有 cmd 不接受的字符，为安全起见未自动打开；请手动复制到浏览器）');
+    return;
+  }
   const openArgs = IS_WINDOWS ? ['/c', 'start', '', url] : [url];
   const result = run(command, openArgs, { timeout: 10000 });
   if (result.missing) noteLine(`（未找到打开浏览器的命令，请手动访问 ${url}）`);
@@ -1928,6 +1936,8 @@ async function cmdHealthCheck(args) {
     onebotHttpPort,
     onebotToken,
     snowlumaDir: cfgBase.snowlumaDir,
+    // NNP 探测用（2026-10-09 审查）：主进程被加固时 sudo 回退必失败，巡检不能拿它当"能用"
+    service: cfgBase.service,
     // 破坏性操作显式确认的同一口径：--confirm 才允许真的发 QQ 通知，--print/无参只巡检
     notify: hasFlag(args, '--confirm') && ownerUin
       ? (text) => sendOwnerText({ httpPort: onebotHttpPort, token: onebotToken, ownerUin, text })

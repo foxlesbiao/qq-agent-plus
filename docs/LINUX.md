@@ -593,23 +593,43 @@ systemctl --user show -p MainPID --value qq-agent-linux \
 getent group docker            # 拿到 docker 组的 gid 用于比对
 ```
 
-修复（任选其一，都会**短暂重启**控制台与协议端）：
+修复（会**短暂重启**控制台与协议端）：
 
 ```bash
-sudo systemctl restart user@$(id -u).service   # 重建用户管理器与它下面的服务
-sudo loginctl terminate-user $USER             # 同上，下次登录时重建
+sudo systemctl stop user@$(id -u).service    # 重建用户管理器与它下面的服务
+sleep 3                                       # 等旧实例的 cgroup 被回收
+sudo systemctl start user@$(id -u).service
 # 或直接重启机器
 ```
 
 重启后再跑一次上面的 `grep ^Groups` 确认 `docker` 的 gid 已经出现。
 
-### 自动回退：没有 docker 组也照样能更新
+⚠️ **不要用 `systemctl restart user@` 代替**：2026-10-09 实测（systemd 249）——stop 与 start
+挨太近时，新管理器会因旧实例 cgroup 未回收而以 `status=219/CGROUP` 启动失败，且失败后**不会
+自动回来**（服务停摆到人工 `start`）；分开两步、留 3 秒间隔，是实测可靠的姿势。
 
-从 v0.8.1 之后起，更新路径**不再只依赖那个组**：直接调 `docker` 撞上"套接字没权限"时，会
-自动回退到 `sudo -n docker`（非交互，一次；没有免密 sudo 就立刻失败，不会挂住）。
-`deploy-all.sh` 早就在用同一条路（它的探测梯子里就有 `sudo docker`），这里只是把同一条路
-给运行时也用上 —— **所以只要你的账号有免密 sudo，上面的按钮现在直接就能用，不必先重启
-user manager**。
+⚠️ **也不要用 `loginctl terminate-user`**：它同样不会把管理器自动带回来（服务会停到你下次登录）。
+
+**重跑一次部署脚本即可自动修好**：`deploy.sh` / `deploy-all.sh` 在收尾时会检查"部署用户在不在
+docker 组、服务进程拿没拿到组"，缺什么补什么 —— 加组（`usermod -aG docker`）+ 用
+`stop → sleep 3 → start` 重建一次 user manager（服务随 linger 自动恢复；只在交互式部署时做，
+自动更新场景跳过重建、只加组）。上面的手工命令留给不便重跑部署的场景。整套检测用的是
+`getent` / `usermod` / `systemctl` —— systemd 家族各发行版（Ubuntu / Debian / CentOS /
+Fedora / Arch…）通用；非 systemd 的发行版不在支持范围。
+
+### 自动回退（仅限未加固的部署）
+
+直接调 `docker` 撞上"套接字没权限"时，更新路径会尝试回退到 `sudo -n docker`（非交互，
+一次；没有免密 sudo 就立刻失败，不会挂住）。
+
+⚠️ **但本项目的标准 unit 默认带 `NoNewPrivileges=true` 加固**（`deploy.sh` / `deploy-all.sh`
+经 `scripts/install-service.mjs` 生成），内核会禁止这类进程用 `sudo` 提权 —— 加固部署下
+这条回退**不会生效**（控制台会直接报"本服务被 NoNewPrivileges 加固，sudo 回退不可用"），
+也就是说：**默认配置下没有免密的捷径** —— 修法是上面那条（重启 user manager），或者干脆
+重跑一次部署脚本（新版会自动做，见上）。
+
+只有显式关掉加固的部署才会真正走到 `sudo` 回退。本段旧文案曾写"有免密 sudo 就能用、
+不必重启 user manager"，那对默认配置是错的，2026-10-09 更正。
 
 不想让服务走提权路径的部署，设 `QQ_AGENT_NO_SUDO_DOCKER=1`（写进
 `qq-agent-linux.service` 的 `Environment=`）即可关掉这条回退，那就必须先做上面的人工修复。
@@ -617,13 +637,17 @@ user manager**。
 为什么不能做得更干净：非 root 进程**无法**给自己补上缺失的补充组 —— 实测
 `systemd-run --user -p SupplementaryGroups=docker id` 报
 `Changing group credentials failed: Operation not permitted`，而 Ubuntu 上 `sg` 也不是 setgid
-的。所以在进程内"自己修好组"这条路是不存在的，回退到 sudo 是唯一能当下就通的方案。
+的。所以在进程内"自己修好组"这条路是不存在的；未加固的部署上 sudo 回退是唯一能当下就通
+的方案，加固部署上则没有免密捷径 —— 这是内核限制，不是配置问题。
 
 ### 另外两处让问题更早暴露
 
 - **更新前预检**：`snowluma-update.js` 在动 `.env` 之前先探一次 `docker info`（含回退），
   两条路都不通才给出上面的人工修复步骤，而不是抛一段原始 stderr。
 - **巡检新增 `docker-socket` 一项**：每 5 分钟一次的健康检查会 `fs.access` 这个套接字。
-  直连不可用时它会**再探一次 `sudo -n docker`**（就是上面那条回退），通了就记 ok 并在详情里说明
-  "更新会走回退" —— 不这么做的话，一条"功能其实能用"的状态会变成每 5 分钟一次、连击 3 次就私聊
-  owner、而且**永远不会恢复**的误报。两条路都不通才报红。
+  直连不可用且主进程**未**加固时，它会再探一次 `sudo -n docker`（就是上面那条回退），通了就记 ok
+  并在详情里说明"更新会走回退" —— 不这么做的话，一条"功能其实能用"的状态会变成每 5 分钟一次、
+  连击 3 次就私聊 owner、而且**永远不会恢复**的误报。
+  ⚠️ 主进程带 `NoNewPrivileges`（默认配置）时**不再拿巡检进程的 sudo 结果当证据**：那条回退在
+  控制台里必失败，巡检会直接报红并指向修法（2026-10-09 审查：此前这里会出一条"假绿"——
+  巡检说"会走回退"，用户点按钮照样失败）。
