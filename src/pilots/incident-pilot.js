@@ -231,13 +231,7 @@ export class IncidentPilotManager {
         version=version+1
       WHERE notify_state='sending'
     `).run();
-    const retentionDays = Math.min(
-      3650,
-      Math.max(1, Number(this.config()?.incidentPilot?.retentionDays) || 90)
-    );
-    this.db.prepare(`
-      DELETE FROM incidents WHERE state='resolved' AND resolved_at>0 AND resolved_at<?
-    `).run(this.now() - retentionDays * 86400000);
+    this.pruneResolvedIncidents();
     // 库文件（含 safe_message/chat_key 等内部数据）与 WAL/SHM 收敛到 0600。
     // 必须放在 exec(journal_mode=WAL) 之后：-wal/-shm 是这时才落盘的，放在
     // new DatabaseSync 紧后面会因文件不存在被静默跳过，落回 umask 0644。
@@ -247,6 +241,25 @@ export class IncidentPilotManager {
     this.lastError = '';
     this.resumeNotifications();
     return this.status();
+  }
+
+  /**
+   * 已了结事件的保留期清理：删掉 retentionDays 之前 resolved 的 incidents。
+   * 抽成方法（原来这段只在 start() 里内联跑一次）是为了让**常驻进程**也能周期调用 ——
+   * 服务不重启时那段 DELETE 永远不执行，表会无界增长（2026-10-09 复审）。
+   * 保留期继续按 incidentPilot.retentionDays 配置读，与原来完全一致。
+   */
+  pruneResolvedIncidents() {
+    if (!this.db) return;
+    const retentionDays = Math.min(
+      3650,
+      Math.max(1, Number(this.config()?.incidentPilot?.retentionDays) || 90)
+    );
+    try {
+      this.db.prepare(`
+        DELETE FROM incidents WHERE state='resolved' AND resolved_at>0 AND resolved_at<?
+      `).run(this.now() - retentionDays * 86400000);
+    } catch { /* 清理失败不影响运行 */ }
   }
 
   openExisting() {

@@ -695,6 +695,24 @@ export function createApp({
       error: identityPilotError
     });
   }
+
+  /**
+   * 三个 SQLite 台账的保留期清理入口，供 server.js 的每日调度调用（见 core/ledger-retention.js）。
+   *
+   * 为什么放在这里：identityStore 与 incidentPilot 是本模块的闭包变量，relationshipStore 只能经
+   * identityPilot 原型上的 pruneRelationshipHistory 拿到 —— 三者的引用都只有 app 内部才有。
+   * 各自按自己的配置读保留期（identity/relationship 走 pruneX() 的默认 90 天，incident 走
+   * incidentPilot.retentionDays），不在这里写死新默认值。
+   * 返回的是**任务描述**而不是直接执行：真正的 try/catch 与日志由调度器逐项做，
+   * 免得以后换了调度宿主还得把容错再抄一遍。
+   */
+  function retentionPruneTargets() {
+    return [
+      { name: '身份台账', run: () => identityPilot?.identityStore?.pruneLedgers() },
+      { name: '关系台账', run: () => identityPilot?.pruneRelationshipHistory?.() },
+      { name: '异常台账', run: () => incidentPilot?.pruneResolvedIncidents() }
+    ];
+  }
   async function sendIdentityAdminText(ownerUin, text, signal) {
     const userId = String(ownerUin || '').trim();
     if (!/^\d{5,15}$/.test(userId)) throw new Error('管理员 QQ 配置无效');
@@ -4489,6 +4507,8 @@ export function createApp({
     set snowlumaUpdater(next) { snowlumaUpdater = next; },
     get incidentPilot() { return incidentPilot; },
     incidentPilotStatus,
+    // 每日台账保留期清理的任务清单（server.js 的 core/ledger-retention.js 调度用）
+    retentionPruneTargets,
     captureIncident(error, context = {}) {
       return incidentPilot?.capture(error, context) || null;
     },
