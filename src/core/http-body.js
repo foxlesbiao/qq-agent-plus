@@ -30,6 +30,21 @@ function bodyStreamOf(res) {
 }
 
 /**
+ * 一个块的字节数。
+ *
+ * ⚠️ 别直接写 `chunk.byteLength`（2026-10-09 复核）：拿到字符串或没有 byteLength 的对象时
+ * 它是 `undefined`，`total += undefined` → `NaN`，而 `NaN > limit` **恒为假** —— 整个上限就
+ * 静默失效了。真实 fetch 的 body reader 只吐 Uint8Array，所以生产上不会爆；但本模块的卖点
+ * 就是"上限真的在生效"，它自己的退路分支（异步迭代器 / text()）也都能接住字符串，
+ * 主路径不该是反着来的。
+ */
+function chunkByteLength(chunk) {
+  if (typeof chunk === 'string') return Buffer.byteLength(chunk, 'utf8');
+  const n = chunk?.byteLength;
+  return Number.isFinite(n) ? n : Buffer.byteLength(String(chunk ?? ''), 'utf8');
+}
+
+/**
  * 有界读取响应文本。
  *
  * 优先走 res.body 的 reader（或异步迭代器）逐块累计字节数，一旦超过 maxBytes 立即
@@ -68,13 +83,14 @@ export async function readTextBounded(res, maxBytes) {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        total += value.byteLength;
+        total += chunkByteLength(value);
         if (total > limit) {
           // 先取消底层流再抛：别让上游继续吐数据占住连接和内存。
           await reader.cancel().catch(() => { /* 取消失败不影响已判定的超限 */ });
           throw bodyTooLargeError(limit, total);
         }
-        text += decoder.decode(value, { stream: true });
+        // 字符串块不进 TextDecoder：decode 只吃 BufferSource，传字符串会直接抛 TypeError
+        text += typeof value === 'string' ? value : decoder.decode(value, { stream: true });
       }
       text += decoder.decode();
       return text;
@@ -168,7 +184,7 @@ export async function readBytesBounded(res, maxBytes) {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        total += value.byteLength;
+        total += chunkByteLength(value);
         if (total > limit) {
           await reader.cancel().catch(() => { /* 取消失败不影响已判定的超限 */ });
           throw bodyTooLargeError(limit, total);

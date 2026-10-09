@@ -617,6 +617,25 @@ docker 组、服务进程拿没拿到组"，缺什么补什么 —— 加组（`
 `getent` / `usermod` / `systemctl` —— systemd 家族各发行版（Ubuntu / Debian / CentOS /
 Fedora / Arch…）通用；非 systemd 的发行版不在支持范围。
 
+### 代价须知：加进 docker 组等于给这个账号 root 等价权限
+
+`deploy.sh` / `deploy-all.sh` 的收尾自愈会执行 `usermod -aG docker <部署用户>`。这不是
+"顺手加的一个组"：docker 组的成员可以起一个挂载了宿主根目录的容器
+（`docker run --rm -v /:/host alpine cat /host/etc/shadow`），**等价于宿主 root**。
+
+所以在**把账号加进 docker 组之前**，控制台被拿下最多是应用级 + 它自己的用户级服务
+（控制台跑的命令只有 `systemctl --user`）；加进去之后，同一个进程被拿下就等于宿主机 root。
+这是「控制台里更新协议端」这个功能的前提（控制台进程必须能驱动 docker），取舍有三条路：
+
+- **接受它**（当前默认）：省事，功能开箱可用。前提是你信任控制台的访问控制
+  （控制台令牌 + `server.host` 的暴露面，见下）。
+- **不接受**：不要在控制台里更新协议端 —— 把 `autoUpdate.snowluma.enabled` 与
+  `followBaseline` 都设为 `false`，改用命令行的 `deploy.sh` / `ops snowluma-update`
+  （`sudo` 按需输密码，不需要给常驻进程这个组的权限），并执行
+  `sudo usermod -rG docker <部署用户>` 把组摘掉、再重启 user manager（见上）。
+- **缩小暴露面**：把 `server.host` 改成 `127.0.0.1` 再通过 SSH 隧道访问控制台。
+  `0.0.0.0` + 这个组 + 云安全组放通端口，三样凑齐就是"互联网上有一个能改宿主 root 的面板"。
+
 ### 自动回退（仅限未加固的部署）
 
 直接调 `docker` 撞上"套接字没权限"时，更新路径会尝试回退到 `sudo -n docker`（非交互，

@@ -117,21 +117,58 @@ test('docker 组自愈做进了部署收尾：加组 + stop→sleep→start 重�
   // 从第一天起就报权限不足。收尾里把"加组 + 让管理器读到"都做掉（2026-10-09）。
   const sh = read('deploy.sh');
   assert.ok(/sudo usermod -aG docker/.test(sh), '要把部署用户加进 docker 组');
-  assert.ok(/sudo systemctl stop "\$MANAGER_UNIT"/.test(sh),
+  assert.ok(/sudo -n systemctl stop "\$MANAGER_UNIT"/.test(sh),
     '重建要先 stop —— restart 会撞 status=219/CGROUP（cgroup 回收竞态，实测）');
-  assert.ok(/sleep 3/.test(sh) && /sudo systemctl start "\$MANAGER_UNIT"/.test(sh),
+  assert.ok(/sleep 3/.test(sh) && /sudo -n systemctl start "\$MANAGER_UNIT"/.test(sh),
     'stop 之后留回收间隔、再单独 start');
   assert.equal(/systemctl restart [^\n]*(MANAGER_UNIT|user@)/.test(sh), false,
     '不许用 restart 重建管理器：实测（systemd 249）219/CGROUP 失败后不会自动回来（服务停摆到人工 start）');
   // 自动更新场景必须跳过重建：无人值守时不做停服动作（位置序：分流判断在 stop 之前）
   const heal = sh.indexOf('# ── docker 组自愈');
   const skipBranch = sh.indexOf('if [[ -z "${QQ_AGENT_SOURCE_REVISION:-}" ]]; then', heal);
-  const stopPos = sh.indexOf('sudo systemctl stop "$MANAGER_UNIT"', heal);
+  const stopPos = sh.indexOf('sudo -n systemctl stop "$MANAGER_UNIT"', heal);
   assert.ok(heal > 0 && skipBranch > heal && stopPos > skipBranch,
     '自动更新（QQ_AGENT_SOURCE_REVISION 有值）要在重建动作之前分流跳过');
   // 自愈块必须在"部署已成功之后的收尾"段里（trap - ERR 之后）：失败不许改动退出码
   const cleanup = sh.indexOf('trap - ERR INT TERM');
   assert.ok(cleanup > 0 && heal > cleanup, '自愈块要在收尾段（尽力而为、不改退出码）');
+
+  // 2026-10-09 复核（两条都是这个块自己引入的隐患）：
+  const healEnd = sh.indexOf("printf '\\nConsole:", heal);
+  assert.ok(healEnd > heal, '自愈块后面应是 Console 提示行');
+  const healBlock = sh.slice(heal, healEnd);
+  // ① 真正被执行的 sudo 一律要带 -n：这些调用的 stdout/stderr 都被丢弃了，一旦 sudo 要密码，
+  //    提示会被 2>/dev/null 吞掉、部署看起来像卡死（用户只能盲输或 Ctrl+C）。
+  //    printf 里那几句是给用户自己敲的（人工交互可以输密码），不算。
+  const bareSudo = healBlock.split('\n')
+    .filter((l) => !/printf/.test(l) && /^\s*(if |\|\| )?sudo (?!-n )/.test(l));
+  assert.deepEqual(bareSudo, [],
+    `自愈块里执行的 sudo 必须带 -n（否则密码提示被吞、表现为卡死）：${bareSudo.join(' | ')}`);
+  // ② 重试 start 之前要再等一次：那次失败通常正是 219/CGROUP（旧实例 cgroup 还没回收），
+  //    紧接着重试会撞同一个竞态、白试一次。
+  const firstStart = healBlock.indexOf('sudo -n systemctl start');
+  const secondStart = healBlock.indexOf('sudo -n systemctl start', firstStart + 1);
+  assert.ok(firstStart > 0 && secondStart > firstStart, 'start 失败要有一个重试');
+  assert.ok(healBlock.slice(firstStart, secondStart).includes('sleep 3'),
+    '重试之前要再留一次回收间隔（219/CGROUP 竞态），否则重试没有意义');
+  assert.ok((healBlock.match(/sleep 3/g) || []).length >= 2,
+    'stop 之后与重试之前都要有间隔（期望 ≥2 处 sleep 3）');
+});
+
+test('ops console --open：cmd 元字符守卫要覆盖完整（2026-10-09 复核）', () => {
+  // cmd.exe 的元字符不止 & | ^ < > " —— `%VAR%` 会在分词之后**又展开一次**，展开结果里的
+  // 元字符会被重新解析（实测 `set X=^&calc` 再 `echo %X%` 真的会执行 calc），`!` 是延迟展开的
+  // 同一类风险；CR/LF/TAB 则直接断开命令行。少挡一个就等于没挡。
+  const ops = read('src/ops.js');
+  const m = ops.match(/if \(IS_WINDOWS && \/\[([^\]]*)\]\//);
+  assert.ok(m, '找不到 openBrowser 里的 cmd 元字符守卫（改名/改写法时同步本条）');
+  const cls = m[1];
+  for (const ch of ['"', '&', '|', '^', '<', '>', '%', '!']) {
+    assert.ok(cls.includes(ch), `守卫字符集缺 ${ch}`);
+  }
+  for (const esc of ['\\r', '\\n', '\\t']) {
+    assert.ok(cls.includes(esc), `守卫字符集缺 ${esc}（源码里应是反斜杠转义写法）`);
+  }
 });
 
 test('terminate-user 与 restart user@ 两颗雷都拆干净了：提示与文档都不再当修复手段', () => {

@@ -107,3 +107,52 @@ test('退化流：body 既无 getReader 也不是异步可迭代时，不抛裸 
   const byteBody = { [Symbol.asyncIterator]: async function* () { yield new Uint8Array([1, 2]); yield new Uint8Array([3]); } };
   assert.deepEqual([...(await readBytesBounded({ body: byteBody }, 1024))], [1, 2, 3]);
 });
+
+test('reader 吐字符串块时上限照样生效（别让 total 变成 NaN）', async () => {
+  // 2026-10-09 复核：主路径直接写了 chunk.byteLength，字符串块下是 undefined → total=NaN →
+  // `NaN > limit` 恒假 → "有界"静默失效。真实 fetch 不会这样，但这个模块的卖点就是上限真的在生效，
+  // 而它自己的退路分支（异步迭代器 / text()）都能接住字符串 —— 主路径不该是唯一漏的那个。
+  // 假流故意**有界**（最多 50 块）：回归时若 total 变成 NaN，循环会一路读完 3200 字节、
+  // 正常返回，断言立刻红 —— 比"永远读不完、把测试挂死"更容易看出是什么坏了。
+  let cancelled = false;
+  const res = {
+    body: {
+      getReader: () => {
+        let n = 0;
+        return {
+          async read() { n += 1; return n <= 50 ? { done: false, value: 'x'.repeat(64) } : { done: true }; },
+          async cancel() { cancelled = true; },
+          releaseLock() {}
+        };
+      }
+    }
+  };
+  await assert.rejects(() => readTextBounded(res, 100), (err) => err.code === 'BODY_TOO_LARGE');
+  assert.equal(cancelled, true, '超限必须取消底层流');
+  // 同一路径上，正常范围内的字符串块要能读出来（不能被 decoder 的 TypeError 弄坏）
+  const okRes = {
+    body: {
+      getReader: () => {
+        let n = 0;
+        return {
+          async read() { n += 1; return n <= 2 ? { done: false, value: 'abc' } : { done: true }; },
+          async cancel() {}, releaseLock() {}
+        };
+      }
+    }
+  };
+  assert.equal(await readTextBounded(okRes, 100), 'abcabc');
+  // 字节路径同样要挡
+  const binRes = {
+    body: {
+      getReader: () => {
+        let n = 0;
+        return {
+          async read() { n += 1; return n <= 50 ? { done: false, value: 'yyyy'.repeat(40) } : { done: true }; },
+          async cancel() {}, releaseLock() {}
+        };
+      }
+    }
+  };
+  await assert.rejects(() => readBytesBounded(binRes, 64), (err) => err.code === 'BODY_TOO_LARGE');
+});

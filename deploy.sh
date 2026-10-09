@@ -600,12 +600,18 @@ MODE="$("$NODE_BIN" -e 'const c=require(process.argv[1]);process.stdout.write(c.
 #    重建只动 user@.service 的 cgroup。
 # ⚠️ 自动更新（QQ_AGENT_SOURCE_REVISION 有值）场景**跳过重建**：无人值守时不做停服动作，
 #    只加组（等下次交互部署或机器重启时自然生效）。
+# ⚠️ 下面几处 sudo 一律带 `-n`（非交互）：这些调用的 stdout/stderr 都被丢弃了，一旦 sudo 要
+#    密码，提示会被吞掉、部署看起来像卡死（用户只能盲输或 Ctrl+C）。`-n` 让它立刻失败并走
+#    "手工执行"那句提示 —— 与运行时 `sudo -n docker` 是同一纪律（2026-10-09 复核）。
+# ⚠️ 代价须知：把账号加进 docker 组等于给它 root 等价权限（docker 组可以挂载宿主文件系统）。
+#    这条自愈是「控制台里更新协议端」这个功能的前提，但它也把"控制台被拿下"的后果从应用级
+#    抬到了宿主 root —— 权衡见 docs/LINUX.md（2026-10-09 复核）。
 if getent group docker >/dev/null 2>&1; then
   # 收尾段仍在 set -e 之下：每个可能失败的赋值都要自带保护，否则会把退出码弄坏
   DOCKER_GID="$(getent group docker 2>/dev/null | cut -d: -f3 || true)"
   if [[ -n "$DOCKER_GID" ]]; then
     if ! id -nG "$(id -un)" | tr ' ' '\n' | grep -qx docker; then
-      if sudo usermod -aG docker "$(id -un)" >/dev/null 2>&1; then
+      if sudo -n usermod -aG docker "$(id -un)" >/dev/null 2>&1; then
         printf '已把 %s 加入 docker 组（控制台「更新协议端」需要）\n' "$(id -un)"
       else
         printf '警告：把自己加入 docker 组失败；控制台「更新协议端」会报权限不足（可手工执行：sudo usermod -aG docker %s）\n' "$(id -un)" >&2
@@ -620,10 +626,13 @@ if getent group docker >/dev/null 2>&1; then
       fi
       if [[ -n "$SVC_GROUPS" && "$SVC_GROUPS" != *" $DOCKER_GID "* ]]; then
         printf '重建 user manager 让 docker 组生效（服务会停约 10 秒后自动恢复）……\n'
-        if sudo systemctl stop "$MANAGER_UNIT" 2>/dev/null; then
+        if sudo -n systemctl stop "$MANAGER_UNIT" 2>/dev/null; then
           sleep 3
-          if ! sudo systemctl start "$MANAGER_UNIT" 2>/dev/null; then
-            sudo systemctl start "$MANAGER_UNIT" 2>/dev/null \
+          if ! sudo -n systemctl start "$MANAGER_UNIT" 2>/dev/null; then
+            # ⚠️ 重试前必须再等一次：这次失败通常正是 219/CGROUP（旧实例 cgroup 还没回收完），
+            # 紧接着重试会撞同一个竞态、白试一次。多留 3 秒，重试才有意义（2026-10-09 复核）。
+            sleep 3
+            sudo -n systemctl start "$MANAGER_UNIT" 2>/dev/null \
               || printf '警告：user manager 没能启动；请执行：sudo systemctl start %s\n' "$MANAGER_UNIT" >&2
           fi
           sleep 4
