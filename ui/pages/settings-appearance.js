@@ -6,7 +6,7 @@
 
 import { currentAppearance, setAppearance } from '../app.js';
 import {
-  ACCENTS, ACCENT_SCOPES, BACKGROUNDS, DARK_INTENSITIES, DENSITIES, FONTS, MODES, RADII, SCHEMES,
+  ACCENTS, ACCENT_SCOPES, BACKGROUNDS, DARK_INTENSITIES, DENSITIES, FONTS, GLASS, MODES, RADII, SCHEMES,
   SIDEBAR_STYLES, TWEAK_VARS, radiusTier, resolveAppearance
 } from '../core/appearance.js';
 import { esc } from '../core/dom.js';
@@ -163,6 +163,30 @@ function renderAppearanceBlock(c) {
     </div>
 
     <div class="opt-card">
+      <div class="opt-head"><span class="ico" data-icon="layers"></span><h4>材质</h4></div>
+      <p class="opt-desc">表面是实心还是「玻璃」的。玻璃会把下层背景模糊后透上来，配合「背景 → 渐变」效果最明显；
+        它只改表面怎么呈现，不动色板颜色，所以文字对比度不受影响。</p>
+      <div class="opt-row">
+        <div class="opt-row-main">
+          <div class="opt-row-title">表面材质</div>
+          <div class="opt-row-sub">模糊越重越吃显卡（滑动与滚动时最明显）。「液态玻璃」色彩最浓、厚度感最强；「亚克力」最中性、带一层细颗粒，适合长时间盯着看；「描边」几乎不填色，只靠一条亮边划出边界。</div>
+        </div>
+        <div class="opt-row-ctrl">${seg('appearance-glass', GLASS, cur.glass, '表面材质')}</div>
+      </div>
+      <div class="opt-row">
+        <div class="opt-row-main">
+          <div class="opt-row-title">边缘折射（实验）</div>
+          <div class="opt-row-sub">让背景在卡片边缘被「弯折」（苹果那套 Liquid Glass 的签名动作）。
+            它按每个表面的实际尺寸现算一张位移图，所以边缘是准的、中间完全不位移；
+            代价是每张卡片多一层滤镜。只有选了玻璃材质才有意义；
+            不支持该特性的浏览器（如部分 Firefox / Safari）会自动忽略，玻璃照旧。</div>
+        </div>
+        <div class="opt-row-ctrl"><input type="checkbox" id="cfg-refract" ${cur.refract ? 'checked' : ''} ${cur.glass === 'off' ? 'disabled' : ''} /></div>
+      </div>
+      <div class="hint" style="margin:-2px 0 0">浏览器不支持背景模糊时自动退回实心表面（宁可不玻璃，也不让文字糊掉）。</div>
+    </div>
+
+    <div class="opt-card">
       <div class="opt-head"><span class="ico" data-icon="type"></span><h4>排版与界面</h4></div>
       <p class="opt-desc">字体、圆角、缩放与密度。</p>
       <div class="opt-row">
@@ -284,6 +308,8 @@ function bindAppearanceControls() {
     sidebarStyle: segVal('appearance-sidebarstyle', 'follow'),
     sidebarPinned: el('cfg-sidebar-pinned')?.checked === true,
     background: segVal('appearance-bg', 'none'),
+    glass: segVal('appearance-glass', 'off'),
+    refract: el('cfg-refract')?.checked === true,
     bgColor: el('cfg-bgcolor')?.value || '',
     bgFrom: el('cfg-bgfrom')?.value || '',
     bgTo: el('cfg-bgto')?.value || '',
@@ -324,6 +350,17 @@ function bindAppearanceControls() {
     }
     const presetBox = document.getElementById('appearance-presets');
     if (presetBox && presetBox.dataset.current !== cur.accentPreset) presetBox.dataset.current = cur.accentPreset;
+    // 折射开关：材质选「实心」时它没有对象可折，置灰并提示 —— 不置灰的话
+    // “勾了没反应”看起来就像坏了（这是审查里抓到的可用性问题）。
+    const refract = el('cfg-refract');
+    if (refract) {
+      const off = cur.glass === 'off';
+      refract.disabled = off;
+      // 刻意**不**清掉勾选：清了就等于“切到实心再切回来，偏好没了”，
+      // 而且用户在实心状态下点保存会把这条偏好写没。置灰 + 让它不生效就够了
+      //（模块侧的判据本来就要求 data-glass 在，见 glass-refract.js 的 refractShouldRun）。
+      refract.closest('.opt-row')?.setAttribute('data-inert', off ? '1' : '');
+    }
     document.querySelector('.swatch-custom')?.classList.toggle('on', cur.customAccent);
     // 主题微调：显示了当前值就把"重置"点亮的条件也对上
     for (const btn of document.querySelectorAll('#appearance-tweaks [data-tweak-reset]')) {
@@ -337,7 +374,9 @@ function bindAppearanceControls() {
   }
 
   // ① 分段控件：点一下换档。有些档（明暗/色板/强调色）值得一条波纹，有些（字体/密度）不值得。
-  const REVEAL_SEGS = new Set(['appearance-mode', 'appearance-scope', 'appearance-sidebarstyle', 'appearance-darkintensity']);
+  // 会“整页换个样子”的档位走波纹：明暗、色板、强调色、材质。
+  // 字体/密度/圆角这类改了也照样开波纹的话，拖一下滑条就闪一次 —— 它们不在名单里。
+  const REVEAL_SEGS = new Set(['appearance-mode', 'appearance-scope', 'appearance-sidebarstyle', 'appearance-darkintensity', 'appearance-glass']);
   for (const segEl of document.querySelectorAll('.opt-card .seg')) {
     segEl.addEventListener('click', (ev) => {
       const item = ev.target.closest('.seg-item');
@@ -450,7 +489,7 @@ function bindAppearanceControls() {
   });
 
   // ⑧ 开关（顶栏 / 无障碍）：开关自己就是 checkbox，直接读值
-  for (const id of ['cfg-showbadges', 'cfg-showtopbartheme', 'cfg-reducemotion', 'cfg-nomotion', 'cfg-contrast', 'cfg-sidebar-pinned']) {
+  for (const id of ['cfg-showbadges', 'cfg-showtopbartheme', 'cfg-reducemotion', 'cfg-nomotion', 'cfg-contrast', 'cfg-sidebar-pinned', 'cfg-refract']) {
     el(id)?.addEventListener('change', (ev) => apply(ev, false));
   }
 

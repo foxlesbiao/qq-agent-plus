@@ -158,7 +158,26 @@ async function pollUntilReady() {
 //   · key 相同且 HTML 相同 → 复用原节点（什么都不做）
 //   · key 相同但 HTML 变了 → 只替换这一行
 //   · key 不存在 → 插入新节点；多余的 key → 删除
-function patchKeyedList(container, entries, keyAttr = 'data-key') {
+/**
+ * 列表行退场动画的等待时长（ms）—— 必须与 ui/style.css 里 `@keyframes rowOut` 那条
+ * `var(--dur-slow)`（260ms）一致：这里等的就是那条动画。改一处必须改两处。
+ */
+const LEAVE_MS = 260;
+
+/** 取消一行的退场（它在新一轮列表里又出现了，不能让它到点被删掉）。 */
+function cancelLeave(node) {
+  const view = node.ownerDocument?.defaultView;
+  if (node.__leaveTimer) {
+    (view?.clearTimeout || clearTimeout).call(view, node.__leaveTimer);
+    node.__leaveTimer = null;
+  }
+  node.__leaving = false;
+  node.classList.remove('leaving');
+  node.style.removeProperty('--leave-h');
+  node.style.removeProperty('height');
+}
+
+function patchKeyedList(container, entries, keyAttr = 'data-key', { exit = false } = {}) {
   if (!container) return;
   // 比较用的规范化：把"由本地 ticker 维护"的倒计时文本抹掉，
   // 否则每次刷新都判定成"行变了"，整行重建（倒计时还会闪回旧值）。
@@ -186,6 +205,9 @@ function patchKeyedList(container, entries, keyAttr = 'data-key') {
     if (seen.has(key)) continue;
     seen.add(key);
     let node = existing.get(key) || null;
+    // 上一轮正在退场的行又回来了（列表抖动 / 过滤来回切）：取消退场、原地留下这一行。
+    // 不取消的话，那个 setTimeout 到点会把刚回来的行删掉 —— 列表少一行，而且没人补。
+    if (node?.__leaving) cancelLeave(node);
     const cmp = norm(entry.html);
     if (node && node.__cmp !== cmp) {
       const fresh = makeNode(entry.html, key);
@@ -199,7 +221,27 @@ function patchKeyedList(container, entries, keyAttr = 'data-key') {
     prev = node;
   }
   for (const [key, node] of existing) {
-    if (!seen.has(key)) node.remove();
+    if (seen.has(key) || node.__leaving) continue;
+    // 退场（可选，由调用方开）：先塔缩再移除，否则下面的行会“喍”地跳上来。
+    // 只有两个前提都满足才值得等：
+    //   ① 这个节点真的被渲染过（offsetHeight > 0）—— 没有布局盒就没有高度可塔；
+    //      happy-dom 这类无布局环境也走这条，于是行为与改动前逐字一致（不延后删除）；
+    //   ② 用户没关动效（data-motion='off'，外观页那个开关）。
+    // 不具备时直接 remove()，语义与原来一模一样。
+    const height = node.offsetHeight || 0;
+    const motionOff = container.ownerDocument?.documentElement?.getAttribute('data-motion') === 'off';
+    if (!exit || height <= 0 || motionOff) {
+      node.remove();
+      continue;
+    }
+    // 高度只能由 JS 量好——CSS 里没法从 auto 插值到 0（interpolate-size 也帮不上，
+    // 因为这里要的是“从当前实际高度出发”而不是“从 auto 出发”）。
+    const view = container.ownerDocument?.defaultView;
+    node.__leaving = true;
+    node.style.setProperty('--leave-h', `${height}px`);
+    node.classList.add('leaving');
+    node.__leaveTimer = (view?.setTimeout ? view.setTimeout.bind(view) : setTimeout)(
+      () => { node.__leaving = false; node.remove(); }, LEAVE_MS);
   }
 }
 

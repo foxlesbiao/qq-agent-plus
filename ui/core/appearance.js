@@ -11,6 +11,11 @@
 //   ⑤ background    背景（无 / 纯色 / 渐变）
 //   ⑥ 排版          字体 / 圆角 / 界面缩放 / 显示密度
 //   ⑦ tweaks        逐个覆盖主题颜色变量（白名单，未设置的保持色板默认）
+//   ⑧ glass         材质（实心 / 磨砂 / 液态玻璃，见 2026-10-09 新增）
+//
+// 与前七轴的分工：前七轴决定“什么颜色”，材质轴只决定“表面怎么呈现”（透明度、模糊、
+// 高光、阴影）。它不碰任何色板变量 —— 半透明表面永远压在 --bg 之上合成，
+// 所以正文/次要文字的对比度仍然是色板那一套。
 //
 // 分工原则：色板只决定"表面与文字"，强调色只决定"按钮/选中/图表"，两者不互相绑架 ——
 // 参照实现把两者揉在一套配色的 primary 里，换配色会连带换掉主色，我们分开更可控。
@@ -70,6 +75,24 @@ const BACKGROUNDS = [
 ];
 
 /**
+ * 材质：表面是实心还是“玻璃”。
+ *
+ * 为什么单开一轴而不是并进「背景」：背景决定页面底层长什么样（玻璃要透的就是它），
+ * 材质决定上层表面怎么呈现。两者可以任意组合 —— 「渐变背景 + 液态玻璃」才是这套东西
+ * 最好看的一档，而“实心表面 + 渐变背景”同样是正当选择（看得清、不炫）。
+ *
+ * off 不写 data-glass 属性（空串＝不设），CSS 侧就不需要一条单独“关掉玻璃”的规则 ——
+ * 这与 sidebarPinned / showBadges 那几个开关的取值口径一致。
+ */
+const GLASS = [
+  { id: 'off', label: '实心', hint: '不透明表面（默认）' },
+  { id: 'frost', label: '磨砂', hint: '轻微模糊，最克制的一档' },
+  { id: 'liquid', label: '液态玻璃', hint: '强模糊 + 提饱和提亮 + 渐变高光边' },
+  { id: 'acrylic', label: '亚克力', hint: '大模糊 + 降饱和 + 细颗粒' },
+  { id: 'outline', label: '描边', hint: '几乎不填色，靠一条亮边划出边界' }
+];
+
+/**
  * 字体：不引外部字体（离线/内网也要一致），只用各系统都有的族。
  * 具体字体栈写在 ui/style.css 的 html[data-font=...] 里 —— 放在 CSS 有一个实在的好处：
  * 首屏那段内联脚本只要抄一个 data-font 值就行，不必把字体栈也复制一份（少一处会漂移的地方）。
@@ -122,9 +145,13 @@ const DEFAULTS = {
   // true = 常驻展开。命名与参照实现一致（它的 appearance.sidebarPinned 就是这个意思）。
   sidebarPinned: false,
   background: 'none',
+  glass: 'off',
+  // 边缘折射（实验）：默认关。它要按元素尺寸现算位移图并挂 SVG 滤镜，属于「看起来值不值」的功能，
+  // 不该默认塞给所有人（原理与三条降级见 ui/core/glass-refract.js 顶部）。
+  refract: false,
   bgColor: '#0b1220',
-  bgFrom: '#4c8dff',
-  bgTo: '#a78bfa',
+  bgFrom: '#1b2a4a',
+  bgTo: '#2e2440',
   bgAngle: 135,
   font: 'default',
   radius: 1,
@@ -238,6 +265,8 @@ function resolveAppearance(ui = {}) {
     sidebarStyle: pick(SIDEBAR_STYLES, src.sidebarStyle, DEFAULTS.sidebarStyle),
     sidebarPinned: src.sidebarPinned === true,
     background: pick(BACKGROUNDS, src.background, DEFAULTS.background),
+    glass: pick(GLASS, src.glass, DEFAULTS.glass),
+    refract: src.refract === true,
     bgColor: normalizeHex(src.bgColor) || DEFAULTS.bgColor,
     bgFrom: normalizeHex(src.bgFrom) || DEFAULTS.bgFrom,
     bgTo: normalizeHex(src.bgTo) || DEFAULTS.bgTo,
@@ -318,6 +347,10 @@ function appearanceAttrs(app) {
     // 图标条模式：值为 '1' 时才收（空串＝常驻展开）。取值口径与 html 上的其它开关一致。
     'side-rail': app.sidebarPinned ? '' : '1',
     background: app.background,
+    // 材质：off 发空串＝不设属性（CSS 侧不需要一条“关掉玻璃”的规则）
+    glass: app.glass === 'off' ? '' : app.glass,
+    // 折射：空串＝不设。CSS 那边靠 var(--glass-refract, ) 的空回退，没设就等于没开。
+    refract: app.refract ? '1' : '',
     font: app.font,
     density: app.density,
     contrast: app.contrast,
@@ -341,6 +374,8 @@ function appearancePatch(app) {
     sidebarStyle: app.sidebarStyle,
     sidebarPinned: app.sidebarPinned,
     background: app.background,
+    glass: app.glass,
+    refract: app.refract,
     bgColor: app.bgColor,
     bgFrom: app.bgFrom,
     bgTo: app.bgTo,
@@ -360,7 +395,7 @@ function appearancePatch(app) {
 
 export {
   ACCENTS, ACCENT_SCOPES, BACKGROUNDS, DARK_INTENSITIES, DEFAULTS, DEFAULT_ACCENT, DENSITIES, FONTS,
-  MODES, RADII, SCHEMES, SIDEBAR_STYLES, TWEAK_KEYS, TWEAK_VARS,
+  GLASS, MODES, RADII, SCHEMES, SIDEBAR_STYLES, TWEAK_KEYS, TWEAK_VARS,
   accentForeground, accentShades, appearanceAttrs, appearancePatch, appearanceVars, hexToRgb,
   normalizeHex, radiusTier, readableOn, resolveAppearance
 };

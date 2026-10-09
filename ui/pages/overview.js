@@ -255,11 +255,87 @@ async function loadOverview() {
   `;
 
   applyIcons(box);
+  animateKpiCounters(box);
   document.getElementById('overview-refresh')?.addEventListener('click', () => { delete box.dataset.ready; loadOverview(); });
   // 「去更新 / 看详情」不在这里绑定：它带 data-open-settings="onebot"，由 app.js 里那**一个**
   // 全局委托处理（老写法是自己 switchTab + 派发一个 qa-settings-section 事件，而那个事件全仓
   // 没有任何监听者 —— 换分区这件事从来没发生）。
   document.getElementById('overview-goto-incidents')?.addEventListener('click', (e) => { e.preventDefault(); switchTab('incidents'); });
+}
+
+/** 上一次渲染时各 KPI 的数字（label → 数值）：用来“变了才滚，没变就直接显示”。 */
+const KPI_SEEN = new Map();
+
+/** KPI 计数动画的时长（ms）。比 CSS 里那四档时长长一点：数字滚动是“看清楚”而不是“反馈”。 */
+const KPI_COUNT_MS = 520;
+
+/**
+ * KPI 大数字的计数动画：从“上一次的值”滚到“这一次的值”，首次进页面则从 0 起。
+ *
+ * 三条约束都是真实取舍，改之前先想清楚：
+ *   ① 只在数字真的变了时才滚。总览页每次切回来都会重渲染，而多数 KPI 是不变的 ——
+ *      每次都从 0 重滚一遍会让人以为数据在跳变，切页签时尤其吵。
+ *   ② 版本号（v1.14.22）这类不滚：文本以字母打头的直接跳过。
+ *   ③ 减弱/关闭动效、系统 prefers-reduced-motion 时一律直接显示终值（不滚）。
+ *
+ * 不去改渲染模板（kpi() 的 value 是调用方给的 HTML 片段），而是渲染后按文本节点处理：
+ * 只动“数字打头”的那个纯文本节点，前缀（如 ¥）与后缀原样保留。
+ */
+function animateKpiCounters(root) {
+  // 取视图的方式与其他 ui/core 模块一致（document.defaultView）—— 而且测试里有一条
+  // 守卫在扫 `window.x =` 形状的全局挂载，直接写 window.xxx === 会被当成违规（它按字面扫）。
+  const doc = root.ownerDocument || document;
+  const view = doc.defaultView;
+  const motionAttr = doc.documentElement.getAttribute('data-motion') || '';
+  const reduceBySystem = Boolean(view?.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
+  if (motionAttr || reduceBySystem) return;
+
+  for (const card of root.querySelectorAll('.kpi')) {
+    const val = card.querySelector('.kpi-value');
+    const label = card.querySelector('.kpi-label')?.textContent?.trim() || '';
+    if (!val || !label) continue;
+    const node = Array.from(val.childNodes)
+      .find((n) => n.nodeType === 3 && /\d/.test(n.nodeValue || ''));
+    if (!node) continue;
+    const raw = node.nodeValue || '';
+    // 前缀（¥ / 空）+ 数字（允许千分位与小数）+ 后缀（空格之类）
+    const m = /^(\D*?)(\d[\d,]*(?:\.\d+)?)(\s*)$/.exec(raw);
+    // 前缀带字母 = v1.2.3 这类版本号，不滚
+    if (!m || /[a-z]/i.test(m[1])) continue;
+    const target = Number(m[2].replace(/,/g, ''));
+    if (!Number.isFinite(target)) continue;
+    const prev = KPI_SEEN.get(label);
+    KPI_SEEN.set(label, target);
+    const from = typeof prev === 'number' ? prev : 0;
+    if (from === target) { node.nodeValue = raw; continue; }
+
+    const decimals = (m[2].split('.')[1] || '').length;
+    const grouped = m[2].includes(',');
+    const format = (n) => {
+      let s = n.toFixed(decimals);
+      if (grouped) {
+        const [whole, frac] = s.split('.');
+        s = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (frac ? `.${frac}` : '');
+      }
+      return `${m[1]}${s}${m[3]}`;
+    };
+
+    // 用视图的 requestAnimationFrame（拿不到就退成 setTimeout），与 ui/core 里那几个模块同口径
+    const raf = view?.requestAnimationFrame?.bind(view)
+      || ((fn) => setTimeout(() => fn(Date.now()), 16));
+    const start = view?.performance?.now ? view.performance.now() : Date.now();
+    const step = (now) => {
+      const t = Math.min(1, Math.max(0, (now - start) / KPI_COUNT_MS));
+      // 三次方缓出：与 style.css 的 --ease-out-quart 观感同族。CSS token 没法直接喂给 JS，
+      // 这里取一个同族的近似即可（真要逐帧一致得把贝塞尔求解器抄进来，不值当）。
+      const eased = 1 - Math.pow(1 - t, 3);
+      node.nodeValue = format(from + (target - from) * eased);
+      // 收尾一定回到渲染时的原串：避免 toFixed 留下不同的小数位（如 ¥12.340）
+      if (t < 1) raf(step);
+      else node.nodeValue = raw;
+    };
+    raf(step);
+  }
 }
 
 export { loadOverview };

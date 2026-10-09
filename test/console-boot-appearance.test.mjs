@@ -78,7 +78,8 @@ test('首屏脚本覆盖 appearanceAttrs 的每一个属性（少一个就是某
   const patch = {
     mode: 'light', scheme: 'nord', darkIntensity: 'oled', accentPreset: 'amber', accent: '',
     accentScope: 'sidebar', sidebarStyle: 'accent', background: 'gradient', font: 'serif',
-    density: 'compact', contrast: 'high', reduceMotion: true, showBadges: false, showTopbarTheme: false
+    density: 'compact', contrast: 'high', reduceMotion: true, showBadges: false, showTopbarTheme: false,
+    glass: 'liquid'
   };
   const { attrs } = runBoot(patch);
   const expected = appearanceAttrs(resolveAppearance(patch));

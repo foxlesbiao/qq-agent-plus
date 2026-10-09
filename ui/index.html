@@ -95,6 +95,10 @@
           'accent-scope': patch.accentScope,
           'sidebar-style': patch.sidebarStyle,
           background: patch.background,
+          // 材质：默认（实心）不设属性，与 appearance.js 的 appearanceAttrs 同口径
+          glass: patch.glass === 'off' || !patch.glass ? '' : patch.glass,
+          // 边缘折射：默认关；与 appearanceAttrs 同口径（'1' 才设）
+          refract: patch.refract === true ? '1' : '',
           font: patch.font,
           density: patch.density,
           contrast: patch.contrast === 'high' ? 'high' : '',
@@ -351,6 +355,7 @@
   <script type="module" src="/core/icons.js"></script>
   <script type="module" src="/core/appearance.js"></script>
   <script type="module" src="/core/theme-transition.js"></script>
+  <script type="module" src="/core/glass-refract.js"></script>
   <script type="module" src="/core/segment.js"></script>
   <script type="module" src="/core/nav-pill.js"></script>
   <script type="module" src="/core/side-nav.js"></script>

@@ -477,7 +477,8 @@ function renderChatList() {
   const rows = visibleChats.length
     ? chatRows
     : [{ key: '__empty__', html: `<div class="list-head muted">${state.chats.length ? '没有匹配筛选条件的会话' : '还没有消息存档（等白名单里的群/好友来消息）'}</div>` }];
-  patchKeyedList(box, rows, 'data-key');
+  // exit: true —— 行被筛掉/归档时先塔缩再移除（见 ui/core/dom-util.js 与 style.css 的 rowOut）
+  patchKeyedList(box, rows, 'data-key', { exit: true });
   for (const c of state.chats) state.seenChatKeys.add(c.key);
   $$('.chat-item', box).forEach((el) => {
     if (el.__bound) return;      // 增量更新会保留旧行，别重复绑定

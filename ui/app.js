@@ -30,6 +30,7 @@ import { appearanceAttrs, appearancePatch, appearanceVars, resolveAppearance } f
 import { applyWithReveal } from './core/theme-transition.js';
 // 侧栏那两个"参照控制台"的效果（悬停展开的图标条 + 会滑动的选中块）：实现在 core/side-nav.js
 import { initSideNav, syncSideNav } from './core/side-nav.js';
+import { initGlassRefract } from './core/glass-refract.js';
 import { pendingSessionDetail, refreshIntervalMs, startUpdateProgressTicker, state } from './core/state.js';
 
 // 导航/主题等静态节点上的 data-icon 在启动时统一注入 SVG（幂等，可重复调用）
@@ -1213,6 +1214,9 @@ async function init() {
   applyAppearance(getAppearancePref());
   // 侧栏：绑定"悬停展开/失焦收起"与滑块对位（幂等，切页签时还会再同步一次）
   initSideNav();
+  // 边缘折射：只绑定一次（幂等）。它自己挂 qqa:appearance / resize / DOM 变动的重扫，
+  // 所以这里不用在每次 applyAppearance 之后再手动同步一次。
+  initGlassRefract();
   try {
     const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)');
     // 仅在"跟随系统"时响应系统主题变化

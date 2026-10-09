@@ -236,7 +236,8 @@ function renderSessionList() {
         </div>
       </div>`;
   }).map((html, index) => ({ key: String(shown[index].displayKey), html }));
-  patchKeyedList(box, sessionRows, 'data-display-key');
+  // exit: true —— 会话行被筛掉时先塔缩再移除（见 ui/core/dom-util.js 与 style.css 的 rowOut）
+  patchKeyedList(box, sessionRows, 'data-display-key', { exit: true });
   // 底部提示：还有多少条没显示 / 已全部显示
   const more = $('#session-more');
   if (more) {

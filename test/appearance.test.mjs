@@ -135,11 +135,23 @@ test('appearanceVars：应用范围=仅侧栏时全局保持默认蓝，只有 -
 test('appearanceAttrs：属性名与取值语义（动效 off 压过 reduced；顶栏开关反过来）', () => {
   const plain = appearanceAttrs(resolveAppearance({}));
   assert.deepEqual(Object.keys(plain).sort(), [
-    'accent-scope', 'background', 'contrast', 'dark-intensity', 'density', 'font', 'hide-badges',
-    'hide-theme-btn', 'motion', 'scheme', 'side-rail', 'sidebar-style'
+    'accent-scope', 'background', 'contrast', 'dark-intensity', 'density', 'font', 'glass',
+    'hide-badges', 'hide-theme-btn', 'motion', 'refract', 'scheme', 'side-rail', 'sidebar-style'
   ].sort());
   assert.equal('data-theme' in plain, false, 'data-theme 归 applyTheme 管，不在这里重复设');
   assert.equal(plain.motion, '');
+  // 材质默认是“实心”＝不设属性（CSS 侧就不需要一条“关掉玻璃”的规则）；选了才发值
+  assert.equal(plain.glass, '', '默认实心 → 不给 data-glass');
+  assert.equal(appearanceAttrs(resolveAppearance({ glass: 'frost' })).glass, 'frost');
+  assert.equal(appearanceAttrs(resolveAppearance({ glass: 'liquid' })).glass, 'liquid',
+    '材质是“空串＝不设”那几个开关里的一员，取值口径得与 side-rail / hide-badges 一致');
+  assert.equal(appearanceAttrs(resolveAppearance({ glass: '液态' })).glass, '',
+    '不认识的材质 id 要回默认（不能把一个手改坏的值写到 <html> 上）');
+  // 边缘折射：默认关，开了才发 '1'（与 side-rail / hide-badges 同口径）
+  assert.equal(plain.refract, '', '默认不开折射');
+  assert.equal(appearanceAttrs(resolveAppearance({ refract: true })).refract, '1');
+  assert.equal(appearanceAttrs(resolveAppearance({ refract: 'yes' })).refract, '',
+    '折射只认真正的 true，字符串不算（存档里被塞了垃圾也不该打开）');
   assert.equal(plain['hide-badges'], '', '默认显示徽章 → 不给隐藏标记');
   assert.equal(plain['hide-theme-btn'], '');
   // 侧栏默认就是"悬停展开的图标条"（与参照实现同默认）→ 默认要给标记；钉住才不给

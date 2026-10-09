@@ -179,7 +179,6 @@ body,
   .model-modal,
   .usage-card,
   .tier-btn,
-  .toast,
   [class*='itemIn'] {
     animation: none !important;
     transform: none !important;
@@ -1132,7 +1131,7 @@ html.boot-show .loading-overlay { opacity: 1; }
   transition: border-color var(--dur-interaction) var(--ease-in-out), background var(--dur-interaction) var(--ease-in-out),
     transform var(--dur-interaction) var(--ease-out-quart);
 }
-.persona-card:hover { background: var(--bg-3); border-color: var(--accent); transform: translateY(-1px); }
+.persona-card:hover { background: var(--bg-3); border-color: var(--accent); }
 .persona-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .persona-card.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .persona-card .pc-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -1438,7 +1437,7 @@ html.boot-show .loading-overlay { opacity: 1; }
   box-shadow: var(--shadow-md);
 }
 /* 成本卡片是重点数字，给更强的抬升 */
-.usage-card.accent:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.usage-card.accent:hover { box-shadow: var(--shadow-lg); }
 
 /* 表格行：悬浮时背景 + 左侧强调条，帮助横向阅读时不串行 */
 .usage-table tbody tr {
@@ -1457,7 +1456,8 @@ html.boot-show .loading-overlay { opacity: 1; }
     border-color var(--dur-interaction) var(--ease-in-out),
     transform var(--dur-interaction) var(--ease-out-quart);
 }
-.session-item:hover, .chat-item:hover { transform: translateX(2px); }
+/* 悬浮位移（translateX(2px)）搬到文件末尾「外观 v4」的 @media (hover: hover) 里了 ——
+   触屏上 tap 会先触发 hover，列表行会横着抽一下。底色那条在 L421 已经有了，这里不再重复。 */
 .session-item.selected, .chat-item.selected {
   transition:
     background-color var(--dur-base) var(--ease-in-out),
@@ -1481,10 +1481,9 @@ html.boot-show .loading-overlay { opacity: 1; }
 .saved-pulse { animation: pulseRing var(--dur-slower) var(--ease-out-quart); }
 .saved-flash { animation: savedFlash var(--dur-slower) var(--ease-in-out); }
 
-/* 折叠面板：展开时内容淡入 */
-.collapsible[open] > *:not(summary) {
-  animation: pageIn var(--dur-base) var(--ease-out-quart);
-}
+/* 折叠面板（<details>）的展开/收起高度过渡在文件末尾「外观 v4」里 ——
+   那里用 ::details-content 做整个内容盒的过渡。原来这里给子元素单发一条淡入，
+   会和那层高度过渡叠在一起（内容看着像闪两下），所以删掉。 */
 
 /* ── 输入框：聚焦时边框/阴影变化，让"我在这里输入"很明确 ──
    .field 是布局容器不需要动效，动的是里面的控件。 */
@@ -3603,8 +3602,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus
   --accent-side-border: var(--accent-border);
   /* 自定义背景只存四个"数据"，拼装在这里（同理：内联脚本只管填值） */
   --bg-solid: #0b1220;
-  --bg-from: #4c8dff;
-  --bg-to: #a78bfa;
+  --bg-from: #1b2a4a;
+  --bg-to: #2e2440;
   --bg-angle: 135deg;
   /* 控制件的"轮廓色"：亮色下 --border (#e0e7f2) 贴白卡只有 1.24:1，开关的槽、分段控件的
      轨道、未选中的单选圈都靠它表达 —— 实测 1.11~1.16，等于"看不见控件"。掺主文字色加深一档。 */
@@ -3641,16 +3640,44 @@ html[data-font='serif'] body {
   font-family: 'Iowan Old Style', Georgia, 'Songti SC', 'Noto Serif SC', 'SimSun', serif;
 }
 
-/* ── 2. 自定义背景：纯色 / 渐变时整页换底；=无 时保留原来的装饰性径向渐变 ── */
-html[data-background='solid'] body,
+/* ── 2. 自定义背景：纯色 / 渐变时整页换底；=无 时保留原来的装饰性径向渐变 ──
+   ⚠️ 2026-10-09 换掉「一条两色线性渐变」。原因有两个，都不是审美口味问题：
+     ① 两色线性渐变是现在最典型的"AI 生成感"——所有生成出来的页面都是那一张蓝紫斜渐变；
+     ② 更实际的：**玻璃背后必须有结构才成立**。一整片平的颜色渐变，玻璃盖上去只能得到
+        "浅一点的灰矩形"，无论参数怎么调。苹果那些 demo 好看，一半功劳在背后那张有层次的壁纸。
+   还是原来那三个输入（起色 / 止色 / 角度），只是把它们铺成一组合成：
+     两块错位的径向光斑（上中 + 右下，制造明暗错落）+ 线性底 + 四角压暗的暗角。
+   两个色只当"光"用（掺进 --bg 里，低饱和），所以哪怕用户挑了两个很艳的色，
+   出来也是夜景感而不是塑料感。 */
 html[data-background='gradient'] body {
-  background-image: linear-gradient(var(--bg-angle), var(--bg-from), var(--bg-to));
+  background-image:
+    radial-gradient(130% 100% at 50% -10%,
+      color-mix(in srgb, var(--bg-from) 70%, transparent), transparent 68%),
+    radial-gradient(115% 95% at 88% 108%,
+      color-mix(in srgb, var(--bg-to) 58%, transparent), transparent 66%),
+    linear-gradient(var(--bg-angle),
+      color-mix(in srgb, var(--bg-from) 40%, var(--bg)),
+      color-mix(in srgb, var(--bg-to) 34%, var(--bg))),
+    linear-gradient(var(--bg), var(--bg));
   background-attachment: fixed;
   background-repeat: no-repeat;
   background-size: cover;
 }
+/* 暗角：单独一层压在最后，把四角收掉 —— 平铺到底的渐变会让页面"发散的松" */
+html[data-background='gradient'] body::after,
+html[data-background='solid'] body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(140% 120% at 50% 45%,
+    transparent 42%, color-mix(in srgb, var(--bg) 78%, transparent) 100%);
+}
 html[data-background='solid'] body {
-  background-image: linear-gradient(var(--bg-solid), var(--bg-solid));
+  background-image:
+    radial-gradient(120% 80% at 50% 0%,
+      color-mix(in srgb, var(--bg-solid) 72%, #ffffff 10%), transparent 70%),
+    linear-gradient(var(--bg-solid), var(--bg-solid));
 }
 
 /* ── 3. 深色强度：只压三档背景，色板的描边/文字照旧（纯黑不该把配色一起抹平） ── */
@@ -4496,3 +4523,372 @@ html[data-motion='reduced'] .view.active { animation-duration: .01ms; }
   /* 窄屏这一条横着铺满整屏：不给下拉框限宽的话它会拉成几百像素宽（里面只有"观察/启用"两个字） */
   .side-foot .runtime-control { max-width: 200px; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════════
+   外观 v4（2026-10-09）：材质「液态玻璃」+ 折叠高度过渡 + 列表退场 + 触屏悬浮修正
+   ──────────────────────────────────────────────────────────────────────────────
+   这一批只做三件事，三条准则贯穿全节：
+     · 不另起一套：能走 token 的一律走 token，绝不写死时长/曲线
+       （console-motion.test.mjs 专门钉住“写死的兜底过渡会把整套 token 架空”这条）。
+     · 尊重用户的选择：减弱/关闭动效、高对比、触屏，各自有对应降级，见各段。
+     · 频率决定取舍：高频动作（切页签、删除行、键盘操作）不加动画；
+       低频且“变化会让人眼睛丢掉位置”的（折叠展开、列表行消失）才给。
+   ══════════════════════════════════════════════════════════════════════════════ */
+
+/* ── 1. 材质轴：data-glass 不设（实心）/ frost（磨砂）/ liquid（液态玻璃）/ acrylic（亚克力）/ outline（描边） ──
+   这一节被推翻重做过两轮，把结论写在最前面，免得再走回去：
+
+   ▸ 第一版（半透明 + 模糊 + 顶部一大片白）：那是【毛玻璃 + Web 2.0 塑料高光】。
+     塑料感的来源就是那条铺到 42%/14% 的顶部白渐变 —— 真玻璃的高光是**细、亮、贴边**的一条弧，
+     不是一张盖在上半边的白纱。
+   ▸ 第二版（把不透明度提上去、描边掺白）：卡片保住了层次，但变成"奶灰色卡片"——
+     填充太实，玻璃就退化成"浅一点的矩形"，背景透不上来，等于白做。
+
+   ▸ 现在这一版，三条同时成立才叫玻璃：
+     ① 填充要**近乎通透**（liquid 只保留 48% 表面色）—— 背景必须真的看得见；
+     ② 高光只在**边缘**，而且又细又亮（1.5px、白度 .5~.85）—— 这是"玻璃片"与"半透明色块"的分界；
+     ③ 层次不靠填充色，靠**贴地阴影 + 环境阴影**把卡片从背景里抬起来。
+     所以顶部的 sheen 层被整个删掉了（它只会带来塑料感），改由下面那组 inset 阴影承担高光。
+
+   ▸ 五档靠"模糊度 + 通透度"两个维度区分，而不是都堆大模糊：
+     磨砂＝真的糊（blur 26）；液态玻璃＝通透清晰、靠边（blur 14）；
+     亚克力＝最糊 + 一层噪点；描边＝几乎不填色，只留边。
+
+   ▸ 不透明度、描边强度、内辉光半径都是拿真控制台逐版截图比出来的（2026-10-09），
+     不是在纸上推的。改这里的数值前请先看一眼真东西。 */
+
+/* 每一档材质 = 一组 token；表面规则只写一次（见下），
+   所以新增一档材质只需要加一个 token 块 + 在 appearance.js 的 GLASS 里加一项。 */
+html[data-glass] {
+  /* 模糊**很小** —— 这是照着社区那份实现（shuding/liquid-glass）改的：
+     苹果那块玻璃是"透"的，不是"糊"的；糊起来立刻变成磨砂玻璃。
+     真正营造玻璃感的是后面的 contrast/brightness/saturate 链与边缘。 */
+  --glass-blur: 1px;
+  --glass-sat: 130%;
+  --glass-contrast: 1.18;
+  --glass-bright: 1.05;
+  --glass-tint: 74%;          /* 表面色保留多少（其余变透明）—— 越低越通透 */
+  /* 填色本身也走 token：各档只改 --glass-tint，填色自动跟着算（custom property 的 var()
+     在本元素上完成替换后再继承，所以这里写得一次就够）。侧栏那两种样式也只覆盖这一个 token。 */
+  --glass-fill: color-mix(in srgb, var(--bg-2) var(--glass-tint), transparent);
+  /* 描边色（颜色边）。必须是**单色**，不能是渐变 —— 见下面表面规则里那段说明：
+     半透明填充下，background-clip: border-box 的渐变会把整张卡片铺白。 */
+  --glass-edge: rgba(255, 255, 255, .20);
+  /* 镜面高光（亮度边）：三条 inset 阴影拼出一圈"被上面的光打亮"的边。
+     顶部最亮（光从上面来）、底部有回光（光绕着边绕过去）、左右很淡。
+     这三条是这一版最关键的改动 —— 高级感几乎全在它们身上。 */
+  --glass-spec-top: rgba(255, 255, 255, .50);
+  --glass-spec-bot: rgba(255, 255, 255, .12);
+  --glass-spec-side: rgba(255, 255, 255, .16);
+  /* 壁厚：**底部一条暗 inset**（社区实现同款，`0 -10px 25px inset rgba(0,0,0,.15)`）。
+     之前我用的是"一圈亮的辉光"，那是错的：玻璃的厚度读作"上亮下暗"——
+     底边积着一层暗，才像一块有厚度的片材。 */
+  --glass-inner: inset 0 -14px 30px -14px rgba(0, 0, 0, .50);
+  --glass-grain: none;
+  /* 阴影分两层：贴地一层（1px 的接触影）+ 环境一层（大而淡）。
+     只有环境影会"飘"，只有贴地影会"贴死"，两层一起才既浮起又落在面上。 */
+  --glass-shadow:
+    0 1px 1px rgba(0, 0, 0, .28),
+    0 14px 36px -10px rgba(0, 0, 0, .50);
+}
+/* 磨砂：真的"磨"—— 模糊最足、颜色收一点，像隔着磨砂玻璃看 */
+html[data-glass='frost'] {
+  --glass-blur: 26px;
+  --glass-sat: 115%;
+  --glass-blur: 22px;          /* 磨砂这一档是**故意**糊的，它与液态玻璃的分工就是清晰度 */
+  --glass-tint: 80%;
+  --glass-bright: 1;
+  --glass-spec-top: rgba(255, 255, 255, .40);
+  --glass-inner: inset 0 -12px 24px -14px rgba(0, 0, 0, .42);
+}
+/* 液态玻璃：通透清晰 + 最亮的边。低模糊是刻意的 —— 液体玻璃要"看得透"，
+   糊起来就变成磨砂了。强烈建议配「背景 → 渐变」，它要透的就是那层渐变。 */
+html[data-glass='liquid'] {
+  --glass-blur: 1px;
+  --glass-sat: 175%;
+  --glass-contrast: 1.22;
+  --glass-bright: 1.06;
+  --glass-tint: 58%;
+  --glass-edge: rgba(255, 255, 255, .34);
+  --glass-spec-top: rgba(255, 255, 255, .85);
+  --glass-spec-bot: rgba(255, 255, 255, .22);
+  --glass-spec-side: rgba(255, 255, 255, .26);
+  --glass-inner: inset 0 -16px 32px -14px rgba(0, 0, 0, .58);
+  --glass-shadow:
+    0 4px 8px rgba(0, 0, 0, .26),
+    0 20px 48px -14px rgba(0, 0, 0, .60);
+}
+/* 亚克力：最糊 + 最实 + 一层噪点。灰阶中性，适合长时间盯着看。
+   噪点的作用是打散大面积半透明的**色带**，不是装饰 —— 暗色底上色带很明显。 */
+html[data-glass='acrylic'] {
+  --glass-blur: 56px;
+  --glass-sat: 100%;
+  --glass-bright: 1;
+  --glass-tint: 90%;
+  --glass-edge: rgba(255, 255, 255, .14);
+  --glass-spec-top: rgba(255, 255, 255, .34);
+  --glass-spec-side: rgba(255, 255, 255, .12);
+  --glass-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23g)' opacity='.5'/%3E%3C/svg%3E");
+  --glass-shadow:
+    0 1px 1px rgba(0, 0, 0, .26),
+    0 12px 32px -10px rgba(0, 0, 0, .44);
+}
+/* 描边玻璃：几乎不填色，靠一圈亮边把边界"划"出来。只在渐变/图片背景上成立，
+   配纯色底会显得空 —— 所以照旧是选进来的，不是默认给的。 */
+html[data-glass='outline'] {
+  --glass-blur: 1px;
+  --glass-sat: 150%;
+  --glass-contrast: 1.14;
+  --glass-tint: 22%;
+  --glass-edge: rgba(255, 255, 255, .52);
+  --glass-spec-top: rgba(255, 255, 255, .80);
+  --glass-spec-side: rgba(255, 255, 255, .22);
+  --glass-inner: inset 0 -12px 26px -16px rgba(0, 0, 0, .40);
+}
+/* 亮色：白表面上的"白色高光"看不见 —— 那里改用更亮的白边交代厚度；
+   阴影也必须更轻，否则浅色下的卡片会显脏。 */
+[data-theme='light'][data-glass] {
+  --glass-edge: rgba(255, 255, 255, .90);
+  --glass-spec-top: rgba(255, 255, 255, 1);
+  --glass-spec-bot: rgba(255, 255, 255, .55);
+  --glass-spec-side: rgba(255, 255, 255, .70);
+  --glass-inner: inset 0 0 12px -8px rgba(255, 255, 255, .85);
+  --glass-shadow:
+    0 1px 1px rgba(16, 24, 40, .06),
+    0 12px 30px -10px rgba(16, 24, 40, .16);
+}
+/* 高对比模式：把不透明度拉满，可读性优先，材质让位 */
+html[data-contrast='high'][data-glass] { --glass-tint: 97%; }
+[data-theme='light'][data-contrast='high'][data-glass] { --glass-tint: 100%; }
+
+/* 玻璃表面：一条规则覆盖全部"大表面"。所有档位差异都走上面的 token，
+   所以新增一档材质不用动这里。
+
+   ⚠️ 嵌套是这里最容易踩的坑：带 backdrop-filter 的元素会成为新的 backdrop root，
+   它的子元素再上 backdrop-filter 时，采样到的是**空的**背景根 —— 表现出来就是
+   "子层莫名其妙发白、文字对比度垮掉"。2026-10-09 在真控制台上实测到的就是这件事
+   （.settings-sidebar 里又有 .settings-menu、.panel 里又有 .collapsible）。
+   所以下面这份清单只收"最外层的表面"，绝不同时收父子两层。
+   新增层前先问一句：它里面已经有别的玻璃层了吗？有就不该进来。
+
+   ▸ 描边**不**能用「透明 border + background-clip: border-box 的渐变」那套常见技法：
+     那个技法只在填充不透明时成立（靠上面不透明的 padding-box 层把中间盖住，只漏出 1px 环）。
+     我们的填充是半透明的，于是那条渐变会**铺满整张卡片** —— 表现就是"顶部一大片白"，
+     也就是这一节开头说的第一版塑料感。2026-10-09 实测踩到，记在这里免得有人再改回去。
+     正确做法：实心 border（单色）+ 顶部一条 inset 亮弧。环形本来就是 inset 阴影的天然形状，
+     而且"上亮下隐"由 --glass-spec-top / --glass-spec-bot 两条分别给，比渐变边更可控。 */
+html[data-glass] #topbar,
+html[data-glass] #sidebar,
+html[data-glass] .panel,
+html[data-glass] .kpi,
+html[data-glass] .opt-card,
+html[data-glass] .usage-card,
+html[data-glass] .plat-card,
+html[data-glass] .tool-card,
+html[data-glass] .settings-sidebar,
+html[data-glass] .model-modal,
+html[data-glass] dialog,
+html[data-glass] .list-pane {
+  border: 1px solid var(--glass-edge);
+  background-color: var(--glass-fill);
+  background-image: var(--glass-grain);
+  background-clip: padding-box;
+  /* var(--glass-refract, ) 的**空回退**是关键：没开折射时它替换成「什么都没有」，
+     整条值仍然合法；开了则变成 url(#…) 打头。JS 只设这一个变量（见 ui/core/glass-refract.js），
+     不必重写整条 backdrop-filter，也就不会把材质档的 token 冲掉。 */
+  backdrop-filter: var(--glass-refract, ) blur(var(--glass-blur)) saturate(var(--glass-sat))
+    contrast(var(--glass-contrast)) brightness(var(--glass-bright));
+  -webkit-backdrop-filter: var(--glass-refract, ) blur(var(--glass-blur)) saturate(var(--glass-sat))
+    contrast(var(--glass-contrast)) brightness(var(--glass-bright));
+  /* 三条 inset 拼出高光圈，再加一圈内辉光当壁厚。顺序有讲究：
+     先画外阴影，再自上而下压暗/提亮，最后才是整圈的内辉光。 */
+  box-shadow:
+    var(--glass-shadow),
+    inset 0 1.5px 0 var(--glass-spec-top),
+    inset 0 -1px 0 var(--glass-spec-bot),
+    inset 1px 0 0 var(--glass-spec-side),
+    inset -1px 0 0 var(--glass-spec-side),
+    var(--glass-inner);
+}
+/* ── 边缘折射带（只给液态玻璃）──
+   苹果那套 Liquid Glass 最关键的、也是我前几版**完全没做**的一件事：折射。
+   它把背后射过来的光在边缘弯折 —— 所以一条直线从玻璃下面穿过时，到边上会"拐一下"。
+
+   试过用 feDisplacementMap 做整块位移（backdrop-filter: url(#滤镜)）。结论：
+   ▸ 位移确实生效了，但**形状是错的** —— 它是"整块被抹开"，而苹果的折射**只发生在边缘那一圈**，
+     中间是完全不动的；而且线性位移图是按元素宽高比拉伸的，宽扁的卡片上会明显不均匀。
+   ▸ 所以那条路没走。现在换成一条真正只在边缘生效的折射带：
+     一个铺满卡片、但用 mask 只留下外圈 ~11px 的伪元素，让它**自己**再对背景采样一次
+     （更亮、更饱和、轻微再模糊）—— 那一圈看起来就像一块有厚度的玻璃边把背后的光吸过来。
+   ▸ 关键收益：中间的内容区完全不受影响，所以文字永远不会被拉变形。
+
+   ⚠️ 需要宿主是定位元素。下面这份清单只收确认过是 static 的；
+      #sidebar / .settings-sidebar 可能已被别的区块设成 sticky，不动它们（宁缺勿破）。
+   ⚠️ 伪元素会盖在内容之上（pointer-events: none 不挡点击）。所以环带宽度必须小于
+      卡片的内边距 —— 否则它会盖到正文上，看起来像文字外面蒙了一层灰。11px 是照
+      .opt-card / .panel 的 14~16px 内边距留的余量。 */
+html[data-glass='liquid'] {
+  --glass-lens: 11px;
+}
+html[data-glass='liquid'] #topbar,
+html[data-glass='liquid'] .panel,
+html[data-glass='liquid'] .kpi,
+html[data-glass='liquid'] .opt-card,
+html[data-glass='liquid'] .usage-card,
+html[data-glass='liquid'] .plat-card,
+html[data-glass='liquid'] .tool-card,
+html[data-glass='liquid'] .model-modal,
+html[data-glass='liquid'] dialog,
+html[data-glass='liquid'] .list-pane {
+  position: relative;
+}
+html[data-glass='liquid'] #topbar::after,
+html[data-glass='liquid'] .panel::after,
+html[data-glass='liquid'] .kpi::after,
+html[data-glass='liquid'] .opt-card::after,
+html[data-glass='liquid'] .usage-card::after,
+html[data-glass='liquid'] .plat-card::after,
+html[data-glass='liquid'] .tool-card::after,
+html[data-glass='liquid'] .model-modal::after,
+html[data-glass='liquid'] dialog::after,
+html[data-glass='liquid'] .list-pane::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: var(--glass-lens);
+  border-radius: inherit;
+  pointer-events: none;
+  backdrop-filter: blur(1.5px) saturate(210%) brightness(1.22);
+  -webkit-backdrop-filter: blur(1.5px) saturate(210%) brightness(1.22);
+  /* 两层同一块黑，靠 mask-composite: exclude 做差集 —— 只留 padding 那一圈 */
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+/* 关闭全部动效时不动它（它是静态的，但省掉一层滤镜开销） */
+html[data-motion='off'][data-glass='liquid'] #topbar::after,
+html[data-motion='off'][data-glass='liquid'] .panel::after,
+html[data-motion='off'][data-glass='liquid'] .kpi::after,
+html[data-motion='off'][data-glass='liquid'] .opt-card::after,
+html[data-motion='off'][data-glass='liquid'] .usage-card::after,
+html[data-motion='off'][data-glass='liquid'] .plat-card::after,
+html[data-motion='off'][data-glass='liquid'] .tool-card::after,
+html[data-motion='off'][data-glass='liquid'] .model-modal::after,
+html[data-motion='off'][data-glass='liquid'] dialog::after,
+html[data-motion='off'][data-glass='liquid'] .list-pane::after {
+  display: none;
+}
+
+.opt-row[data-inert='1'] { opacity: .5; }
+/* 折射开关在材质=实心时置灰（.opt-row[data-inert]），这里只负责它的观感：
+   置灰靠 opacity + 原生 disabled 的 cursor；不加这一条也"能看懂"，但看着像坏掉的开关。 */
+.opt-row[data-inert='1'] .opt-row-ctrl { cursor: not-allowed; }
+
+/* 侧栏样式只换"填色"这一个 token，整块背景与描边不用重写 */
+html[data-glass][data-sidebar-style='panel'] #sidebar {
+  --glass-fill: color-mix(in srgb, var(--bg-3) var(--glass-tint), transparent);
+}
+html[data-glass][data-sidebar-style='accent'] #sidebar {
+  --glass-fill: color-mix(in srgb, var(--accent-side) 12%,
+    color-mix(in srgb, var(--bg-2) var(--glass-tint), transparent));
+}
+/* 不支持 backdrop-filter（老浏览器 / 部分 Linux 桌面浏览器）：退回实心表面。
+   不退回的话，半透明底会直接糊在背景渐变上，文字对比度跟着掉 —— 宁可不玻璃。 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  html[data-glass] #topbar,
+  html[data-glass] #sidebar,
+  html[data-glass] .panel,
+  html[data-glass] .kpi,
+  html[data-glass] .opt-card,
+  html[data-glass] .usage-card,
+  html[data-glass] .plat-card,
+  html[data-glass] .tool-card,
+  html[data-glass] .settings-sidebar,
+  html[data-glass] .model-modal,
+  html[data-glass] dialog,
+  html[data-glass] .list-pane {
+    border-color: var(--border);
+    background-image: none;
+    background-color: var(--bg-2);
+    box-shadow: var(--shadow-card, none);
+  }
+}
+
+/* ── 2. 折叠面板（<details class="collapsible">）：展开与收起都走高度过渡 ──
+   原状：只给 [open] 的子元素一条淡入 —— 展开有动效、收起“啪”地消失，
+   而且高度完全不参与过渡，所以下面一整块内容是硬顶上来的。
+   现在给内容盒（::details-content，Chrome 131+ / Safari 18.4+）做 block-size 0 ↔ auto。
+   interpolate-size: allow-keywords 是让“auto”可以参与过渡的开关（默认 auto 不可插值）。
+   不支持这两个特性的浏览器保持“直切” —— 也就是原本的行为，不算回归。
+   content-visibility 必须跟 allow-discrete 一起写：收起时内容要留到过渡结束才隐藏。 */
+:root { interpolate-size: allow-keywords; }
+.collapsible::details-content {
+  block-size: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    block-size var(--dur-slow) var(--ease-out-quart),
+    opacity var(--dur-base) var(--ease-in-out),
+    content-visibility var(--dur-slow) allow-discrete;
+}
+.collapsible[open]::details-content {
+  block-size: auto;
+  opacity: 1;
+}
+
+/* ── 3. 列表行的退场：先塔缩再移除 ──
+   行被删掉时下面的内容会瞬间上跳 —— 一眼就能看出“这一块在重排”。
+   高度由 JS 量好写进 --leave-h（这里不能写 height: auto，插值不了），
+   padding/margin/border 一并归零，否则高度到 0 了还留着一圈空隙。
+   时长与 ui/core/dom-util.js 的 LEAVE_MS 必须一致：那里等的就是这条动画。
+   注：这里确实在动 height（布局属性），而不是一个便宜的 transform ——
+   但“塔缩”不给高度就没有意义，而且它只在删行时跑一次、列表很短，代价可以接受。 */
+.session-item.leaving,
+.chat-item.leaving {
+  overflow: hidden;
+  height: var(--leave-h, auto);
+  pointer-events: none;
+  animation: rowOut var(--dur-slow) var(--ease-out-quart) forwards;
+}
+@keyframes rowOut {
+  to {
+    height: 0;
+    opacity: 0;
+    transform: translateX(-6px);
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+    border-top-width: 0;
+    border-bottom-width: 0;
+  }
+}
+/* 减弱/关闭动效时不塔缩（也不延时删除：JS 那边看到 data-motion 就直接移除） */
+html[data-motion='reduced'] .session-item.leaving,
+html[data-motion='reduced'] .chat-item.leaving,
+html[data-motion='off'] .session-item.leaving,
+html[data-motion='off'] .chat-item.leaving { animation: none; }
+
+/* ── 4. 悬浮位移只在“真有鼠标”的设备上生效 ──
+   触屏上 tap 会先触发一次 hover，列表行会横着抽一下、卡片会跳一下。
+   （.kpi 那一条原本就是这个口径，这几条是同一类漏网 —— 收口到一起。） */
+@media (hover: hover) and (pointer: fine) {
+  .persona-card:hover { transform: translateY(-1px); }
+  .usage-card.accent:hover { transform: translateY(-2px); }
+  .session-item:hover,
+  .chat-item:hover { transform: translateX(2px); }
+  .tier-slider::-webkit-slider-thumb:hover { transform: scale(1.15); }
+}
+/* 触屏上把这些位移显式压回 0：有些移动浏览器支持 hover 又同时是触屏，光靠上面那条遮不住 */
+@media (hover: none) {
+  .persona-card:hover,
+  .usage-card.accent:hover,
+  .session-item:hover,
+  .chat-item:hover { transform: none; }
+}
+
+/* ── 5. KPI 数字滚动：等宽数字 ──
+   计数动画（ui/pages/overview.js）每帧改文本，不等宽的话数字宽度会抖、整块跟着微移。
+   比例字体下的 tabular-nums 只影响数字字形，不影响中文，所以全站 KPI 都开着。 */
+.kpi-value { font-variant-numeric: tabular-nums; }
