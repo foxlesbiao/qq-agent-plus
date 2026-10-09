@@ -1,3 +1,5 @@
+import { readJsonBounded } from '../core/http-body.js';
+
 // Linux 全栈部署的 SnowLuma / noVNC 端口是 5099 / 6081，上游旧默认值 15099 / 16081 会导致状态误报
 const DEFAULT_ENDPOINTS = Object.freeze({
   dsh: process.env.DSH_URL || 'http://127.0.0.1:3080/',
@@ -25,7 +27,8 @@ export const SNOWLUMA_WEBUI_URL = String(
 
 async function responseJson(response) {
   try {
-    return await response.json();
+    // 有界读（1MB）：集成端点响应本应很小，超限按解析失败处理（2026-10-09 审查）
+    return await readJsonBounded(response, 1024 * 1024);
   } catch {
     return {};
   }

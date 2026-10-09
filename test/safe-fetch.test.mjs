@@ -12,7 +12,7 @@ process.env.QQ_AGENT_DATA_DIR = __dir;
 process.on('exit', () => { try { fs.rmSync(__dir, { recursive: true, force: true }); } catch { /* Windows 上可能被句柄占着 */ } });
 
 const { DEFAULT_CONFIG, setRuntimeConfig } = await import('../src/core/config.js');
-const { safeFetchBinary } = await import('../src/llm/safe-fetch.js');
+const { safeFetchBinary, readBounded } = await import('../src/llm/safe-fetch.js');
 
 function listen(server) {
   return new Promise((resolve) => {
@@ -52,4 +52,32 @@ test('safeFetchBinary accepts a response exactly at the byte limit', async (t) =
 
   const result = await safeFetchBinary(`http://127.0.0.1:${port}/image`, 4);
   assert.deepEqual(result.buffer, Buffer.from([1, 2, 3, 4]));
+});
+
+test('readBounded：正好等于上限（自然读尽）不标 truncated；超过才中断并标（2026-10-09 审查）', async () => {
+  // 旧实现用 `total >= maxBytes` 中断 + 拿 body 长度反推 truncated：正好一页（50000 字节）
+  // 的完整响应会被误标成"截断"；而截断后的英文页长度恰好也是 50000，反推又会漏标。
+  // 现在 truncated 由读取路径如实带出。
+  const { EventEmitter } = await import('node:events');
+  const fakeRes = () => {
+    const ee = new EventEmitter();
+    ee.destroyCalled = false;
+    ee.destroy = () => { ee.destroyCalled = true; };
+    return ee;
+  };
+
+  // ① 正好等于上限：完整响应，不许中断、不许标 truncated
+  const exact = fakeRes();
+  const p1 = readBounded(exact, 10, true);
+  exact.emit('data', Buffer.from('0123456789'));
+  exact.emit('end');
+  assert.deepEqual(await p1, { body: '0123456789', truncated: false });
+  assert.equal(exact.destroyCalled, false, '正好等于上限不该中断连接');
+
+  // ② 超过一字节：中断 + 截到上限 + truncated=true
+  const over = fakeRes();
+  const p2 = readBounded(over, 10, true);
+  over.emit('data', Buffer.from('0123456789ab'));
+  assert.equal(over.destroyCalled, true, '超限必须中断连接');
+  assert.deepEqual(await p2, { body: '0123456789', truncated: true });
 });

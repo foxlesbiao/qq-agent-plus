@@ -1,6 +1,7 @@
 // 多提供商模型目录：统一使用 OpenAI 兼容接口，由控制台维护。
 import { getConfig, updateConfig } from './config.js';
 import { assertTimeAllowed, watchTimeWindow } from './time-gate.js';
+import { readJsonBounded } from './http-body.js';
 import { modelServiceOfBaseUrl, modelServiceById, resolveThinkingPatch, normalizeThinkingIntent, effectiveThinkingRaw, hostOf } from './provider-presets.js';
 
 /** 当前生效的提供商目录（配置里的 providers）。 */
@@ -125,7 +126,8 @@ export async function fetchModelsFrom(baseUrl, apiKey, timeoutMs = 15000) {
     signal: AbortSignal.timeout(timeoutMs)
   });
   if (!res.ok) throw new Error(`获取模型列表失败：HTTP ${res.status}`);
-  const data = await res.json();
+  // 有界读（2MB）：模型列表可能不小，但绝不该是"无上限"（2026-10-09 审查）
+  const data = await readJsonBounded(res, 2 * 1024 * 1024);
   const list = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
   return list.map((m) => String(m.id ?? m.model ?? m)).filter(Boolean);
 }
@@ -157,7 +159,9 @@ export async function testModelChat({ baseUrl, apiKey, model }) {  assertTimeAll
       signal: controller.signal
     });
     const latencyMs = Date.now() - startedAt;
-    const body = await res.json().catch(() => ({}));
+    // 有界读（256KB）：测试请求的响应本应很小（2026-10-09 审查）
+    let body = {};
+    try { body = await readJsonBounded(res, 256 * 1024); } catch { body = {}; }
     if (!res.ok) {
       const errText = String(body?.error?.message ?? body?.message ?? '').slice(0, 200);
       return { ok: false, httpStatus: res.status, latencyMs, note: `HTTP ${res.status}${errText ? `：${errText}` : ''}` };
@@ -242,7 +246,9 @@ export async function probeThinking({ providerId = '', baseUrl = '', apiKey = ''
       body: JSON.stringify(body),
       signal: controller.signal
     });
-    const payload = await res.json().catch(() => ({}));
+    // 有界读（256KB）：探测请求的响应本应很小（2026-10-09 审查）
+    let payload = {};
+    try { payload = await readJsonBounded(res, 256 * 1024); } catch { payload = {}; }
     const latencyMs = Date.now() - startedAt;
     if (!res.ok) {
       const errText = String(payload?.error?.message ?? payload?.message ?? '').slice(0, 300);
@@ -462,10 +468,10 @@ export async function testProvider(p, timeoutMs = 12000) {
     if (res.ok) {
       let count = 0;
       try {
-        const data = await res.json();
+        const data = await readJsonBounded(res, 2 * 1024 * 1024);
         const list = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
         count = list.length;
-      } catch { /* body 不是 JSON */ }
+      } catch { /* body 不是 JSON 或超限 */ }
       return { ok: true, httpStatus: res.status, modelCount: count, latencyMs, verdict: 'ok', note: count ? `列到 ${count} 个模型` : '端点可用（未返回模型列表）' };
     }
     if (res.status === 401 || res.status === 403) {

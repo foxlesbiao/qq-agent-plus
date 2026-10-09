@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const { readTextBounded, readJsonBounded } = await import('../src/core/http-body.js');
+const { readTextBounded, readJsonBounded, readBytesBounded } = await import('../src/core/http-body.js');
 
 /** 造一个"每块 chunkBytes 字节、最多 maxChunks 块"的假流。 */
 function streamRes({ chunkBytes = 100, maxChunks = 10, contentType = 'text/plain' } = {}) {
@@ -70,4 +70,40 @@ test('body 被锁住且连 text() 都没有时，抛的不能是裸 TypeError', 
       `应当是可识别的错误，实际 ${err.constructor.name}: ${err.message}`);
     return true;
   });
+});
+
+test('readBytesBounded：超限立刻取消、正好等于上限放行、退路照常校验（字节路径）', async () => {
+  // 2026-10-09 审查：图片/语音这类二进制读取原先是"先整包 arrayBuffer() 再判长度"，
+  // 上限形同虚设；这里钉住字节路径与文本路径同一条纪律。
+  const over = streamRes({ chunkBytes: 100, maxChunks: 1000 });
+  await assert.rejects(() => readBytesBounded(over.res, 250), (err) => {
+    assert.equal(err.code, 'BODY_TOO_LARGE');
+    return true;
+  });
+  assert.equal(over.stats().cancelled, true, '超限必须取消底层流');
+
+  const exact = streamRes({ chunkBytes: 100, maxChunks: 5 });
+  const buffer = await readBytesBounded(exact.res, 500);
+  assert.equal(buffer.length, 500, '正好等于上限要放行（边界不能差一个字节）');
+  assert.equal(buffer[0], 65);
+
+  const viaArrayBuffer = await readBytesBounded({ arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer }, 10);
+  assert.deepEqual([...viaArrayBuffer], [1, 2, 3]);
+  await assert.rejects(() => readBytesBounded({ arrayBuffer: async () => new Uint8Array(50).buffer }, 10),
+    (err) => err.code === 'BODY_TOO_LARGE');
+});
+
+test('退化流：body 既无 getReader 也不是异步可迭代时，不抛裸 TypeError', async () => {
+  // 2026-10-09 审查：`{}` 这类 truthy 桩对象会逸出 `for await ... of` 的裸 TypeError，
+  // 与"残缺 Response 不放裸异常"的模块承诺不符。
+  await assert.rejects(() => readTextBounded({ body: {} }, 1024), (err) => {
+    assert.notEqual(err.constructor.name, 'TypeError',
+      `应当是可识别的错误，实际 ${err.constructor.name}: ${err.message}`);
+    return true;
+  });
+  // 有 asyncIterator 的退化流照常读（文本与字节两条路径）
+  const textBody = { [Symbol.asyncIterator]: async function* () { yield new Uint8Array([65, 66]); } };
+  assert.equal(await readTextBounded({ body: textBody }, 1024), 'AB');
+  const byteBody = { [Symbol.asyncIterator]: async function* () { yield new Uint8Array([1, 2]); yield new Uint8Array([3]); } };
+  assert.deepEqual([...(await readBytesBounded({ body: byteBody }, 1024))], [1, 2, 3]);
 });

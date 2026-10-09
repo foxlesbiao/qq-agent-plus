@@ -14,7 +14,7 @@ import { watchTimeWindow } from '../core/time-gate.js';
 import { imageGenKeyResolve } from '../core/config.js';
 import { imageGenServiceOfBaseUrl, imageGenServiceNeedsKey } from './image-gen-presets.js';
 import { safeFetchBinary } from './safe-fetch.js';
-import { readTextBounded } from '../core/http-body.js';
+import { readBytesBounded, readTextBounded } from '../core/http-body.js';
 
 export const MAX_PROMPT_CHARS = 800;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;   // 与表情库落盘上限一致
@@ -234,7 +234,9 @@ async function pollinationsImage({ base, body, model, size, controller, fetchFn 
   const res = await fetchFn(url.toString(), { method: 'GET', signal: controller.signal });
   const type = String(res.headers?.get?.('content-type') || '');
   if (!res.ok || !type.startsWith('image/')) {
-    const detail = String((await res.text?.()) || '').slice(0, 300);
+    // 错误详情有界读（4096 字节足够，还要再截 300 字符）；读不出来不影响报错本身。
+    let detail = '';
+    try { detail = String(await readTextBounded(res, 4096)).slice(0, 300); } catch { /* 忽略 */ }
     // 402 / 429 是这条免 Key 路线的常态而不是异常：官方文档写明匿名档是「15 秒 1 次」按 IP 限流，
     // 额度用完之后直接回一个**空的** 402（响应体就俩字节 {}），不解释的话用户完全看不懂。
     // 2026-10-01 实测：同一时刻本机出口 200、云服务器出口 402 —— 是按 IP 算的。
@@ -245,8 +247,14 @@ async function pollinationsImage({ base, body, model, size, controller, fetchFn 
     }
     throw new Error(`图片生成失败 HTTP ${res.status}${detail ? `：${detail}` : ''}`);
   }
-  const buffer = Buffer.from(await res.arrayBuffer());
+  // 有界读取：上游返回超大/畸形响应时中途取消，而不是先整包读入再判长度（那样上限形同虚设）
+  let buffer;
+  try {
+    buffer = await readBytesBounded(res, MAX_IMAGE_BYTES);
+  } catch (error) {
+    if (error?.code === 'BODY_TOO_LARGE') throw new Error('生成的图片过大（>8 MiB）');
+    throw error;
+  }
   if (!buffer.length) throw new Error('图片生成返回了空数据');
-  if (buffer.length > MAX_IMAGE_BYTES) throw new Error('生成的图片过大（>8 MiB）');
   return { buffer, revisedPrompt: '' };
 }

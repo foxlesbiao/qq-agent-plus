@@ -187,6 +187,17 @@ it('send_group_file：text 变 base64 文件、url 原样转发、二选一校�
 
   assert.equal((await tool('send_group_file').execute(ctx, {})).isError, true);
   assert.equal((await tool('send_group_file').execute(ctx, { text: 'x', url: 'https://e/x' })).isError, true);
+
+  // 2026-10-09 审查 P1：协议端把 file 字段当"URL / base64 / 协议端能读到的本地路径"三态都收，
+  // 非 http 前缀会原样透传成"读本机文件发进群"。必须一律拒，且不许进发送队列。
+  for (const bad of ['/app/data/config.json', 'file:///etc/passwd', 'base64://aGk=', 'ftp://e/x']) {
+    assert.equal((await tool('send_group_file').execute(ctx, { url: bad })).isError, true,
+      `${bad} 这类非 http(s) 地址必须被拒`);
+  }
+  assert.equal((await tool('send_group_file').execute(ctx, { url: 'http://127.0.0.1:3210/secret' })).isError, true,
+    '内网字面量地址必须被拒（与 safe-fetch 同一口径）');
+  assert.equal(sentCalls.at(-1).payload.file, 'https://example.com/a.pdf',
+    '被拒的地址不能进发送队列');
 });
 
 it('list_group_album：列相册 / 列照片；点赞与评论参数形状', async () => {

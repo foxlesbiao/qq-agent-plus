@@ -7,6 +7,7 @@
 import { getConfig, updateConfig } from '../core/config.js';
 import { builtinVisionResults } from './model-vision-docs.js';
 import { withTimeWindow, assertTimeAllowed } from '../core/time-gate.js';
+import { readJsonBounded } from '../core/http-body.js';
 
 // 1×1 像素 PNG（70 字节），足够让视觉模型"看到点什么"，也不会浪费 token。
 const TINY_PNG =
@@ -92,7 +93,10 @@ async function detectModelVisionRequest({ baseUrl, apiKey, model }, timeoutMs, s
     return { ...base, note: error?.name === 'TimeoutError' ? '探测请求超时' : `网络错误：${error?.message ?? error}` };
   }
   const latencyMs = Date.now() - started;
-  const body = await res.json().catch(() => ({}));
+  // 有界读（256KB 足够）：探测响应本应很小，超限/非 JSON 一律按"无细节"处理，
+  // 由下面的判定逻辑落到 unknown（2026-10-09 审查）。
+  let body = {};
+  try { body = await readJsonBounded(res, 256 * 1024); } catch { body = {}; }
   const errText = String(body?.error?.message ?? body?.message ?? body?.detail?.error?.message ?? '');
 
   if (res.ok && Array.isArray(body?.choices) && body.choices.length > 0) {

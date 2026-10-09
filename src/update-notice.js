@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readAutoUpdateState, writeAutoUpdateState } from './auto-update.js';
+import { readJsonBounded } from './core/http-body.js';
 
 const CHECK_TTL_MS = 30 * 60 * 1000;
 const API_TIMEOUT_MS = 10000;
@@ -45,7 +46,8 @@ async function fetchJson(url, fetchImpl) {
       signal: AbortSignal.timeout(API_TIMEOUT_MS)
     });
     if (!res.ok) return { ok: false, status: Number(res.status) || 0 };
-    const data = await res.json().catch(() => null);
+    // 有界读（512KB）：GitHub API 响应不该无上限（2026-10-09 审查）
+    const data = await readJsonBounded(res, 512 * 1024).catch(() => null);
     return { ok: true, data };
   } catch (error) {
     return { ok: false, status: 0, error: cleanText(error?.message, 200) };

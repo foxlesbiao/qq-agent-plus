@@ -1287,7 +1287,15 @@ export function buildToolDefs() {
           // 一点也盖不到。不挡的话就是一条现成的 SSRF：诱导模型传 http://169.254.169.254/…
           // 或 docker bridge 网关上的宿主服务，响应被当文件发进群 = 数据外带
           //（2026-10-09 全面审查）。text 走 base64 那条路没有外部地址，不需要校验。
-          if (url && /^https?:\/\//i.test(url)) {
+          //
+          // ⚠️ 协议端把 file 字段当"URL / base64 / **协议端能读到的本地路径**"三态都收
+          // （见 onebot.js setAvatar 的注释），所以"只校验 http 形态"等于没防：`/app/data/config.json`、
+          // `file:///etc/passwd` 这类非 http 前缀会原样透传，让协议端读本机文件发进群
+          //（2026-10-09 审查 P1）。非 http(s) 一律拒；本机内容用 text 参数走 base64。
+          if (url && !/^https?:\/\//i.test(url)) {
+            return err('文件地址只支持 http(s) 直链；要发本机生成的内容请用 text 参数');
+          }
+          if (url) {
             try {
               assertPublicUrlLiteral(url, { label: '文件地址' });
             } catch (error) {

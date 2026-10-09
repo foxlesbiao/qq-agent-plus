@@ -4,6 +4,7 @@ import { sanitizeUserText, escapeCqText, formatQuoteRef } from '../core/util.js'
 // QQ 系统表情对照表（离线导出表 + 协议端在线目录）在 face-catalog.js 里统一维护：
 // 「[表情14]」渲染成「[表情14 微笑]」用它取名；send_face 的中文名 → 编号也读同一份。
 import { faceNameOf, refreshFaceCatalog } from './face-catalog.js';
+import { readJsonBounded } from '../core/http-body.js';
 
 const RECONNECT_MIN_MS = 3000;
 const RECONNECT_MAX_MS = 30000;
@@ -339,14 +340,20 @@ export class OneBotClient {
     }
     let body;
     try {
-      body = await res.json();
+      // 有界读（8MB）：成员/文件列表这类响应可以很大，但绝不无上限（2026-10-09 审查）
+      body = await readJsonBounded(res, 8 * 1024 * 1024);
     } catch (cause) {
-      throw new OneBotActionError(`OneBot ${action} 返回了无法解析的响应`, {
-        action,
-        outcome: 'unknown',
-        httpStatus: res.status,
-        cause
-      });
+      throw new OneBotActionError(
+        cause?.code === 'BODY_TOO_LARGE'
+          ? `OneBot ${action} 响应过大（超过 8MB 上限）`
+          : `OneBot ${action} 返回了无法解析的响应`,
+        {
+          action,
+          outcome: 'unknown',
+          httpStatus: res.status,
+          cause
+        }
+      );
     }
     // fail-closed：给了 status 就按 status 判（failed 一律算失败），只有没有 status 时才看 retcode。
     // 原来写成 `status !== 'ok' && status !== 'async' && retcode !== 0`，于是

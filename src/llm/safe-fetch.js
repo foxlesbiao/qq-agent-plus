@@ -154,7 +154,7 @@ function sliceByCodePoints(s, max) {
   return Array.from(s).slice(0, max).join('');
 }
 
-function readBounded(res, maxBytes, asText) {
+export function readBounded(res, maxBytes, asText) {
   return new Promise((resolve, reject) => {
     const decoder = new StringDecoder('utf8');
     const chunks = [];
@@ -171,21 +171,27 @@ function readBounded(res, maxBytes, asText) {
       total += chunk.length;
       if (asText) text += decoder.write(chunk);
       else chunks.push(chunk);
-      // 只用字节数判断是否超限。原实现还额外判断了 text.length >= maxBytes，
-      // 但 text.length 是字符数而 maxBytes 是字节数（UTF-8 下中文 1 字符 = 3 字节），
-      // 单位不一致，会让刚好读满的响应被误标成 truncated。
-      if (total >= maxBytes) {
+      // 只用字节数判断是否超限。**必须是 > 不能是 >=**：正好等于上限的响应是完整的，
+      // 用 >= 会在读满那一刻就 destroy 并把它误标成 truncated（2026-10-09 审查）。
+      //
+      // truncated 标记由**读取路径**如实带出（不再让调用方拿 body 长度反推）：截断后的
+      // 正文长度可能恰好等于上限（英文页截到 50000 字节就是），反推会漏标。
+      if (total > maxBytes) {
         try { res.destroy(); } catch { /* ignore */ }
-        finish(resolve, asText ? sliceByCodePoints(text, maxBytes) : Buffer.concat(chunks).subarray(0, maxBytes));
+        finish(resolve, {
+          truncated: true,
+          body: asText ? sliceByCodePoints(text, maxBytes) : Buffer.concat(chunks).subarray(0, maxBytes)
+        });
       }
     });
     res.on('end', () => {
       if (!settled) {
         if (asText) {
           text += decoder.end();
-          finish(resolve, sliceByCodePoints(text, maxBytes));
+          // 自然读尽 = 没被截断（走到这里 total 必 ≤ maxBytes，slice 只是防御）
+          finish(resolve, { truncated: false, body: sliceByCodePoints(text, maxBytes) });
         } else {
-          finish(resolve, Buffer.concat(chunks));
+          finish(resolve, { truncated: false, body: Buffer.concat(chunks) });
         }
       }
     });
@@ -221,7 +227,7 @@ function requestOnce(url, ip, { asBinary = false, maxBytes = 50000, signal } = {
         return;
       }
       readBounded(res, maxBytes, !asBinary)
-        .then((body) => resolve({ statusCode, body, contentType: String(res.headers['content-type'] || '') }))
+        .then(({ body, truncated }) => resolve({ statusCode, body, truncated, contentType: String(res.headers['content-type'] || '') }))
         .catch(reject);
     });
     req.on('timeout', () => req.destroy(new Error(`请求超时：${url.hostname}`)));
@@ -244,9 +250,9 @@ export async function safeFetch(urlString) {
       continue;
     }
     const body = result.body || '';
-    // maxBytes 是字节，body.length 是字符数：中文页按字符比会误报"没截断"，
-    // 让模型把只有一半的正文当成完整内容。
-    return { url: url.toString(), statusCode: result.statusCode, truncated: Buffer.byteLength(body, 'utf8') >= 50000, body };
+    // truncated 由读取路径给出（"真的被截断"）：不能再拿长度反推 —— 截断后的正文可能
+    // 恰好等于 50000 字节，反推会把它当成完整内容交给模型（2026-10-09 审查）。
+    return { url: url.toString(), statusCode: result.statusCode, truncated: Boolean(result.truncated), body };
   }
   throw new Error('重定向次数过多，已停止');
 }
@@ -265,7 +271,7 @@ export async function safeFetchBinary(urlString, maxBytes = 12 * 1024 * 1024, si
       continue;
     }
     if (result.statusCode !== 200) throw new Error(`HTTP ${result.statusCode}`);
-    if (result.body.length > maxBytes) throw new Error(`响应体超过 ${maxBytes} 字节限制`);
+    if (result.truncated || result.body.length > maxBytes) throw new Error(`响应体超过 ${maxBytes} 字节限制`);
     return { buffer: result.body, contentType: result.contentType };
   }
   throw new Error('重定向次数过多，已停止');
@@ -313,6 +319,11 @@ export async function validateImageUrl(raw) {
  *      约束不了它的解析结果。多花一次网络往返，买到的安全感是假的。
  * 字面量检查零成本、零依赖，且能拦住实际攻击 payload 的绝大多数（提示词注入里几乎只会写
  * 127.0.0.1 / 169.254.169.254 / 10.x / 172.17.0.1 / localhost 这类字面量）。
+ *
+ * **已知未防护（明说，别当成漏洞又"修"回去）**：域名解析到内网（如
+ * `http://169.254.169.254.nip.io/…`）这层拦不住 —— 地址最终由协议端解析，我们解析到的 IP
+ * 约束不了它的结果。要闭合这条路只能改成"我们自己用 safeFetchBinary 取回、再把 base64
+ * 交给协议端"（本地文件已经是这个模式），那是一次功能改造而不是加几行校验（2026-10-09 审查）。
  */
 export function assertPublicUrlLiteral(raw, { label = '地址' } = {}) {
   let url;

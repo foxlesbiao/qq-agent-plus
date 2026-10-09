@@ -84,8 +84,11 @@ export async function readTextBounded(res, maxBytes) {
     }
   }
 
-  if (body && streamUsable) {
+  if (body && streamUsable && typeof body[Symbol.asyncIterator] === 'function') {
     // 退化实现：只有异步迭代器，没有 getReader。
+    // 判 asyncIterator 而不是 Boolean(body)：`{}` 这类既没有 getReader 也不是异步可迭代的
+    // 桩对象，`for await` 会逸出裸 TypeError —— 那是本模块承诺之外的行为（2026-10-09 审查）。
+    // 不可迭代时落到下面的 text()/json() 退路。
     const decoder = new TextDecoder();
     let total = 0;
     let text = '';
@@ -131,4 +134,73 @@ export async function readTextBounded(res, maxBytes) {
  */
 export async function readJsonBounded(res, maxBytes) {
   return JSON.parse(await readTextBounded(res, maxBytes));
+}
+
+/**
+ * 有界读取响应字节（Buffer）。给"拿二进制体"的调用点用（图片、音频等）。
+ *
+ * 与 readTextBounded 同一条纪律：边读边计数，超限立即取消流并抛
+ * `code === 'BODY_TOO_LARGE'`，绝不先 `arrayBuffer()` 整包读入再判长度
+ * —— 那样上限形同虚设（2026-10-09 审查：pollinations / tts-openai 等
+ * 都是"读完再判 > 8MiB"，上游畸形响应照样能把进程读爆）。
+ *
+ * @param {Response|{ body?: ReadableStream, arrayBuffer?: Function }} res 响应对象。
+ * @param {number} maxBytes 字节上限；超过即抛 `code === 'BODY_TOO_LARGE'`（不截断）。
+ * @returns {Promise<Buffer>} 未超限时的完整字节。
+ */
+export async function readBytesBounded(res, maxBytes) {
+  const limit = Math.max(1, Math.floor(Number(maxBytes) || 1));
+  const body = bodyStreamOf(res);
+
+  let reader = null;
+  if (body && typeof body.getReader === 'function') {
+    try {
+      reader = body.getReader();
+    } catch {
+      reader = null;
+    }
+  }
+
+  if (reader) {
+    const chunks = [];
+    let total = 0;
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > limit) {
+          await reader.cancel().catch(() => { /* 取消失败不影响已判定的超限 */ });
+          throw bodyTooLargeError(limit, total);
+        }
+        chunks.push(Buffer.from(value));
+      }
+      return Buffer.concat(chunks);
+    } finally {
+      try { reader.releaseLock(); } catch { /* 已取消/已释放 */ }
+    }
+  }
+
+  if (body && typeof body[Symbol.asyncIterator] === 'function') {
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of body) {
+      const buf = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : Buffer.from(chunk);
+      total += buf.byteLength;
+      if (total > limit) {
+        try { await body.return?.(); } catch { /* 取消失败不掩盖超限错误 */ }
+        throw bodyTooLargeError(limit, total);
+      }
+      chunks.push(buf);
+    }
+    return Buffer.concat(chunks);
+  }
+
+  // 退路：老运行时或测试桩没有可流的 body —— 只能整体读出后再按字节数校验。
+  if (typeof res?.arrayBuffer === 'function') {
+    const buffer = Buffer.from(await res.arrayBuffer());
+    if (buffer.length > limit) throw bodyTooLargeError(limit, buffer.length);
+    return buffer;
+  }
+  throw new Error('响应对象没有可读取的 body/arrayBuffer');
 }
