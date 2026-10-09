@@ -4,7 +4,7 @@
 // - Markdown → 纯文本、QQ 硬长度切分、CQ 转义
 // - 发出的每一条记进 ChatStore（self=true，供下一次运行当"自己的发言"）
 import { getConfig, DEFAULT_CONFIG } from '../core/config.js';
-import { sleep, randInt, createSendChain, formatClockTime } from '../core/util.js';
+import { sleep, randInt, createSendChain, formatClockTime, todayKey } from '../core/util.js';
 import { mdToPlain, splitForQQ } from '../llm/md-to-plain.js';
 import { assertCanSend } from '../core/access.js';
 import { createLogger } from '../core/logger.js';
@@ -44,11 +44,15 @@ function muteError(untilTs) {
   if (!untilTs) return '本群全员禁言中，本轮先不发言';
   // 只写 HH:MM:SS 会让模型以为"今天就能发"：QQ 禁言最长 30 天，跨天时必须带上日期
   // （2026-09-26 审查：25 小时后的解禁时间被写成"预计 09:12:33 解除"）
-  const until = new Date(untilTs);
-  const now = new Date();
-  const sameDay = until.getFullYear() === now.getFullYear()
-    && until.getMonth() === now.getMonth() && until.getDate() === now.getDate();
-  const when = sameDay ? formatClockTime(untilTs) : `${until.getMonth() + 1}月${until.getDate()}日 ${formatClockTime(untilTs)}`;
+  // ⚠️ 日期与时刻必须同一口径（都是上海时区，2026-10-09 审查）：原来用 getMonth()/getDate()
+  // 取的是**宿主机本地时区**的日期，而 formatClockTime 固定按 Asia/Shanghai 格式化 ——
+  // 部署在 TZ=UTC 的机器上，北京 0-8 点之间两者差一天，解禁日期会报错一天。
+  const dayKey = todayKey(untilTs);
+  const sameDay = dayKey === todayKey();
+  const [, mm, dd] = dayKey.split('-');
+  const when = sameDay
+    ? formatClockTime(untilTs)
+    : `${Number(mm)}月${Number(dd)}日 ${formatClockTime(untilTs)}`;
   return `本群禁言中（预计 ${when} 解除），本轮先不发言`;
 }
 
