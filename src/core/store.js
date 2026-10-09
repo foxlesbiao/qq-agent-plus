@@ -152,10 +152,10 @@ export class ChatStore {
     // runs 是全仓唯一没有回收纪律的账本（每次带租约的运行 +1，常驻不删，5 秒全表扫）：
     // 进程启动时清掉终态且早已过期的行。expires_at 记的是"租约到期时刻"，用它当近似创建时间，
     // 90 天前的终态行已无诊断价值（2026-10-07 复审 P3）。
-    try {
-      this.db.prepare("DELETE FROM runs WHERE state != 'leased' AND expires_at <= ?")
-        .run(Date.now() - 90 * 24 * 3600 * 1000);
-    } catch { /* 清理失败不影响启动 */ }
+    // ⚠️ 2026-10-09 审查：原先只有这一次启动清理 —— 服务连跑数月不重启就等于永不清理
+    //（与三个台账踩过同一个坑，a465539 修了它们却漏了本表）。清理由 pruneRuns() 承担，
+    // 常驻期间由 console 的每日保留期调度复用同一方法（retentionPruneTargets）。
+    this.pruneRuns();
     this.#importJson(dataDir);
   }
 
@@ -424,6 +424,25 @@ export class ChatStore {
       recovered += 1;
     }
     return recovered;
+  }
+
+  /**
+   * 清掉终态且早已过期的运行行（expires_at 当创建时间的近似；leased 行不归保留期管）。
+   * 启动时清一次，之后由每日保留期调度复用（console/app.js 的 retentionPruneTargets）——
+   * 只清一次等于永不清理（2026-10-09 审查，与三个台账同一教训）。
+   * 清理失败不影响调用方（启动路径与每日调度都不该被它拖住）。
+   * @param {number} retentionDays 保留天数（默认 90，与启动清理的旧口径一致）
+   * @returns {number} 实际删除的行数
+   */
+  pruneRuns(retentionDays = 90) {
+    const days = Math.max(1, Number(retentionDays) || 90);
+    try {
+      const result = this.db.prepare("DELETE FROM runs WHERE state != 'leased' AND expires_at <= ?")
+        .run(Date.now() - days * 24 * 3600 * 1000);
+      return Number(result?.changes) || 0;
+    } catch {
+      return 0;
+    }
   }
 
   retryFailed(chatKey) {
