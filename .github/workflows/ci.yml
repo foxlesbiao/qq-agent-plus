@@ -71,12 +71,11 @@ jobs:
       - name: 本地回归测试
         run: npm run test:local
 
+      # 走 test:regression（scripts/test-suite.mjs）而不是裸 node：三条测试步骤统一由
+      # runner 重定向 TMPDIR/TMP/TEMP 到本次运行专属根目录，跑完整体删除，避免用例往
+      # /tmp 里堆 qq-* 垃圾（2026-10-09，测试卫生）。
       - name: 提示词 / 渲染 / 滚动 / 用量端到端回归
-        run: |
-          node test/test-prompt.mjs
-          node test/render-test.mjs
-          node test/scroll-test.mjs
-          node test/usage-e2e.mjs
+        run: npm run test:regression
 
   # ESLint 门禁（改进方案 C4）：与本地 `npm run lint` 同口径 —— 0 error 才能进 main。
   # 与 test 分开成 job：lint 失败时一眼看到是风格/静态问题，不用翻几百行测试输出。

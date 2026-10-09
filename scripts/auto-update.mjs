@@ -954,20 +954,56 @@ async function run() {
   const testTmpDir = path.join(workDir, '.auto-update-test-tmp');
   fs.mkdirSync(testDataDir, { recursive: true, mode: 0o700 });
   fs.mkdirSync(testTmpDir, { recursive: true, mode: 0o700 });
+  const testEnv = {
+    ...runtimeEnv,
+    NODE_ENV: 'test',
+    QQ_AGENT_DATA_DIR: testDataDir,
+    TMPDIR: testTmpDir,
+    TMP: testTmpDir,
+    TEMP: testTmpDir
+  };
   command(process.execPath, ['--test', ...tests], {
     cwd: workDir,
     timeout: 20 * 60 * 1000,
-    env: {
-      ...runtimeEnv,
-      NODE_ENV: 'test',
-      QQ_AGENT_DATA_DIR: testDataDir,
-      TMPDIR: testTmpDir,
-      TMP: testTmpDir,
-      TEMP: testTmpDir
-    }
+    env: testEnv
   });
   command(process.execPath, ['--check', 'src/server.js'], { cwd: workDir });
   command(process.execPath, ['--check', 'scripts/auto-update.mjs'], { cwd: workDir });
+
+  // ── 与 CI（.github/workflows/ci.yml 的 test job）对齐的其余门禁 ──
+  // 原来只跑 `node --test test/*.test.mjs`，于是"提示词 / 渲染 / 滚动 / 用量端到端"这几条
+  // 与 UI 直接相关的回归**在更新器这一层没有任何覆盖**：它们都是纯 Node + 本仓源码
+  // （不 import happy-dom / eslint 这些 devDeps），--omit=dev 下照样能跑，却漏在门外
+  // ——UI 类回归因此能绕过自动更新直接上线（2026-10；CI 早就拦得住，更新器没有）。
+  // 逐个按文件是否存在执行：真实候选树是完整 checkout，只有测试替身的最小树会缺文件；
+  // 真缺了，发布前置闸门（release.yml 的 verify job）与 CI 也会红，这里不重复兜底。
+  //
+  // 这里**刻意不跑 `npm run lint`**：按 D6 更新器用 `npm ci --omit=dev`，装不了 eslint，
+  // 硬加会让每次自动更新都失败。lint 由 CI 的 lint job 与发布前置闸门
+  // （release.yml 的 verify job，用完整依赖跑 `npm run lint`）覆盖；更新器部署的又只可能是
+  // "已经过发布闸门"的 Release——所以这条不是漏测（别下一个人再提一遍）。
+  for (const [script, timeout] of [
+    ['test/test-prompt.mjs', 5 * 60 * 1000],
+    ['test/render-test.mjs', 10 * 60 * 1000],
+    ['test/scroll-test.mjs', 5 * 60 * 1000],
+    ['test/usage-e2e.mjs', 10 * 60 * 1000],
+    ['test/local/run.mjs', 10 * 60 * 1000]
+  ]) {
+    if (!fs.existsSync(path.join(workDir, script))) {
+      console.log(`[auto-update] 跳过 ${script}（候选树里没有这个文件）`);
+      continue;
+    }
+    command(process.execPath, [script], { cwd: workDir, timeout, env: testEnv });
+  }
+  // CI 的静态门禁：未定义调用扫描（node src/ops.js scan --strict）。纯 Node，不依赖 devDeps。
+  if (fs.existsSync(path.join(workDir, 'src', 'ops.js'))) {
+    command(process.execPath, ['src/ops.js', 'scan', '--strict'], {
+      cwd: workDir,
+      timeout: 5 * 60 * 1000
+    });
+  } else {
+    console.log('[auto-update] 跳过 src/ops.js scan --strict（候选树里没有这个文件）');
+  }
   // 两个目录必须在 deploy.sh 之前删掉：它 rsync 的是整个 checkout（根目录多什么就被部署什么）
   fs.rmSync(testDataDir, { recursive: true, force: true });
   fs.rmSync(testTmpDir, { recursive: true, force: true });
