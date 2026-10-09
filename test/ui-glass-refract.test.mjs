@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-const { initGlassRefract, syncGlassRefract, refractRoundedRectSdf } =
+const { initGlassRefract, syncGlassRefract, refractRoundedRectSdf, refractRenderMap } =
   await import('../ui/core/glass-refract.js');
 
 /**
@@ -122,6 +122,55 @@ test('圆角矩形 SDF：内部为负、边界为 0、外部为正，且中心�
   assert.ok(refractRoundedRectSdf(halfW + 30, halfH + 30, halfW, halfH, r) > 0);
 });
 
+test('位移图编码：中心不位移（128 中性点）、贴边有位移且方向朝内、dispScale 与归一化同源（2026-10-09 审查）', () => {
+  // 这两处"错了会让整块背景凭空偏移"的编码约定此前没有任何断言：
+  // R/G=128 是中性点（feDisplacementMap 的位移 = scale*(通道/255-0.5)），
+  // 以及 scale 必须取 2*maxAbs（代码注释自己点名的两处）。
+  const canvases = [];
+  const doc = {
+    createElement(tag) {
+      assert.equal(tag, 'canvas');
+      const c = {
+        width: 0, height: 0, _img: null,
+        getContext: () => ({
+          createImageData: (w, h) => ({ data: new Uint8ClampedArray(w * h * 4) }),
+          putImageData: (img) => { c._img = img; }
+        }),
+        toDataURL: () => 'data:image/png;base64,ZmFrZQ=='
+      };
+      canvases.push(c);
+      return c;
+    }
+  };
+  const out = refractRenderMap(doc, { width: 400, height: 200, radius: 12 });
+  const c = canvases[0];
+  const img = c._img;
+  assert.ok(img, '位移图必须真的画进 canvas');
+  assert.equal(img.data.length, c.width * c.height * 4);
+
+  const at = (x, y) => (y * c.width + x) * 4;
+  const midY = Math.floor(c.height / 2);
+
+  // ① 中心（远离边缘）：完全不动 —— R/G 都是中性点 128
+  const center = at(Math.floor(c.width / 2), midY);
+  assert.equal(img.data[center], 128, '中心区 R 通道＝128（不位移）');
+  assert.equal(img.data[center + 1], 128, '中心区 G 通道＝128（不位移）');
+
+  // ② 左边缘：有位移，且方向朝内（左边界法线朝左，往内推 = dx>0 → R>128，写反会整块偏移）
+  const left = at(0, midY);
+  assert.ok(img.data[left] > 128, `左边缘横向位移应为正（实际 R=${img.data[left]}）`);
+
+  // ③ 归一化：最偏离的通道应触及编码两端（dispScale＝2×maxAbs 时 maxAbs ↔ 0/255）
+  let maxDev = 0;
+  for (let i = 0; i < img.data.length; i += 4) {
+    maxDev = Math.max(maxDev, Math.abs(img.data[i] - 128), Math.abs(img.data[i + 1] - 128));
+  }
+  assert.ok(maxDev >= 126, `最大位移应接近编码上限（实际 ${maxDev}）——dispScale 少了系数会整体变小`);
+
+  // ④ 返回的 scale 与编码同源、为正
+  assert.ok(Number(out.dispScale) > 0, 'dispScale 要带回给滤镜层');
+});
+
 test('圆角矩形 SDF：圆角处按圆弧算（直角的角是 +44，圆角后是 +4）', () => {
   const halfW = 200;
   const halfH = 100;
@@ -169,6 +218,16 @@ test('「关闭全部动效」时不启用（逐元素滤镜很贵，不该在�
   initGlassRefract(doc);
   doc.__flush();
   for (const el of doc.__surfaces) assert.deepEqual(el.style._p, {}, 'data-motion=off 下不该挂滤镜');
+});
+
+test('「减少动效」（reduced）与 off 同口径：不挂逐元素滤镜（2026-10-09 审查）', () => {
+  // style.css 对 html[data-motion='reduced'] * 也是 animation:none —— 只认 off 的话，
+  // "减少动效"档下最贵的模块照跑，与这个档位的语义（和 CSS 的行为）相反。
+  const doc = makeDoc({ motion: 'reduced' });
+  addSurfaces(doc, 3, { width: 404, height: 204 });
+  initGlassRefract(doc);
+  doc.__flush();
+  for (const el of doc.__surfaces) assert.deepEqual(el.style._p, {}, 'data-motion=reduced 下不该挂滤镜');
 });
 
 test('画不出位移图（没有 canvas 2D / toDataURL）时判不支持，且不抛', () => {

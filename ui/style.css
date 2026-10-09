@@ -4551,8 +4551,8 @@ html[data-motion='reduced'] .view.active { animation-duration: .01ms; }
      所以顶部的 sheen 层被整个删掉了（它只会带来塑料感），改由下面那组 inset 阴影承担高光。
 
    ▸ 五档靠"模糊度 + 通透度"两个维度区分，而不是都堆大模糊：
-     磨砂＝真的糊（blur 26）；液态玻璃＝通透清晰、靠边（blur 14）；
-     亚克力＝最糊 + 一层噪点；描边＝几乎不填色，只留边。
+     磨砂＝真的糊（blur 22）；液态玻璃＝通透清晰、靠边（blur 1）；
+     亚克力＝最糊（blur 56）+ 一层噪点；描边＝几乎不填色，只留边。
 
    ▸ 不透明度、描边强度、内辉光半径都是拿真控制台逐版截图比出来的（2026-10-09），
      不是在纸上推的。改这里的数值前请先看一眼真东西。 */
@@ -4593,9 +4593,10 @@ html[data-glass] {
 }
 /* 磨砂：真的"磨"—— 模糊最足、颜色收一点，像隔着磨砂玻璃看 */
 html[data-glass='frost'] {
-  --glass-blur: 26px;
   --glass-sat: 115%;
-  --glass-blur: 22px;          /* 磨砂这一档是**故意**糊的，它与液态玻璃的分工就是清晰度 */
+  --glass-blur: 22px;          /* 磨砂这一档是**故意**糊的，它与液态玻璃的分工就是清晰度
+                                  （2026-10-09 审查：上面原先还先声明过一次 26px，被这行覆盖成死代码，
+                                  而测试恰好读的是那行死声明 —— 已删） */
   --glass-tint: 80%;
   --glass-bright: 1;
   --glass-spec-top: rgba(255, 255, 255, .40);
@@ -4724,6 +4725,9 @@ html[data-glass] .list-pane {
 
    ⚠️ 需要宿主是定位元素。下面这份清单只收确认过是 static 的；
       #sidebar / .settings-sidebar 可能已被别的区块设成 sticky，不动它们（宁缺勿破）。
+      dialog **不在**清单里：它自己就是绝对定位元素（modal 时还在 top layer，作者样式设
+      position 会被规范调整），::after 的包含块本来就有 —— 2026-10-09 审查实测过，
+      加 position: relative 是纯冗余，还容易误导下一个人。
    ⚠️ 伪元素会盖在内容之上（pointer-events: none 不挡点击）。所以环带宽度必须小于
       卡片的内边距 —— 否则它会盖到正文上，看起来像文字外面蒙了一层灰。11px 是照
       .opt-card / .panel 的 14~16px 内边距留的余量。 */
@@ -4738,7 +4742,6 @@ html[data-glass='liquid'] .usage-card,
 html[data-glass='liquid'] .plat-card,
 html[data-glass='liquid'] .tool-card,
 html[data-glass='liquid'] .model-modal,
-html[data-glass='liquid'] dialog,
 html[data-glass='liquid'] .list-pane {
   position: relative;
 }

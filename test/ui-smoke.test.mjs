@@ -48,12 +48,29 @@ function loadPage() {
     proactive: { enabled: false, probability: 0.25, checkIntervalMinMs: 1800000, checkIntervalMaxMs: 5400000 },
     conversation: {}, store: {}, wakeDelayMs: 8000
   };
+  // 用量页要一份"真形状"的 stats：25 个模型（> 折叠阈值 20）才能验证「展开全部」
+  //（2026-10-09 审查：这个按钮曾经没有任何点击监听，点它毫无反应）。
+  const usageStatsStub = {
+    rangeLabel: '最近 7 天',
+    models: Array.from({ length: 25 }, (_, i) => ({
+      key: `model-${String(i).padStart(2, '0')}`,
+      model: `model-${String(i).padStart(2, '0')}`,
+      vendor: '', runs: i + 1,
+      promptTokens: 100 * (i + 1), completionTokens: 50 * (i + 1),
+      cacheHitRate: 0.5, cost: 0.01 * (i + 1)
+    })),
+    days: [], chats: []
+  };
   window.fetch = async (url) => {
-    fetchLog.push(String(url));
+    const urlStr = String(url);
+    fetchLog.push(urlStr);
+    if (urlStr.includes('/api/usage/stats')) {
+      return { ok: true, status: 200, json: async () => usageStatsStub };
+    }
     return {
       ok: true,
       status: 200,
-      json: async () => (String(url).includes('/api/config') ? cfgStub : {})
+      json: async () => (urlStr.includes('/api/config') ? cfgStub : {})
     };
   };
   // 浏览器标准全局：happy-dom 的 vm 上下文里没有 structuredClone，而 UI 代码（时间控制草稿、
@@ -93,6 +110,31 @@ test('真实 DOM 冒烟：加载全部脚本、全部 tab 切换入口不抛', {
       }
     }
     assert.deepEqual(failed, [], `这些 tab 的渲染入口抛错：${failed.join(' | ')}`);
+  } finally { window.happyDOM?.abort?.(); }
+});
+
+test('真实 DOM 冒烟：用量页「按模型」>20 行时「展开全部」点了真的展开（2026-10-09 审查）', { skip: SKIP }, async () => {
+  const { window } = loadPage();
+  await settle();
+  try {
+    window.switchTab('usage');
+    await settle(200);
+    const doc = window.document;
+    const btn = doc.getElementById('models-expand');
+    assert.ok(btn, '用量页要有 #models-expand 按钮');
+    assert.notEqual(btn.style.display, 'none', '模型数 25 > 20，按钮应可见');
+    const tbody = doc.querySelector('[data-table="models"] tbody');
+    assert.ok(tbody, '要有按模型表');
+    const countRows = () => tbody.querySelectorAll('tr[data-key]').length;
+    assert.equal(countRows(), 20, '默认只显示前 20 行');
+    btn.click();
+    await settle(80);
+    assert.equal(tbody.dataset.expanded, '1', '点击要翻转展开状态');
+    assert.equal(countRows(), 25, '展开后 25 行都在');
+    assert.match(btn.textContent, /收起/, '按钮文案跟着切到收起');
+    btn.click();
+    await settle(80);
+    assert.equal(countRows(), 20, '再点一次收起回 20 行');
   } finally { window.happyDOM?.abort?.(); }
 });
 

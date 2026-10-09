@@ -220,28 +220,42 @@ function patchKeyedList(container, entries, keyAttr = 'data-key', { exit = false
     if (node !== wantNext) container.insertBefore(node, prev ? prev.nextSibling : container.firstChild);
     prev = node;
   }
+  const leaving = [];
   for (const [key, node] of existing) {
     if (seen.has(key) || node.__leaving) continue;
-    // 退场（可选，由调用方开）：先塔缩再移除，否则下面的行会“喍”地跳上来。
+    leaving.push(node);
+  }
+  if (leaving.length) {
+    // 退场（可选，由调用方开）：先塔缩再移除，否则下面的行会”喍”地跳上来。
     // 只有两个前提都满足才值得等：
     //   ① 这个节点真的被渲染过（offsetHeight > 0）—— 没有布局盒就没有高度可塔；
     //      happy-dom 这类无布局环境也走这条，于是行为与改动前逐字一致（不延后删除）；
-    //   ② 用户没关动效（data-motion='off'，外观页那个开关）。
+    //   ② 用户没关动效（data-motion 有值即算关，见下）。
     // 不具备时直接 remove()，语义与原来一模一样。
-    const height = node.offsetHeight || 0;
-    const motionOff = container.ownerDocument?.documentElement?.getAttribute('data-motion') === 'off';
-    if (!exit || height <= 0 || motionOff) {
-      node.remove();
-      continue;
+    //
+    // 2026-10-09 审查两处修正：
+    //   · 判据从”=== 'off'”放宽到”有值即关”：style.css 对 reduced 也是 animation:none
+    //     （html[data-motion='reduced'] * 规则），只认 off 会让 reduced 下这一行先静止
+    //     260ms 再消失 —— 正是”减少动效”想消掉的那一跳。
+    //   · 先把该量的高度量完、再统一写：原来”逐行读 offsetHeight → 立即 remove”是读写交替，
+    //     删 N 行触发 N 次强制重排（列表上百行时可感知）。
+    const motionOff = Boolean(container.ownerDocument?.documentElement?.getAttribute('data-motion'));
+    const heights = motionOff ? [] : leaving.map((node) => node.offsetHeight || 0);
+    for (const [index, node] of leaving.entries()) {
+      const height = motionOff ? 0 : heights[index];
+      if (!exit || height <= 0) {
+        node.remove();
+        continue;
+      }
+      // 高度只能由 JS 量好——CSS 里没法从 auto 插值到 0（interpolate-size 也帮不上，
+      // 因为这里要的是“从当前实际高度出发”而不是“从 auto 出发”）。
+      const view = container.ownerDocument?.defaultView;
+      node.__leaving = true;
+      node.style.setProperty('--leave-h', `${height}px`);
+      node.classList.add('leaving');
+      node.__leaveTimer = (view?.setTimeout ? view.setTimeout.bind(view) : setTimeout)(
+        () => { node.__leaving = false; node.remove(); }, LEAVE_MS);
     }
-    // 高度只能由 JS 量好——CSS 里没法从 auto 插值到 0（interpolate-size 也帮不上，
-    // 因为这里要的是“从当前实际高度出发”而不是“从 auto 出发”）。
-    const view = container.ownerDocument?.defaultView;
-    node.__leaving = true;
-    node.style.setProperty('--leave-h', `${height}px`);
-    node.classList.add('leaving');
-    node.__leaveTimer = (view?.setTimeout ? view.setTimeout.bind(view) : setTimeout)(
-      () => { node.__leaving = false; node.remove(); }, LEAVE_MS);
   }
 }
 

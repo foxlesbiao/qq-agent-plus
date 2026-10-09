@@ -128,7 +128,9 @@ function refractShouldRun(doc) {
   const root = doc.documentElement;
   if (!root || !root.getAttribute('data-glass')) return false;      // 材质＝实心，没有玻璃可折射
   if (root.getAttribute('data-refract') !== '1') return false;       // 开关没开
-  if (root.getAttribute('data-motion') === 'off') return false;      // 关了全部动效
+  // data-motion 有值（off / reduced）都不跑：逐元素 SVG 滤镜链很贵，而 CSS 对两者都关动画 ——
+  // 只认 off 的话，"减少动效"档下最贵的效果照跑（2026-10-09 审查）。
+  if (root.getAttribute('data-motion')) return false;
   return refractSupported(doc);
 }
 
@@ -393,4 +395,4 @@ function initGlassRefract(doc = document) {
 
 // refractRoundedRectSdf 单独导出只为测试：它是这一整套里唯一有"数学对错"的部分，
 // 用真 DOM 断言折射像素不现实（happy-dom 没有 canvas），而 SDF 的符号/边界/圆角行为可以逐条钉住。
-export { initGlassRefract, syncGlassRefract, refractRoundedRectSdf };
+export { initGlassRefract, syncGlassRefract, refractRoundedRectSdf, refractRenderMap };

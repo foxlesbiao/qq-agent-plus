@@ -156,9 +156,14 @@ test('CSS：液态玻璃有“只在边缘生效”的折射带（苹果那套�
   // 环宽必须小于卡片内边距，否则会盖到正文上
   const lens = Number((css.match(/--glass-lens:\s*(\d+)px/) || [])[1]);
   assert.ok(lens > 0 && lens <= 12, `折射带 ${lens}px 超出安全范围（会盖住正文）`);
-  // 整块位移那条路已经否掉了，不许回来
-  assert.equal(/backdrop-filter:\s*url\(/.test(css), false,
-    '不许用 feDisplacementMap 做整块位移：形状不对（苹果只在边缘折射）且按宽高比拉伸会不均匀');
+  // 整块位移那条路已经否掉了，不许回来。2026-10-09 修正口径：边缘折射的实现就是经
+  // `var(--glass-refract, )` 在运行时拼出 url(#滤镜) —— 守卫要禁的是"直接写 url() 的整块位移"，
+  // 同时钉住折射只能走 var 这一条通路（原来那条断言读起来像"任何 url() 都禁"，与实现相抵）。
+  const directUrl = css.match(/backdrop-filter:[^;]*url\(/g) || [];
+  assert.deepEqual(directUrl, [],
+    '不许在 backdrop-filter 里直接写 url()：形状不对（苹果只在边缘折射）且按宽高比拉伸会不均匀');
+  assert.ok(/backdrop-filter:\s*var\(--glass-refract,\s*\)/.test(css),
+    '边缘折射必须经 var(--glass-refract, ) 拼装（关掉时回退为空，不残留 url）');
 });
 
 test('CSS：玻璃表面清单只收最外层，绝不同时收父子两层', () => {

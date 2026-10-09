@@ -1735,10 +1735,19 @@ function bindSettingsPersonaAndVision() {
     if (!await askForConfirmation(`确定删除自定义人设「${tpl.name}」？`)) return;
     try {
       await api(`/api/persona-templates/${id}`, { method: 'DELETE', body: '{}' });
-      await loadSettings();
-      applyPersonaDraft(state.personaTemplates.xiaojingyu, 'xiaojingyu');
     } catch (e) {
       $('#persona-pick-hint').textContent = `删除失败：${e.message}`;
+      return;
+    }
+    // 删除已经成功；后面的刷新/回填失败**不能**再报"删除失败"（2026-10-09 审查：
+    // loadSettings 失败时 personaTemplates 会是空对象，applyPersonaDraft(undefined) 抛
+    // TypeError 被同一个 catch 吞掉 → 界面弹"删除失败"，而库里其实已经删掉了）。
+    try {
+      await loadSettings();
+      const fallback = state.personaTemplates.xiaojingyu;
+      if (fallback) applyPersonaDraft(fallback, 'xiaojingyu');
+    } catch (e) {
+      $('#persona-pick-hint').textContent = `已删除，但人设卡刷新失败：${e.message}`;
     }
   });
   syncPersonaButtons();
