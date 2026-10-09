@@ -556,7 +556,7 @@ function bindSettingsSaveAndSections() {
         try {
           const r = await api('/api/imagegen/test', { method: 'POST', body: JSON.stringify({}) });
           if (r.ok && r.image) {
-            if (out) out.innerHTML = `画好了（${Math.round((r.bytes || 0) / 1024)} KB，按张计费）<br><img src="${r.image}" alt="试画结果" style="max-width:260px;margin-top:6px;border-radius:8px" />`;
+            if (out) out.innerHTML = `画好了（${Math.round((r.bytes || 0) / 1024)} KB，按张计费）<br><img src="${r.image}" alt="试画结果" style="max-width:260px;margin-top:6px;border-radius:var(--r-sm)" />`;
           } else if (out) {
             out.textContent = r.error || '画图失败';
           }

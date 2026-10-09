@@ -42,8 +42,13 @@ test('设计标度：间距/字号/圆角档位与卡片阴影都在，且圆角
   for (const token of ['--sp-1: 4px', '--sp-4: 16px', '--fs-md:', '--fs-lg:', '--r-card:', '--r-input:', '--shadow-card:']) {
     assert.ok(css.includes(token), `标度 token 缺失：${token}`);
   }
-  assert.ok(/\.kpi, \.panel, \.usage-card[\s\S]{0,200}?box-shadow: var\(--shadow-card\)/.test(css),
+  // 2026-10-09 值班台复核：.kpi/.panel 已不是卡片（表面内分格 / 细线分节），从卡片组移出 ——
+  // 之前的断言钉的是旧设计（"kpi/panel 也在卡片组里"），两套设计并存时正是它在为被覆盖的
+  // 旧样式站岗（浏览器实测：细线分格没落地、渲染的是卡片阴影）。剩下的卡片成员仍要带极轻阴影。
+  assert.ok(/\.usage-card, \.tool-card[\s\S]{0,200}?box-shadow: var\(--shadow-card\)/.test(css),
     '卡片要带上极轻阴影（没有它卡片是"平"的）');
+  assert.equal(/\.kpi, \.panel, \.usage-card/.test(css), false,
+    '.kpi/.panel 不该回卡片组（它们的分格/细线分节会被整条覆盖 —— 2026-10-09 复核）');
 });
 
 test('主题切换是"从点击处扩散"的圆形波纹（View Transitions），并带三重降级', () => {

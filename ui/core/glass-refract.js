@@ -25,9 +25,11 @@
 // been declared"），表现为整页白屏。实测踩过一次：`resizeBound` 与 core/segment.js 同名。
 // 真 ESM 下当然没问题，但这层沙箱是仓库的安全网，得让着它。
 
-/** 会被加折射的表面。与 style.css 里玻璃表面清单保持一致（多一个少一个只是白算/漏算）。 */
+/** 会被加折射的表面。与 style.css 里玻璃表面清单保持一致（多一个少一个只是白算/漏算）。
+    2026-10-09 复核：表面清单早已改 .kpi-grid（玻璃加在整行表面），这里漏跟 —— 结果是给 5 个
+    没有 backdrop-filter 的格子白算位移图、还占 REFRACT_MAX_SURFACES 名额，真正的表面反而不折射。 */
 const REFRACT_SELECTOR = [
-  '#topbar', '#sidebar', '.settings-sidebar', '.panel', '.kpi', '.opt-card',
+  '#topbar', '#sidebar', '.settings-sidebar', '.panel', '.kpi-grid', '.opt-card',
   '.usage-card', '.plat-card', '.tool-card', '.model-modal', 'dialog', '.list-pane'
 ].join(',');
 

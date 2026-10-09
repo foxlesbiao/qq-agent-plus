@@ -54,8 +54,10 @@ function renderMemoryList() {
     const key = f.chatKey;
     const busy = !!state.consolidating[key];
     // 整理中：在列表项上直接标出，切页签回来也能一眼看到
+    // （2026-10-09 复核：原来写的 --color-background-warning 全仓无定义、又没兜底 →
+    //   声明失效变 unset、白字贴透明底看不见；换成有定义的 --orange）
     const busyHtml = busy
-      ? `<span class="unread-pill" style="background:var(--color-background-warning)">整理中…</span>`
+      ? `<span class="unread-pill" style="background:var(--orange)">整理中…</span>`
       : '';
     const sub = busy
       ? '正在整理本群记忆'

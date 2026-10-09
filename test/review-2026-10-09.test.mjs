@@ -90,6 +90,69 @@ test('设计标度只有一份 CSS 真源：主题块不许再重复定义 --r-*
   assert.ok(spIdx > 0 && scaleIdx > spIdx, '--r-scale 兜底要落在 :root 设计标度节里（--sp-1 之后）');
 });
 
+test('标度收口不许倒退：style.css 里没有裸 font-size/border-radius 像素值（2026-10-09 复核）', () => {
+  // 收口（31565f0）把 323 处字号、139 处圆角全部改走 token；这条锚点防"下一个人又写裸值"，
+  // 也防"token 化改到了死副本"（本仓已两次踩死声明）。允许：token 定义行（--fs-*: 10px /
+  // --r-*: calc(8px * …)）与几何值（50% / 0 / var()）。
+  const css = read('ui/style.css');
+  const bare = css.split('\n')
+    .filter((l) => !/^\s*--[a-z-]+:/.test(l))                       // token 定义行豁免
+    .filter((l) => /(font-size|border-radius):\s*[0-9.]+px/.test(l));
+  assert.deepEqual(bare, [], `不许再出现裸像素值（走 --fs-* / --r-*）：\n${bare.join('\n')}`);
+});
+
+test('JS 里引用的 CSS 变量必须存在（无 fallback 的坏名 = 静默失效）（2026-10-09 复核）', () => {
+  // 复核抓到两个坏名：memory.js 的 --color-background-warning（无定义无兜底 → 声明失效变 unset，
+  // 白字贴透明底看不见）、global-memory.js 的 --border-color/--hover-bg（永远走写死的兜底灰、
+  // 不跟主题）。这条锚点把"无 fallback 的引用必须在 style.css / index.html / JS 的 setProperty
+  // 写入里出现过"钉住（主题波纹的 --vt-* 就是运行时写入的，所以 JS 写入要算定义源）。
+  const jsFiles = [
+    'ui/app.js', 'ui/global-memory.js', 'ui/multimodal-context-pilot.js',
+    'ui/relationship-pilot.js', 'ui/session-memory-view.js',
+    ...fs.readdirSync(new URL('../ui/pages', import.meta.url)).map((f) => `ui/pages/${f}`),
+    ...fs.readdirSync(new URL('../ui/core', import.meta.url)).map((f) => `ui/core/${f}`)
+  ].filter((f) => f.endsWith('.js'));
+  const sources = new Map(jsFiles.map((f) => [f, read(f)]));
+  const defined = new Set();
+  const staticCss = read('ui/style.css') + read('ui/index.html');
+  for (const m of staticCss.matchAll(/--([a-z0-9-]+)\s*:/g)) defined.add(m[1]);
+  for (const m of staticCss.matchAll(/setProperty\(\s*'--([a-z0-9-]+)'/g)) defined.add(m[1]);
+  // JS 自身的 setProperty 写入也算定义（theme-transition 的 --vt-* 就是过渡时动态写的）
+  for (const src of sources.values()) {
+    for (const m of src.matchAll(/setProperty\(\s*'--([a-z0-9-]+)'/g)) defined.add(m[1]);
+  }
+  const bad = [];
+  for (const [f, src] of sources) {
+    // ⚠️ 剥掉行注释再扫：验证注释里写旧变量名（如 --color-background-warning）不该命中
+    const code = src.split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+    for (const m of code.matchAll(/var\(--([a-z0-9-]+)\s*\)/g)) {   // 只认无 fallback 的形式
+      if (!defined.has(m[1])) bad.push(`${f}: --${m[1]}`);
+    }
+  }
+  assert.deepEqual([...new Set(bad)], [], `引用了不存在的 CSS 变量（换成真实 token 或加兜底）：\n${bad.join('\n')}`);
+});
+
+test('值班台两级表面落地：kpi 发丝线/panel 细线不被卡片组覆盖；折射环挂整行表面（2026-10-09 复核）', () => {
+  const css = read('ui/style.css');
+  // ① .kpi 的发丝线、.panel 的"细线分节"要真的生效：卡片组（--shadow-card / --r-card）不许再收它们
+  assert.ok(/\.kpi \{[^}]*box-shadow: -1px 0 0 var\(--border\), 0 -1px 0 var\(--border\)/.test(css),
+    '.kpi 的发丝线分格声明要在');
+  assert.ok(/\.usage-card, \.tool-card,[^}]*box-shadow: var\(--shadow-card\)/.test(css),
+    '卡片组还在（剩下的卡片）');
+  assert.equal(/\.kpi, \.panel, \.usage-card/.test(css), false,
+    '.kpi/.panel 不许回到卡片组（会把发丝线与细线分节整条覆盖掉）');
+  // ② 折射环清单要跟表面清单一致：挂 .kpi-grid（整行），不再给每格或 .panel 挂环
+  const refractAfter = /html\[data-glass='liquid'\] #topbar::after[\s\S]{0,1500}?mask-composite: exclude;/.exec(css);
+  assert.ok(refractAfter, '找不到折射环清单');
+  assert.ok(/\.kpi-grid::after/.test(refractAfter[0]), '环要挂在整行表面 .kpi-grid 上');
+  assert.equal(/\.kpi::after/.test(refractAfter[0]), false, '不许再给每格 .kpi 挂环（嵌套 backdrop-filter）');
+  assert.equal(/\.panel::after/.test(refractAfter[0]), false, '.panel 横向内边距为 0，环会压字，不挂');
+  // ③ JS 的折射选择器与 CSS 清单一致
+  const refractJs = read('ui/core/glass-refract.js');
+  assert.ok(/'\.kpi-grid'/.test(refractJs), '折射选择器要含 .kpi-grid');
+  assert.equal(/'\.kpi'/.test(refractJs), false, '折射选择器不许再有 .kpi（白算 + 占名额）');
+});
+
 test('deploy-all 轮换失败不再假回滚：保持三方凭据一致，trap 尊重旗标', () => {
   // 2026-10-09 审查：回拷 .env 会把"config.json/compose 是新凭据"搞成不一致，
   // 下次部署被自家预检拒、新控制台令牌只剩 config.json 一份。

@@ -463,11 +463,11 @@ html.boot-show .loading-overlay { opacity: 1; }
 .trigger-method { flex: 0 0 auto; color: color-mix(in srgb, var(--mode-color, var(--text)) 85%, var(--text)); font-weight: 550; }
 .session-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; font-size: var(--fs-xs); color: var(--muted); align-items: center; }
 
-.status-badge { font-size: var(--fs-xs); padding: 1px 7px; border-radius: var(--r-input); max-width: 100%; white-space: normal; }
-/* 「已发言」＝这个机器人在本轮里说了话 —— `--voice`（全站唯一暖色）的落点之一（2026-10-09 值班台）。
-   用 color-mix 从 --voice 现算，明暗两套色板自动跟（亮色下 --voice 是压暗的黄铜）。
-   刻意的区分：铜色**不表示“状态好”**，只表示“这是它说的” —— 等待/运行/出错/中止仍是各自的语义色。 */
-.status-done { background: color-mix(in srgb, var(--voice) 16%, transparent); color: color-mix(in srgb, var(--voice) 88%, var(--text)); }
+/* 字号/内边距/圆角归下面的徽章组统一（--fs-sm / 2px 9px / --r-pill）——本处旧值被它覆盖成
+   死声明，2026-10-09 复核删掉，只留它没有的两条：长标签要能换行。 */
+.status-badge { max-width: 100%; white-space: normal; }
+/* （.status-done 的旧副本已删，2026-10-09 复核：本处 16%/88% 的一套被会话徽章区的权威规则
+   完整覆盖成死声明 —— token 改在死副本上会"改了没反应"。语义说明随权威规则走。） */
 .status-noreply { background: rgba(139,147,167,.15); color: var(--muted); }
 .status-running { background: rgba(91,140,255,.18); color: var(--accent); }
 .status-waiting { background: rgba(255,180,84,.18); color: var(--orange); }
@@ -2803,7 +2803,11 @@ body {
 .status-waiting {
   background: rgba(47, 208, 122, .09); border-color: rgba(47, 208, 122, .28); color: color-mix(in srgb, var(--green) 80%, var(--text));
 }
-/* 「已发言」原来跟 waiting 挤在一条绿色规则里 —— 它不是语义状态色，改走 --voice（见上面 .status-done）。 */
+/* 「已发言」＝这个机器人在本轮里说了话 —— `--voice`（全站唯一暖色）的落点之一（2026-10-09 值班台）。
+   用 color-mix 从 --voice 现算，明暗两套色板自动跟（亮色下 --voice 是压暗的黄铜）。
+   刻意的区分：铜色**不表示“状态好”**，只表示“这是它说的” —— 等待/运行/出错/中止仍是各自的语义色。
+   它原来跟 waiting 挤在一条绿色规则里；文件前段另有一份旧副本（16%/88%）被本处完整覆盖成
+   死声明，2026-10-09 复核已删 —— token 改在死副本上会"改了没反应"。 */
 .status-done {
   background: color-mix(in srgb, var(--voice) 10%, transparent);
   border-color: color-mix(in srgb, var(--voice) 32%, transparent);
@@ -3435,8 +3439,8 @@ dialog { margin: auto; max-height: 88vh; }
 [data-density='roomy'] .overview-pane { padding: 24px 28px 32px; }
 [data-density='roomy'] .feed li { padding: 9px 0; }
 
-.tab { border-radius: var(--r-md); }
-.kpi, .panel { border-radius: var(--r-lg); }
+/* （.tab 的权威定义在壳层区；.kpi/.panel 是"表面内分格/细线分节"，圆角与阴影都不归卡片组 ——
+   这两行旧值先后被覆盖成死声明，2026-10-09 复核删除。） */
 
 /* 顶栏状态区：四个 chip 挤成一排显得吵 —— 去掉边框、只留文字，悬浮时才浮出边界 */
 .top-status .chip { border-color: transparent; background: transparent; color: var(--muted); padding: 3px 8px; }
@@ -3461,6 +3465,11 @@ dialog { margin: auto; max-height: 88vh; }
 /* 开材质时玻璃加在**整行这块表面**（.kpi-grid）上，格子自己透明 —— 否则每格一个 backdrop-filter，
    既回到"玻璃卡片套件"，又会踩嵌套 backdrop-filter（子层采样到空 backdrop root → 发白）。 */
 html[data-glass] .kpi { background: transparent; }
+/* 上面这条 (0,2,1) 会把 (0,2,0) 的 .kpi:hover 压掉 —— 玻璃态下悬停没有任何反馈（2026-10-09 复核）。
+   补一条同特异性的 hover：用极淡的 --text 冲一层，材质档下也看得见。 */
+@media (hover: hover) and (pointer: fine) {
+  html[data-glass] .kpi:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+}
 /* 滑条：轨道与滑块跟随强调色 */
 input[type='range'] { accent-color: var(--accent); height: 20px; }
 
@@ -3548,7 +3557,11 @@ body { font-size: var(--fs-lg); line-height: var(--lh-base); }
    同时在跑，结果是"同一页里两种高度的输入框"—— 正是用户看到的"输入框不符合美学"。 */
 
 /* 卡片：统一 12px 圆角 + 极轻阴影（这是"浮起来"的关键，我们没有它就显得平） */
-.kpi, .panel, .usage-card, .tool-card, .pd-chat, .price-card, .plat-card {
+/* ⚠️ .kpi / .panel 不在这一组（2026-10-09 复核）：它们分别是"表面内的分格"与"细线分节"，
+   不该有卡片圆角与投影 —— 之前在这里被 --shadow-card 覆盖掉了 .kpi 的发丝线分格（见上面
+   .kpi 的 box-shadow）与 .panel 的"不再是每块一张卡"（见上面 .panel），值班台的两级表面
+   等于没落地。浏览器实测（computed）：改前 .kpi/.panel = 12px 圆角 + 卡片阴影；改后 = 发丝线/none。 */
+.usage-card, .tool-card, .pd-chat, .price-card, .plat-card {
   border-radius: var(--r-card);
   box-shadow: var(--shadow-card);
 }
@@ -4807,8 +4820,7 @@ html[data-glass='liquid'] {
   --glass-lens: 11px;
 }
 html[data-glass='liquid'] #topbar,
-html[data-glass='liquid'] .panel,
-html[data-glass='liquid'] .kpi,
+html[data-glass='liquid'] .kpi-grid,
 html[data-glass='liquid'] .opt-card,
 html[data-glass='liquid'] .usage-card,
 html[data-glass='liquid'] .plat-card,
@@ -4817,9 +4829,11 @@ html[data-glass='liquid'] .model-modal,
 html[data-glass='liquid'] .list-pane {
   position: relative;
 }
+/* 2026-10-09 复核：表面清单早已改 .kpi-grid（玻璃加在整行），环清单当时漏跟 —— 结果是每格
+   一个环、嵌在整行表面的 backdrop-filter 里（正是本节开头要防的嵌套）；现已同步。
+   .panel 不再挂环：它是"细线分节"、横向内边距为 0（padding: 14px 0），11px 的环带会压在文字上。 */
 html[data-glass='liquid'] #topbar::after,
-html[data-glass='liquid'] .panel::after,
-html[data-glass='liquid'] .kpi::after,
+html[data-glass='liquid'] .kpi-grid::after,
 html[data-glass='liquid'] .opt-card::after,
 html[data-glass='liquid'] .usage-card::after,
 html[data-glass='liquid'] .plat-card::after,
@@ -4843,8 +4857,7 @@ html[data-glass='liquid'] .list-pane::after {
 }
 /* 关闭全部动效时不动它（它是静态的，但省掉一层滤镜开销） */
 html[data-motion='off'][data-glass='liquid'] #topbar::after,
-html[data-motion='off'][data-glass='liquid'] .panel::after,
-html[data-motion='off'][data-glass='liquid'] .kpi::after,
+html[data-motion='off'][data-glass='liquid'] .kpi-grid::after,
 html[data-motion='off'][data-glass='liquid'] .opt-card::after,
 html[data-motion='off'][data-glass='liquid'] .usage-card::after,
 html[data-motion='off'][data-glass='liquid'] .plat-card::after,
