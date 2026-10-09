@@ -908,6 +908,8 @@ function renderOnebotSection(c) {
     </div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-snowluma-auto" ${c.autoUpdate?.snowluma?.enabled === true ? 'checked' : ''} />
       <label for="cfg-snowluma-auto">自动更新协议端（落后于项目基线就自动升级，每 6 小时检查一次；失败自动回滚）</label></div>
+    <div class="checkbox-row"><input type="checkbox" id="cfg-snowluma-follow-baseline" ${c.autoUpdate?.snowluma?.followBaseline === false ? '' : 'checked'} />
+      <label for="cfg-snowluma-follow-baseline">随智能体版本对齐协议端（推荐：更新到新版本时，若新版带的协议端基线更高就自动升级一次；<b>设了自定义镜像的不受影响</b>）</label></div>
     <div class="hint">升级只改协议端目录 .env 里的镜像 tag 再重建容器：端口与数据卷都不动，所以 <b>QQ 登录态保留</b>；
       更新期间机器人会短暂离线（约 10~30 秒）。协议端低于 1.14.20 时，表情包在 QQ 里会显示成图片。</div>`;
 }

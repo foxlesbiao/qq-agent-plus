@@ -63,7 +63,7 @@ import {
   platformQuotaUsage
 } from '../tools/tools-core.js';
 import { integrationStatus, updateSnowLumaPassword } from './integrations.js';
-import { createSnowlumaUpdater } from '../core/snowluma-update.js';
+import { createSnowlumaUpdater, baselineAlignDecision } from '../core/snowluma-update.js';
 import { hostStats } from '../core/host-stats.js';
 import { AutoUpdateManager, autoUpdatePending, readAutoUpdateState } from '../auto-update.js';
 import { checkForUpdate, ignoreVersion } from '../update-notice.js';
@@ -919,8 +919,47 @@ export function createApp({
   // 落后于项目基线就自动更新 —— 更新只改 .env + compose pull/up，数据卷不动（登录态保留），
   // 失败会自动回滚到旧镜像。boot 后延迟 2 分钟再首检（别跟启动抢 IO）。
   const SNOWLUMA_AUTO_INTERVAL_MS = 6 * 3600_000;
+
+  // 「随 Agent 版本对齐协议端」（2026-10-09，默认开）：协议端基线是**代码里的常量**，只随
+  // Agent 新版本到达用户机器 —— 所以"更新 Agent 后主服务带新代码重启"是用户看到新基线的
+  // 唯一时刻。在这一刻做一次对齐（复用 updater 全套：改 .env → pull → up → 等就绪 → 失败
+  // 自动回滚），就实现了"我们发版动了协议端基线 → 用户更新 Agent 时顺带对齐；没动 → 什么都
+  // 不动"。尊重两条既有语义：自定义镜像（autoUpdate.snowluma.image）永远优先；显式关掉
+  // followBaseline 就不再自动动。失败只记日志 —— 绝不影响 Agent 更新自身的结果
+  //（deploy.sh 早已完成、主服务已在跑新版本）。
+  async function snowlumaBaselineAlign() {
+    try {
+      const cfgNow = getConfig();
+      const override = String(cfgNow.autoUpdate?.snowluma?.image || '');
+      const st = snowlumaUpdater.status();
+      const decision = baselineAlignDecision({
+        installed: st.installed,
+        outdated: st.outdated,
+        override,
+        followBaseline: cfgNow.autoUpdate?.snowluma?.followBaseline !== false,
+        busy: st.busy
+      });
+      if (decision !== 'align') {
+        // 常规态（已是最新/没装协议端）不刷日志；配置性或临时性跳过留一行便于排查
+        if (decision !== 'skip:up-to-date' && decision !== 'skip:not-installed') {
+          log(`[snowluma] 随版本对齐跳过（${decision}）`);
+        }
+        return;
+      }
+      log(`[snowluma] Agent 新版本带来的协议端基线变化：${st.currentVersion || st.currentImage} → ${st.targetVersion || st.targetImage}，开始对齐`);
+      const res = await snowlumaUpdater.update({ to: override });
+      if (res.ok) log(`[snowluma] 随版本对齐完成：${res.to}（等待就绪 ${Math.round((res.waitedMs || 0) / 1000)}s）`);
+      else log(`[snowluma] 随版本对齐失败：${res.error}${res.rolledBack ? '（已自动回滚到旧镜像）' : ''}`);
+    } catch (error) {
+      log(`[snowluma] 随版本对齐异常：${error?.message ?? error}`);
+    }
+  }
+
   async function snowlumaAutoCheck({ first = false } = {}) {
     try {
+      // 启动时先做一次"随版本对齐"（默认开，只在基线真的变化时动手）；它与下面的周期检查
+      // 相互独立：周期检查的开关（默认关）不受影响。
+      if (first) await snowlumaBaselineAlign();
       const cfgNow = getConfig();
       if (cfgNow.autoUpdate?.snowluma?.enabled !== true) return;
       const st = snowlumaUpdater.status();
@@ -4514,6 +4553,7 @@ export function createApp({
     incidentPilotStatus,
     // 每日台账保留期清理的任务清单（server.js 的 core/ledger-retention.js 调度用）
     retentionPruneTargets,
+    snowlumaBaselineAlign,
     captureIncident(error, context = {}) {
       return incidentPilot?.capture(error, context) || null;
     },

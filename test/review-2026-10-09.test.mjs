@@ -44,6 +44,23 @@ test('NNP（NoNewPrivileges）三个口径修正都在：先判再试 / 巡检�
   assert.ok(/NoNewPrivileges/.test(linux), '文档要说明默认配置带加固');
 });
 
+test('随版本对齐并入更新流程：挂在启动首检、默认开、override 优先（2026-10-09）', () => {
+  // 语义：协议端基线是代码常量、只随 Agent 新版本到达用户机器 —— 更新 Agent 后主服务带新
+  // 代码重启是看到新基线的唯一时刻；在启动首检做一次对齐 = "我们发版动了协议端就顺带对齐"。
+  const app = read('src/console/app.js');
+  assert.ok(/if \(first\) await snowlumaBaselineAlign\(\);/.test(app),
+    '启动首检（first）要先做一次随版本对齐');
+  assert.ok(/followBaseline: cfgNow\.autoUpdate\?\.snowluma\?\.followBaseline !== false/.test(app),
+    '默认开：只有显式 false 才关（!== false 语义）');
+  const core = read('src/core/snowluma-update.js');
+  assert.ok(/export function baselineAlignDecision/.test(core), '决策函数在 core 层（可单测）');
+  const uiSettings = read('ui/pages/settings.js');
+  assert.ok(/id="cfg-snowluma-follow-baseline"/.test(uiSettings), '设置页要有「随版本对齐」开关');
+  assert.ok(/\? '' : 'checked'/.test(uiSettings), '开关默认勾选（followBaseline !== false）');
+  const uiSave = read('ui/pages/settings-save.js');
+  assert.ok(/followBaseline: chk\('#cfg-snowluma-follow-baseline'/.test(uiSave), '开关要能被保存');
+});
+
 test('deploy-all 轮换失败不再假回滚：保持三方凭据一致，trap 尊重旗标', () => {
   // 2026-10-09 审查：回拷 .env 会把"config.json/compose 是新凭据"搞成不一致，
   // 下次部署被自家预检拒、新控制台令牌只剩 config.json 一份。

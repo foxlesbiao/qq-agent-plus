@@ -844,7 +844,9 @@ async function saveConfig({ quiet = false } = {}) {
       ...(c.autoUpdate || {}),
       snowluma: {
         ...(c.autoUpdate?.snowluma || {}),
-        enabled: chk('#cfg-snowluma-auto', c.autoUpdate?.snowluma?.enabled === true)
+        enabled: chk('#cfg-snowluma-auto', c.autoUpdate?.snowluma?.enabled === true),
+        // 默认开：勾选框未渲染（老页面）时保持服务端原值语义（!== false 即视为开）
+        followBaseline: chk('#cfg-snowluma-follow-baseline', c.autoUpdate?.snowluma?.followBaseline !== false)
       }
     };
     // 这两个令牌的"保持不变"是**留空**（服务端不认 ****** 这个哨兵，真提交会把令牌

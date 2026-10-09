@@ -186,6 +186,33 @@ export function targetImageFor({ currentImage = '', override = '', baseline = SN
   return baseline;
 }
 
+/**
+ * 「随 Agent 版本对齐协议端」的决策（2026-10-09）。
+ *
+ * 语义：协议端基线（SNOWLUMA_BASELINE_IMAGE）是**代码常量** —— 它只随 Agent 新版本到达
+ * 用户机器。所以"更新 Agent 后主服务带新代码重启"是用户看到新基线的唯一时刻；在这一刻做
+ * 一次对齐，就实现了"我们发版动了协议端 → 用户更新 Agent 时顺带对齐；我们没动 → 用户也
+ * 什么都不动"（基线没变时 outdated 为假，天然 no-op）。
+ *
+ * 返回字符串原因（便于日志与测试）：
+ *   'align'              —— 该对齐（已安装 + 基线落后 + 无自定义镜像 + 开关未关 + 不忙）
+ *   'skip:not-installed' —— 这台机器没装协议端
+ *   'skip:override'      —— 用户指定了自定义镜像（锁版本），永不动他（既有语义）
+ *   'skip:disabled'      —— 配置里显式关闭（autoUpdate.snowluma.followBaseline = false）
+ *   'skip:busy'          —— 上一次更新还没收尾
+ *   'skip:up-to-date'    —— 当前镜像不低于基线
+ */
+export function baselineAlignDecision({
+  installed = false, outdated = false, override = '', followBaseline = true, busy = false
+} = {}) {
+  if (!installed) return 'skip:not-installed';
+  if (String(override || '').trim() !== '') return 'skip:override';
+  if (followBaseline !== true) return 'skip:disabled';
+  if (busy) return 'skip:busy';
+  if (!outdated) return 'skip:up-to-date';
+  return 'align';
+}
+
 /** 默认的命令执行器（与 ops.js 的 run() 同口径，可注入替身以便测试）。 */
 export function defaultExec(cmd, args = [], { timeout = 180000, cwd } = {}) {
   const result = spawnSync(cmd, args, {

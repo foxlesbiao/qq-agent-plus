@@ -59,7 +59,8 @@ function fakeUpdater(overrides = {}) {
         targetImage: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.22',
         targetVersion: '1.14.22',
         outdated: true, belowRecommended: true, minRecommended: '1.14.20',
-        baseline: 'motricseven7/snowluma:v1.14.22', busy: false, lastResult: null
+        baseline: 'motricseven7/snowluma:v1.14.22', busy: false, lastResult: null,
+        ...overrides.status
       };
     },
     async update(options = {}) {
@@ -78,7 +79,7 @@ async function boot(t, { updater } = {}) {
   const cfg = structuredClone(DEFAULT_CONFIG);
   cfg.server = { ...cfg.server, host: '127.0.0.1', port, token: '' };
   cfg.runtime.mode = 'active';
-  cfg.autoUpdate = { ...cfg.autoUpdate, snowluma: { enabled: false, image: '' } };
+  cfg.autoUpdate = { ...cfg.autoUpdate, snowluma: { enabled: false, image: '', followBaseline: true } };
   updateConfig(cfg);
   const app = createApp({ log: () => {} });
   if (updater) app.snowlumaUpdater = updater;
@@ -151,4 +152,36 @@ test('POST /api/snowluma/rollback：转发回滚并留审计', async (t) => {
   assert.equal(res.status, 200, res.text);
   assert.deepEqual(updater.calls[0], ['rollback']);
   assert.equal(res.body.to, 'x:v1.14.15');
+});
+
+// ── 随 Agent 版本对齐（2026-10-09）──────────────────────────────────────────
+// 语义：协议端基线是代码常量、只随 Agent 新版本到达用户机器 —— "更新 Agent 后主服务带新
+// 代码重启"是看到新基线的唯一时刻，在这一刻对齐一次（基线没变则天然 no-op）。
+
+test('随版本对齐：基线落后 + 默认开 → 自动触发一次更新（to 传空 = 由更新器取基线）', async (t) => {
+  const updater = fakeUpdater();   // status.outdated = true（1.14.15 → 1.14.22）
+  const { app } = await boot(t, { updater });
+  await app.snowlumaBaselineAlign();
+  assert.equal(updater.calls.length, 1, '基线落后时应当自动对齐一次');
+  assert.equal(updater.calls[0][0], 'update');
+  assert.equal(updater.calls[0][1].to, '', '无自定义镜像时应传空串，由更新器取基线');
+});
+
+test('随版本对齐：已是最新 / 自定义镜像 / 显式关闭 → 一次都不动', async (t) => {
+  const upToDate = fakeUpdater({ status: { outdated: false } });
+  const a = await boot(t, { updater: upToDate });
+  await a.app.snowlumaBaselineAlign();
+  assert.equal(upToDate.calls.length, 0, '已是最新不该动（发版没动基线时就是这条）');
+
+  const overridden = fakeUpdater();
+  const b = await boot(t, { updater: overridden });
+  updateConfig({ autoUpdate: { snowluma: { enabled: false, image: 'registry.local/snowluma:v9.9.9' } } });
+  await b.app.snowlumaBaselineAlign();
+  assert.equal(overridden.calls.length, 0, '设了自定义镜像就不自动动（锁版本优先）');
+
+  const disabled = fakeUpdater();
+  const c = await boot(t, { updater: disabled });
+  updateConfig({ autoUpdate: { snowluma: { enabled: false, image: '', followBaseline: false } } });
+  await c.app.snowlumaBaselineAlign();
+  assert.equal(disabled.calls.length, 0, '显式关掉 followBaseline 就不自动动');
 });

@@ -449,6 +449,22 @@ test('dockerSocketHintLocal：按本机诊断给出精确命令，且通用提�
   assert.match(DOCKER_SOCKET_HINT, /sudo systemctl start user@/);
 });
 
+test('baselineAlignDecision：唯一对齐条件与五种跳过原因（随 Agent 版本对齐，2026-10-09）', async () => {
+  const { baselineAlignDecision } = await import('../src/core/snowluma-update.js');
+  const base = { installed: true, outdated: true, override: '', followBaseline: true, busy: false };
+  assert.equal(baselineAlignDecision(base), 'align');
+  assert.equal(baselineAlignDecision({ ...base, installed: false }), 'skip:not-installed');
+  assert.equal(baselineAlignDecision({ ...base, override: 'registry.local/snowluma:v9.9.9' }), 'skip:override');
+  assert.equal(baselineAlignDecision({ ...base, followBaseline: false }), 'skip:disabled');
+  assert.equal(baselineAlignDecision({ ...base, busy: true }), 'skip:busy');
+  assert.equal(baselineAlignDecision({ ...base, outdated: false }), 'skip:up-to-date');
+  // 顺序语义：自定义镜像优先于一切配置（锁版本的机器永不被自动动到）
+  assert.equal(baselineAlignDecision({ ...base, override: 'x:v1', followBaseline: false, busy: true }),
+    'skip:override', 'override 先于 disabled/busy 判定');
+  // 默认参数：什么都不传 = 没装 + 不落后 → 跳过（绝不误触发）
+  assert.equal(baselineAlignDecision(), 'skip:not-installed');
+});
+
 test('QQ_AGENT_NO_SUDO_DOCKER=1 时不走 sudo 回退（给不想让服务提权的部署留开关）', async () => {
   const prev = process.env.QQ_AGENT_NO_SUDO_DOCKER;
   process.env.QQ_AGENT_NO_SUDO_DOCKER = '1';

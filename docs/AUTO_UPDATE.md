@@ -52,7 +52,12 @@ timer 每小时唤醒一次，应用配置中的 `intervalHours` 决定是否已
     "connectivityTimeoutSeconds": 20,
     "fetchTimeoutSeconds": 300,
     "forceHttp11": true,
-    "disableOnFailure": true
+    "disableOnFailure": true,
+    "snowluma": {
+      "enabled": false,
+      "image": "",
+      "followBaseline": true
+    }
   }
 }
 ```
@@ -66,6 +71,10 @@ timer 每小时唤醒一次，应用配置中的 `intervalHours` 决定是否已
 - `disableOnFailure=true` 保持既有行为：更新失败后暂停后续自动更新；关闭时失败仅记录并告警，后续周期继续尝试。
 - 管理员 QQ 必须位于私聊白名单；单独的“测试 GitHub 连通性”不要求配置管理员。
 - 控制台“控制 -> 更新部署”可保存网络策略、测试连通性、立即手动更新、暂停或恢复自动更新。
+- `snowluma.enabled`：协议端（SnowLuma）自身的自动更新开关（默认关，每 6 小时比一次基线）。
+- `snowluma.followBaseline`（**默认开**）：**协议端随本体版本对齐** —— 部署新版本后、主服务
+  以新代码启动时，若新版带的协议端基线比当前镜像高就自动升级一次；基线没变（发版没动协议端）
+  时不会有任何动作。设了 `snowluma.image`（自定义镜像）的机器永不被自动动到（锁版本优先）。
 
 ## 更新流程
 
@@ -82,6 +91,13 @@ timer 每小时唤醒一次，应用配置中的 `intervalHours` 决定是否已
 8. 成功后记录目标提交（`currentRevision`）与 Release tag（`targetVersion`）；失败时由 `deploy.sh` 恢复旧代码和服务。
 
 `deploy.sh` 会同时安装和校验更新 service/timer，并在部署失败时恢复旧单元及原启用状态。
+
+**协议端随版本对齐（2026-10-09）**：协议端基线（`SNOWLUMA_BASELINE_IMAGE`）是代码常量，只随
+本体的新版本到达机器 —— 所以"部署新版本后主服务带新代码重启"是看到新基线的唯一时刻。届时
+控制台会做一次对齐（仍走"改 .env → pull → up → 等就绪 → 失败自动回滚"这套，数据卷不动）；
+基线没变（发版没动协议端）或用户设了自定义镜像（`snowluma.image`）时不会有任何动作，也可以
+用 `snowluma.followBaseline=false` 显式关掉。该动作同样要求服务进程能直连 docker.sock
+（见 [LINUX.md](LINUX.md) 的「控制台里更新协议端报 docker 权限不足」）。
 
 ## 两条下载通道：git 与 API + 源码包
 
