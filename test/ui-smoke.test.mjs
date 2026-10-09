@@ -42,6 +42,9 @@ function loadPage() {
     allow: { groups: ['10001', '20002'], private: [] },
     server: {}, runtime: { mode: 'observe' },
     webSearch: { enabled: false }, asr: {}, tts: {},
+    // OneBot 分区的渲染读 c.onebot.wsUrl 等（不带可选链）——桩缺这段会让整个分区渲染抛
+    //（2026-10-09：新增的「随版本对齐」开关用例第一次渲染这个分区时暴露）
+    onebot: { wsUrl: 'ws://127.0.0.1:3391', httpUrl: 'http://127.0.0.1:3390', wsHeartbeat: 'auto', hasAccessToken: false, hasHttpAccessToken: false },
     identityPilot: {}, slangPilot: {}, incidentPilot: {}, memory: {},
     sticker: { enabled: false },
     send: { minGapMs: 1000, maxGapMs: 3000, maxPerMinute: 80, maxPerHour: 500, byLengthMs: 20, hardSplitAt: 4000 },
@@ -135,6 +138,24 @@ test('真实 DOM 冒烟：用量页「按模型」>20 行时「展开全部」�
     btn.click();
     await settle(80);
     assert.equal(countRows(), 20, '再点一次收起回 20 行');
+  } finally { window.happyDOM?.abort?.(); }
+});
+
+test('真实 DOM 冒烟：OneBot 分区的「随版本对齐」开关默认勾选（缺键即开）', { skip: SKIP }, async () => {
+  const { window } = loadPage();
+  await settle();
+  try {
+    window.switchTab('settings');
+    await settle(60);
+    const nav = window.document.querySelector('.settings-menu-item[data-section="onebot"]');
+    assert.ok(nav, '设置侧栏要有 OneBot 分区');
+    nav.click();
+    await settle(150);
+    const follow = window.document.getElementById('cfg-snowluma-follow-baseline');
+    assert.ok(follow, '要有「随版本对齐」复选框');
+    assert.equal(follow.checked, true, '配置里没有该键时默认勾选（真实用户配置的常态）');
+    const auto = window.document.getElementById('cfg-snowluma-auto');
+    assert.equal(auto.checked, false, '周期自动更新开关仍默认不勾选');
   } finally { window.happyDOM?.abort?.(); }
 });
 

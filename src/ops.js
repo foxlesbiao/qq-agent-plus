@@ -1862,10 +1862,10 @@ function makeSnowlumaUpdater(args) {
   };
 }
 
-function cmdSnowlumaVersion(args) {
+async function cmdSnowlumaVersion(args) {
   if (wantsHelp(args)) { say(HELP['snowluma-version']); return 0; }
   const { updater } = makeSnowlumaUpdater(args);
-  const st = updater.status();
+  const st = await updater.status();
   if (!st.installed) {
     badWarn(`没找到协议端 compose 项目：${st.composeDir}/.env 不存在（这台机器可能没装协议端）`);
     return 1;
@@ -1889,7 +1889,7 @@ async function cmdSnowlumaUpdate(args) {
   const { updater } = makeSnowlumaUpdater(args);
   const to = optValue(args, '--to', '');
   const dryRun = hasFlag(args, '--dry-run');
-  const st = updater.status();
+  const st = await updater.status();
   if (!st.installed) {
     badWarn(`没找到协议端 compose 项目：${st.composeDir}/.env 不存在`);
     return 1;

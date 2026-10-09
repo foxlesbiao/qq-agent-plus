@@ -45,7 +45,18 @@ async function hydrateSnowlumaPanel() {
     }
     const backBtn = document.getElementById('snowluma-rollback-btn');
     if (backBtn) backBtn.disabled = !(st.lastResult?.from) || st.busy;
-    if (note && st.auto?.enabled) note.textContent = '自动更新：已开启（每 6 小时检查一次）';
+    if (note) {
+      const bits = [];
+      if (st.auto?.enabled) bits.push('自动更新：已开启（每 6 小时检查一次）');
+      if (String(st.auto?.image || '').trim()) {
+        bits.push('随版本对齐：已停用（当前使用自定义镜像）');
+      } else if (st.auto?.followBaseline === false) {
+        bits.push('随版本对齐：已关闭');
+      } else {
+        bits.push('随版本对齐：已开启（更新到新版本时自动对齐协议端基线）');
+      }
+      note.textContent = bits.join(' · ');
+    }
   } catch (error) {
     box.textContent = `读取协议端版本失败：${error?.message ?? error}`;
   }

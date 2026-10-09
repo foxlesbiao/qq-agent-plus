@@ -163,10 +163,10 @@ test('backupComposeFiles：两份文件都进时间戳目录', () => {
 
 // ── 状态与更新 ──
 
-test('status：跑着的镜像 / 目标镜像 / 是否落后（含"低于推荐版本"）', () => {
+test('status：跑着的镜像 / 目标镜像 / 是否落后（含"低于推荐版本"）', async () => {
   const dir = makeProject({ image: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.15' });
   const docker = fakeDocker({ dir, state: { running: true, image: 'mirror.ccs.tencentyun.com/motricseven7/snowluma:v1.14.15' } });
-  const st = makeUpdater(dir, docker).status();
+  const st = await makeUpdater(dir, docker).status();
   assert.equal(st.currentVersion, '1.14.15');
   assert.equal(st.targetVersion, parseImage(SNOWLUMA_BASELINE_IMAGE).version);
   assert.equal(st.outdated, true, '1.14.15 落后于基线');
@@ -175,16 +175,16 @@ test('status：跑着的镜像 / 目标镜像 / 是否落后（含"低于推荐�
 
   // 已经是最新：不落后；推荐版本线也不再报警
   const docker2 = fakeDocker({ dir, state: { running: true, image: `mirror.ccs.tencentyun.com/motricseven7/snowluma:${parseImage(SNOWLUMA_BASELINE_IMAGE).tag}` } });
-  const st2 = makeUpdater(dir, docker2).status();
+  const st2 = await makeUpdater(dir, docker2).status();
   assert.equal(st2.outdated, false);
   assert.equal(st2.belowRecommended, false);
 });
 
-test('status：没装协议端（没有 .env）时如实说"没找到"，不抛错', () => {
+test('status：没装协议端（没有 .env）时如实说"没找到"，不抛错', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qq-snowluma-empty-'));
   tempDirs.add(dir);
   const docker = fakeDocker({ dir });
-  const st = makeUpdater(dir, docker).status();
+  const st = await makeUpdater(dir, docker).status();
   assert.equal(st.installed, false);
   assert.equal(st.currentVersion, '');
 });
@@ -461,6 +461,9 @@ test('baselineAlignDecision：唯一对齐条件与五种跳过原因（随 Agen
   // 顺序语义：自定义镜像优先于一切配置（锁版本的机器永不被自动动到）
   assert.equal(baselineAlignDecision({ ...base, override: 'x:v1', followBaseline: false, busy: true }),
     'skip:override', 'override 先于 disabled/busy 判定');
+  // 缺键即开：真实配置里没有 followBaseline 这个键，传入 undefined 必须按"开"走（2026-10-09 审查）
+  assert.equal(baselineAlignDecision({ installed: true, outdated: true }), 'align',
+    'followBaseline 缺省＝开');
   // 默认参数：什么都不传 = 没装 + 不落后 → 跳过（绝不误触发）
   assert.equal(baselineAlignDecision(), 'skip:not-installed');
 });

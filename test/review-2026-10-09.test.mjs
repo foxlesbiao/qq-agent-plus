@@ -56,9 +56,21 @@ test('随版本对齐并入更新流程：挂在启动首检、默认开、overr
   assert.ok(/export function baselineAlignDecision/.test(core), '决策函数在 core 层（可单测）');
   const uiSettings = read('ui/pages/settings.js');
   assert.ok(/id="cfg-snowluma-follow-baseline"/.test(uiSettings), '设置页要有「随版本对齐」开关');
-  assert.ok(/\? '' : 'checked'/.test(uiSettings), '开关默认勾选（followBaseline !== false）');
+  // 精确到同一行：缺键（undefined）→ 勾选（2026-10-09 审查：原来的宽正则能匹配任意一行）
+  assert.ok(/id="cfg-snowluma-follow-baseline"[^>]*\$\{c\.autoUpdate\?\.snowluma\?\.followBaseline === false \? '' : 'checked'\}/.test(uiSettings),
+    '开关默认勾选（缺键即勾选）');
   const uiSave = read('ui/pages/settings-save.js');
   assert.ok(/followBaseline: chk\('#cfg-snowluma-follow-baseline'/.test(uiSave), '开关要能被保存');
+});
+
+test('协议端基线只有一份真源：core 常量与 deploy-all.sh 的镜像串必须同步', async () => {
+  // 升级基线时要改的就是这些地方（core 常量 + 部署脚本里的镜像串）——这条条件替我们核对，
+  // 忘了同步会直接红（2026-10-09 审查建议：本仓有"第二份真源必须锚住"的惯例）。
+  const { SNOWLUMA_BASELINE_IMAGE } = await import('../src/core/snowluma-update.js');
+  const tag = String(SNOWLUMA_BASELINE_IMAGE).split(':').pop();
+  assert.ok(tag, '基线常量要带 tag');
+  const deployAll = read('deploy-all.sh');
+  assert.ok(deployAll.includes(`snowluma:${tag}`), `deploy-all.sh 里应引用当前基线 snowluma:${tag}`);
 });
 
 test('deploy-all 轮换失败不再假回滚：保持三方凭据一致，trap 尊重旗标', () => {

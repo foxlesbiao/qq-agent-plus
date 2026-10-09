@@ -915,6 +915,7 @@ export function createApp({
   }
   let timeControlTimer = null;
   let snowlumaAutoTimer = null;
+  let snowlumaAutoStopped = false;   // stop() 后不再重挂周期定时器（2026-10-09 审查）
   // 协议端自动更新：默认关（config.autoUpdate.snowluma.enabled）。打开后每 6 小时比一次镜像，
   // 落后于项目基线就自动更新 —— 更新只改 .env + compose pull/up，数据卷不动（登录态保留），
   // 失败会自动回滚到旧镜像。boot 后延迟 2 分钟再首检（别跟启动抢 IO）。
@@ -931,7 +932,7 @@ export function createApp({
     try {
       const cfgNow = getConfig();
       const override = String(cfgNow.autoUpdate?.snowluma?.image || '');
-      const st = snowlumaUpdater.status();
+      const st = await snowlumaUpdater.status();
       const decision = baselineAlignDecision({
         installed: st.installed,
         outdated: st.outdated,
@@ -962,7 +963,7 @@ export function createApp({
       if (first) await snowlumaBaselineAlign();
       const cfgNow = getConfig();
       if (cfgNow.autoUpdate?.snowluma?.enabled !== true) return;
-      const st = snowlumaUpdater.status();
+      const st = await snowlumaUpdater.status();
       if (!st.installed || !st.outdated || st.busy) return;
       log(`[snowluma] 自动更新协议端：${st.currentVersion || st.currentImage} → ${st.targetVersion || st.targetImage}`);
       const res = await snowlumaUpdater.update({ to: String(cfgNow.autoUpdate?.snowluma?.image || '') });
@@ -972,8 +973,12 @@ export function createApp({
       log(`[snowluma] 自动更新异常：${error?.message ?? error}`);
     } finally {
       clearTimeout(snowlumaAutoTimer);
-      snowlumaAutoTimer = setTimeout(() => { snowlumaAutoCheck(); },
-        first ? SNOWLUMA_AUTO_INTERVAL_MS : SNOWLUMA_AUTO_INTERVAL_MS);
+      // stop() 之后不再重挂（否则同进程重启/嵌入式用法会留下一个活定时器，6 小时后
+      // 在已停止的应用里再发起一次协议端更新）；重挂的定时器同样 unref（2026-10-09 审查）。
+      if (!snowlumaAutoStopped) {
+        snowlumaAutoTimer = setTimeout(() => { snowlumaAutoCheck(); }, SNOWLUMA_AUTO_INTERVAL_MS);
+        snowlumaAutoTimer.unref?.();
+      }
     }
   }
 
@@ -1902,9 +1907,16 @@ export function createApp({
   // 主机资源（只读）：总览页用。取不到的项返回 null，接口本身不因为某个指标失败而 500。
   router.add('GET', '/api/host', async (req, res) => json(res, 200, { ok: true, ...hostStats({ dir: DATA_DIR }) }));
   router.add('GET', '/api/snowluma/version', async (req, res) => {
-    const st = snowlumaUpdater.status();
+    const st = await snowlumaUpdater.status();
     const auto = getConfig().autoUpdate?.snowluma || {};
-    return json(res, 200, { ...st, auto: { enabled: auto.enabled === true, image: String(auto.image || '') } });
+    return json(res, 200, {
+      ...st,
+      auto: {
+        enabled: auto.enabled === true,
+        image: String(auto.image || ''),
+        followBaseline: auto.followBaseline !== false
+      }
+    });
   });
   router.add('POST', '/api/snowluma/update', async (req, res) => {
     const body = await readBody(req).catch(() => ({}));
@@ -4473,6 +4485,7 @@ export function createApp({
     log(`控制台已就绪：http://${serverCfg.host}:${port} (${getConfig().runtime.mode})`);
     // 协议端自动更新：首检延迟 2 分钟（别跟启动抢 IO），之后每 6 小时一轮；开关默认关
     clearTimeout(snowlumaAutoTimer);
+    snowlumaAutoStopped = false;
     snowlumaAutoTimer = setTimeout(() => { snowlumaAutoCheck({ first: true }); }, 120_000);
     snowlumaAutoTimer.unref?.();
     log(`OneBot: ws=${getConfig().onebot?.wsUrl} http=${getConfig().onebot?.httpUrl}`);
@@ -4493,6 +4506,7 @@ export function createApp({
     }
     clearTimeout(timeControlTimer);
     clearInterval(sseHeartbeat);
+    snowlumaAutoStopped = true;
     clearTimeout(snowlumaAutoTimer);
     releaseTimeControl();
     dailyMoments.stop();

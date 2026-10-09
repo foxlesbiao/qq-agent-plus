@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import os from 'node:os';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFile } from 'node:child_process';
 
 /** 项目测过的协议端基线：ops deploy 与"建议版本"都用它（单一真源）。 */
 export const SNOWLUMA_BASELINE_IMAGE = 'motricseven7/snowluma:v1.14.22';
@@ -207,31 +207,40 @@ export function baselineAlignDecision({
 } = {}) {
   if (!installed) return 'skip:not-installed';
   if (String(override || '').trim() !== '') return 'skip:override';
-  if (followBaseline !== true) return 'skip:disabled';
+  if (followBaseline === false) return 'skip:disabled';
   if (busy) return 'skip:busy';
   if (!outdated) return 'skip:up-to-date';
   return 'align';
 }
 
-/** 默认的命令执行器（与 ops.js 的 run() 同口径，可注入替身以便测试）。 */
+/**
+ * 默认的命令执行器（与 ops.js 的 run() 同口径，可注入替身以便测试）。
+ *
+ * ⚠️ 2026-10-09 改异步（原来是 spawnSync）：`docker compose pull` 的 timeout 是 300s，
+ * spawnSync 会把整个主进程事件循环冻住 —— 拉镜像期间消息不处理、控制台无响应、/healthz
+ * 探测失败、SIGTERM 也推进不了（systemd 的 TimeoutStopSec 到点直接 SIGKILL 整个 cgroup）。
+ * 更新协议端本来就意味着"机器人离线几十秒"（容器重建），但不该顺手把 Agent 自己冻死。
+ * 返回形状保持与旧实现逐字段一致（ok/code/stdout/stderr/missing/error）。
+ */
 export function defaultExec(cmd, args = [], { timeout = 180000, cwd } = {}) {
-  const result = spawnSync(cmd, args, {
-    encoding: 'utf8',
-    timeout: timeout > 0 ? timeout : undefined,
-    maxBuffer: 32 * 1024 * 1024,
-    cwd,
-    windowsHide: true
+  return new Promise((resolve) => {
+    execFile(cmd, args, {
+      encoding: 'utf8',
+      timeout: timeout > 0 ? timeout : undefined,
+      maxBuffer: 32 * 1024 * 1024,
+      cwd,
+      windowsHide: true
+    }, (error, stdout, stderr) => {
+      resolve({
+        ok: !error,
+        code: error ? (typeof error.code === 'number' ? error.code : -1) : 0,
+        stdout: String(stdout || ''),
+        stderr: String(stderr || ''),
+        missing: Boolean(error && error.code === 'ENOENT'),
+        error: error ? String(error.message || error) : ''
+      });
+    });
   });
-  const stdout = String(result.stdout || '');
-  const stderr = String(result.stderr || '');
-  return {
-    ok: !result.error && result.status === 0,
-    code: result.status ?? -1,
-    stdout,
-    stderr,
-    missing: Boolean(result.error && result.error.code === 'ENOENT'),
-    error: result.error ? String(result.error.message || result.error) : ''
-  };
 }
 
 /** 读 compose 项目的 .env（只取我们要用的几个键；文件不存在返回空）。 */
@@ -410,8 +419,8 @@ export function createSnowlumaUpdater(options = {}) {
    * 而 deploy-all.sh 早就在用 `sudo docker` 这条同样的路（见那儿的探测梯子）——
    * 把同一条路给运行时用上，Issue #30 那个按钮才真的能用，而不只是改一句报错。
    */
-  function runDocker(args, opts) {
-    const res = exec('docker', args, opts);
+  async function runDocker(args, opts) {
+    const res = await exec('docker', args, opts);
     if (res.ok || noSudoDocker) return res;
     if (!isDockerSocketDenied(`${res.stderr || ''}${res.stdout || ''}`)) return res;
     // ⚠️ NoNewPrivileges 加固的 unit 里 sudo 必失败（内核禁止 setuid 提权）：先判再试。
@@ -426,7 +435,7 @@ export function createSnowlumaUpdater(options = {}) {
           + '永久修法见 docs/LINUX.md「控制台里更新协议端报 docker 权限不足」）'
       };
     }
-    const viaSudo = exec('sudo', ['-n', 'docker', ...args], opts);
+    const viaSudo = await exec('sudo', ['-n', 'docker', ...args], opts);
     if (viaSudo.ok) {
       usedSudoDocker = true;
       log('[snowluma] 直接连 docker 权限不足（这个进程没有 docker 组），已回退到 sudo -n docker；'
@@ -466,16 +475,16 @@ export function createSnowlumaUpdater(options = {}) {
     return (raw || fallback).slice(0, 500);
   }
 
-  function inspect(field) {
-    const res = runDocker(['inspect', '-f', `{{${field}}}`, container], { timeout: 15000 });
+  async function inspect(field) {
+    const res = await runDocker(['inspect', '-f', `{{${field}}}`, container], { timeout: 15000 });
     return res.ok ? res.stdout.trim() : '';
   }
 
-  /** 当前状态：跑着的镜像 tag、容器状态、目标镜像、是否落后。 */
-  function status() {
+  /** 当前状态：跑着的镜像 tag、容器状态、目标镜像、是否落后（异步：内部要查 docker）。 */
+  async function status() {
     const env = readComposeEnv(dir);
-    const runningImage = inspect('.Config.Image');
-    const state = inspect('.State.Status');
+    const runningImage = await inspect('.Config.Image');
+    const state = await inspect('.State.Status');
     const currentImage = runningImage || env.image;
     const cur = parseImage(currentImage);
     const target = targetImageFor({ currentImage, override: '', baseline });
@@ -505,7 +514,7 @@ export function createSnowlumaUpdater(options = {}) {
   async function waitReady() {
     const startedAt = Date.now();
     for (;;) {
-      const state = inspect('.State.Status');
+      const state = await inspect('.State.Status');
       if (state === 'running') {
         const p = await probe(webuiPort);
         if (p.ok) return { ok: true, waitedMs: Date.now() - startedAt };
@@ -518,7 +527,7 @@ export function createSnowlumaUpdater(options = {}) {
   }
 
   async function runUpdate({ to = '', dryRun = false } = {}) {
-    const st = status();
+    const st = await status();
     if (!st.installed) return { ok: false, error: `没找到协议端的 compose 项目（${dir}/.env 不存在）` };
     const from = st.currentImage;
     const target = String(to || '').trim() || st.targetImage;
@@ -539,7 +548,7 @@ export function createSnowlumaUpdater(options = {}) {
     // 只拦“没权限”这一种 —— 守护进程挂了/镜像仓库不通交给后面真正的 pull 报，
     // 在这里提前失败只会让原因变含糊。用 docker info 而不是探 socket 文件：
     // 前者同时覆盖“socket 在但守护进程没起”与自定义 DOCKER_HOST 的情况。
-    const probeRes = runDocker(['info', '--format', '{{.ServerVersion}}'], { timeout: 15000 });
+    const probeRes = await runDocker(['info', '--format', '{{.ServerVersion}}'], { timeout: 15000 });
     if (!probeRes.ok && isDockerSocketDenied(`${probeRes.stderr || ''}${probeRes.stdout || ''}`)) {
       // 走 describeDockerFailure 而不是直接塞 HINT：它会把"是否真的试过 sudo 回退"如实带出来
       //（NNP 加固时 runDocker 直接跳过 sudo，文案不能再写"已尝试"——2026-10-09 审查）。
@@ -562,7 +571,7 @@ export function createSnowlumaUpdater(options = {}) {
       fs.writeFileSync(envFile, renderEnvWithImage(originalEnv, target), 'utf8');
       push(`镜像写入 ${IMAGE_KEY}=${target}（备份在 ${backup.dir}）`);
 
-      const pull = compose('pull');
+      const pull = await compose('pull');
       push(`pull ${pull.ok ? 'ok' : `失败(code=${pull.code})`}`);
       if (!pull.ok) {
         fs.writeFileSync(envFile, originalEnv, 'utf8');
@@ -571,7 +580,7 @@ export function createSnowlumaUpdater(options = {}) {
         return result;
       }
 
-      const up = compose('up', '-d');
+      const up = await compose('up', '-d');
       push(`up -d ${up.ok ? 'ok' : `失败(code=${up.code})`}`);
       if (!up.ok) throw new Error(describeDockerFailure(up.stderr || up.stdout, 'compose up 失败'));
 
@@ -588,7 +597,7 @@ export function createSnowlumaUpdater(options = {}) {
       let rolledBack = false;
       try {
         fs.writeFileSync(envFile, originalEnv, 'utf8');
-        const back = compose('up', '-d');
+        const back = await compose('up', '-d');
         const ready = await waitReady();
         rolledBack = back.ok && ready.ok;
         push(`回滚 ${rolledBack ? '成功' : '未确认（需要人工看一眼）'}`);

@@ -79,7 +79,9 @@ async function boot(t, { updater } = {}) {
   const cfg = structuredClone(DEFAULT_CONFIG);
   cfg.server = { ...cfg.server, host: '127.0.0.1', port, token: '' };
   cfg.runtime.mode = 'active';
-  cfg.autoUpdate = { ...cfg.autoUpdate, snowluma: { enabled: false, image: '', followBaseline: true } };
+  // 用 __replace__ 整体重置 snowluma 段：既清掉上一个用例可能设过的 followBaseline，
+  // 又刻意让它处于**缺键**状态（真实用户配置就是这样）—— 顺带验证"缺键即默认开"。
+  cfg.autoUpdate = { ...cfg.autoUpdate, snowluma: { __replace__: { enabled: false, image: '' } } };
   updateConfig(cfg);
   const app = createApp({ log: () => {} });
   if (updater) app.snowlumaUpdater = updater;
@@ -104,7 +106,8 @@ test('GET /api/snowluma/version：给出版本、目标、是否落后与自动�
   assert.equal(res.body.outdated, true);
   assert.equal(res.body.belowRecommended, true);
   assert.equal(res.body.minRecommended, '1.14.20');
-  assert.deepEqual(res.body.auto, { enabled: false, image: '' });
+  assert.deepEqual(res.body.auto, { enabled: false, image: '', followBaseline: true },
+    '缺键（真实用户配置的常态）也要下发 followBaseline: true —— 默认开在接口层可见');
 });
 
 test('POST /api/snowluma/update：转发给更新器、带目标镜像，并把结果与审计一起留下', async (t) => {
