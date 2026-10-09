@@ -25,7 +25,7 @@ function renderChannelFeeds() {
   if (!box) return;
   const feeds = state.modelPrices?.channelFeeds || [];
   if (!feeds.length) {
-    box.innerHTML = '<div class="muted" style="font-size:12px">还没有配置渠道价目表。用下面的「从渠道自动拉价」探测一次，或直接填 URL。</div>';
+    box.innerHTML = '<div class="muted" style="font-size: var(--fs-sm)">还没有配置渠道价目表。用下面的「从渠道自动拉价」探测一次，或直接填 URL。</div>';
     return;
   }
   box.innerHTML = feeds.map((f) => {
@@ -423,13 +423,13 @@ function openBatchPriceModal() {
     body: `
       <div class="ma-toolbar">
         <input type="text" id="bp-search" placeholder="搜索模型…" autocomplete="off" />
-        <span class="muted" style="font-size:12px;white-space:nowrap">留空 = 不自定义（走官方表/兜底）</span>
+        <span class="muted" style="font-size: var(--fs-sm);white-space:nowrap">留空 = 不自定义（走官方表/兜底）</span>
       </div>
       <div class="ma-body dual">
         <div class="model-modal-left" id="bp-left"></div>
         <div class="model-modal-right" id="bp-right"></div>
       </div>
-      <div id="bp-hint" class="muted" style="font-size:12px;flex-shrink:0;margin-top:8px">
+      <div id="bp-hint" class="muted" style="font-size: var(--fs-sm);flex-shrink:0;margin-top:8px">
         输入框占位符与模型名悬停提示均为官方价（元/百万 token）；修改只写入你的配置，不会改动官方价格表。
       </div>`,
     foot: `<button class="btn" id="bp-cancel">取消</button>
@@ -461,7 +461,7 @@ function openBatchPriceModal() {
       : (c.billing === 'none' ? '<span class="uc-chip" title="本地/自建模型：只统计 token，不计费">本地</span>' : '');
     return `
       <tr data-model="${esc(m)}">
-        <td title="${esc(offTitle)}">${esc(p.names[m] || m)}${billBadge}<div class="muted" style="font-size:11px">${esc(m)}</div></td>
+        <td title="${esc(offTitle)}">${esc(p.names[m] || m)}${billBadge}<div class="muted" style="font-size: var(--fs-xs)">${esc(m)}</div></td>
         <td><input type="number" step="0.01" min="0" class="bp-in" value="${esc(c.in ?? '')}" placeholder="${off ? off.in : 0}" /></td>
         <td><input type="number" step="0.01" min="0" class="bp-out" value="${esc(c.out ?? '')}" placeholder="${off ? off.out : 0}" /></td>
         <td><input type="number" step="0.01" min="0" class="bp-cached" value="${esc(c.cached ?? '')}" placeholder="${off ? (off.cached ?? 0) : 0}" /></td>
@@ -1244,7 +1244,7 @@ async function renderProbeResult(res) {
     }
     if (Array.isArray(res?.tried) && res.tried.length) {
       resultEl.classList.remove('hidden');
-      resultEl.innerHTML = `<div class="muted" style="font-size:12px">试过的地址：<br>${res.tried.map((u) => esc(u)).join('<br>')}</div>`;
+      resultEl.innerHTML = `<div class="muted" style="font-size: var(--fs-sm)">试过的地址：<br>${res.tried.map((u) => esc(u)).join('<br>')}</div>`;
     }
     return;
   }
@@ -1281,7 +1281,7 @@ async function renderProbeResult(res) {
       <thead><tr><th>模型</th><th class="r">输入</th><th class="r">输出</th><th class="r">缓存命中</th></tr></thead>
       <tbody>${preview}</tbody>
     </table>
-    ${entries.length > 12 ? `<div class="muted" style="font-size:12px;margin-top:4px">…等共 ${entries.length} 个模型</div>` : ''}
+    ${entries.length > 12 ? `<div class="muted" style="font-size: var(--fs-sm);margin-top:4px">…等共 ${entries.length} 个模型</div>` : ''}
     <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
       <button class="btn btn-primary btn-small" id="probe-apply-used"
         ${usedHits.length ? '' : 'disabled'}>写入在用的 ${usedHits.length} 个</button>
@@ -1386,7 +1386,7 @@ function openToolBreakdown() {
         <div class="tb-lead">这段时间里，机器人${say}${poke}${sticker}${searchTxt}。</div>
         ${rows}
       </div>`,
-    foot: '<div class="muted" style="font-size:11.5px">工具调用本身不额外计费，成本来自它们消耗的 token。</div>'
+    foot: '<div class="muted" style="font-size: var(--fs-xs)">工具调用本身不额外计费，成本来自它们消耗的 token。</div>'
   });
 }
 

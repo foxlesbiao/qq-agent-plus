@@ -35,21 +35,21 @@ import { saveMemberNote } from './pages/memory.js';
       .gm-person:hover, .gm-person.active { background:var(--hover-bg, rgba(127,127,127,.10)); }
       .gm-person-title { display:flex; gap:8px; align-items:center; }
       .gm-person-title strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .gm-count { margin-left:auto; font-size:12px; opacity:.7; }
-      .gm-sub { margin-top:4px; font-size:12px; opacity:.65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .gm-count { margin-left:auto; font-size: var(--fs-sm, 12px); opacity:.7; }
+      .gm-sub { margin-top:4px; font-size: var(--fs-sm, 12px); opacity:.65; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
       .gm-toolbar { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
-      .gm-chip { display:inline-block; padding:2px 7px; margin:2px 4px 2px 0; border-radius:999px; font-size:12px; background:rgba(127,127,127,.12); }
-      .gm-memory { margin:10px 0; padding:12px; border:1px solid var(--border-color, rgba(128,128,128,.2)); border-radius:10px; }
+      .gm-chip { display:inline-block; padding:2px 7px; margin:2px 4px 2px 0; border-radius:var(--r-pill, 999px); font-size: var(--fs-sm, 12px); background:rgba(127,127,127,.12); }
+      .gm-memory { margin:10px 0; padding:12px; border:1px solid var(--border-color, rgba(128,128,128,.2)); border-radius:var(--r-input, 10px); }
       .gm-memory-content { white-space:pre-wrap; line-height:1.55; }
-      .gm-memory-meta { margin-top:7px; font-size:12px; opacity:.65; }
+      .gm-memory-meta { margin-top:7px; font-size: var(--fs-sm, 12px); opacity:.65; }
       .gm-section { margin:16px 0; }
       .gm-section h3 { margin:0 0 8px; }
-      .gm-note { padding:10px 12px; margin:0 0 12px; border-radius:8px; background:rgba(127,127,127,.08); font-size:13px; line-height:1.5; }
+      .gm-note { padding:10px 12px; margin:0 0 12px; border-radius:var(--r-sm, 8px); background:rgba(127,127,127,.08); font-size: var(--fs-md, 13px); line-height:1.5; }
       .gm-empty { padding:24px 14px; opacity:.6; }
-      .gm-status { font-size:12px; opacity:.75; }
+      .gm-status { font-size: var(--fs-sm, 12px); opacity:.75; }
       .gm-note-field { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
       .gm-note-field input { flex:1 1 240px; min-width:0; }
-      .gm-anynote { padding:8px 12px; border-bottom:1px solid var(--border-color, rgba(128,128,128,.15)); font-size:13px; }
+      .gm-anynote { padding:8px 12px; border-bottom:1px solid var(--border-color, rgba(128,128,128,.15)); font-size: var(--fs-md, 13px); }
       .gm-anynote > summary { cursor:pointer; opacity:.8; }
       .gm-anynote .gm-note-field { margin-top:8px; }
       /* 列表栏很窄：这一行的两个输入框各占满一行，别挤成两三个字符宽 */

@@ -368,7 +368,7 @@ function renderControlHub(data = {}) {
         <div><span>上次检查</span><strong data-hub-deploy="lastCheck">${update.lastCheckAt ? esc(fmtTime(update.lastCheckAt)) : '-'}</strong></div>
         <div><span>下次检查</span><strong data-hub-deploy="nextCheck">${update.nextCheckAt ? esc(fmtTime(update.nextCheckAt)) : '-'}</strong></div>
       </div>
-      <div class="muted" data-hub-update-check style="margin-top:6px;font-size:12px;line-height:1.5">${renderUpdateCheckNote(update)}</div>
+      <div class="muted" data-hub-update-check style="margin-top:6px;font-size: var(--fs-sm);line-height:1.5">${renderUpdateCheckNote(update)}</div>
       <div class="update-deploy-progress${progressLine ? '' : ' hidden'}" id="hub-deploy-progress">
         <span class="loading-spinner" aria-hidden="true"></span>
         <span class="update-deploy-progress-text" id="hub-deploy-progress-text" role="status" aria-live="polite">${esc(updateProgressStage(update))}</span>

@@ -168,13 +168,18 @@ test('CSS：液态玻璃有“只在边缘生效”的折射带（苹果那套�
 
 test('CSS：玻璃表面清单只收最外层，绝不同时收父子两层', () => {
   const head = CSS.slice(CSS.indexOf('html[data-glass] #topbar'), CSS.indexOf('{', CSS.indexOf('html[data-glass] #topbar')));
-  for (const sel of ['#topbar', '#sidebar', '.panel', '.kpi', '.opt-card', '.model-modal', 'dialog', '.list-pane']) {
+  // 2026-10-09 值班台：KPI 那一行整体算一块浮起表面（.kpi-grid），格子只是它的分格 ——
+  // 玻璃要加在这**一层**上，否则每格一个 backdrop-filter，既是"玻璃卡片套件"，
+  // 又踩嵌套 backdrop-filter（子层采样到空 backdrop root → 发白）。
+  for (const sel of ['#topbar', '#sidebar', '.panel', '.kpi-grid', '.opt-card', '.model-modal', 'dialog', '.list-pane']) {
     assert.ok(head.includes(`html[data-glass] ${sel}`), `玻璃表面清单里缺 ${sel}`);
   }
   // 嵌套 backdrop-filter 会让子层采样到空的 backdrop root → 子层发白、对比度垮掉。
   // 这两条是 2026-10-09 真机实测到的元凶，不许回到清单里。
   assert.equal(head.includes('.settings-menu'), false,
     '.settings-menu 在 .settings-sidebar 里面，两层都玻璃会踩嵌套 backdrop-filter');
+  assert.equal(head.includes('.kpi {') || /html\[data-glass\] \.kpi,/.test(head), false,
+    '.kpi 现在是 .kpi-grid 里面的分格：两层都玻璃会踩嵌套 backdrop-filter');
   assert.equal(head.includes('.collapsible'), false,
     '.collapsible 常在 .panel 里面，同上');
   assert.ok(/嵌套是这里最容易踩的坑/.test(fs.readFileSync(path.join(UI, 'style.css'), 'utf8')),

@@ -695,7 +695,7 @@ function splitThinkingRowsHtml(c) {
 function splitRowsHtml(c) {
   const { rows, note } = splitThinkingRowsHtml(c);
   return {
-    inner: rows.map((r) => `<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="muted" style="font-size:12px;white-space:nowrap;min-width:64px">${esc(r.label)}</span><div style="flex:1;min-width:0" id="thinking-seg-slot-${r.key}">${r.html}</div></div>`).join(''),
+    inner: rows.map((r) => `<div style="display:flex;align-items:center;gap:8px;margin-top:4px"><span class="muted" style="font-size: var(--fs-sm);white-space:nowrap;min-width:64px">${esc(r.label)}</span><div style="flex:1;min-width:0" id="thinking-seg-slot-${r.key}">${r.html}</div></div>`).join(''),
     note
   };
 }

@@ -449,9 +449,9 @@ function renderChatList() {
     if (mode === 'threaded' && Number(c.thread?.engagedUntil) > Date.now()) {
       threadLabel = '续接中';
     } else if (mode === 'lifecycle' && c.thread?.state === 'active') {
-      threadLabel = '生命周期·活跃';
+      threadLabel = '生命周期 · 活跃';
     } else if (mode === 'lifecycle' && c.thread?.state === 'listening') {
-      threadLabel = '生命周期·监听';
+      threadLabel = '生命周期 · 监听';
     } else if (mode === 'lifecycle' && c.thread?.state === 'rollover_armed') {
       threadLabel = '等待续接';
     }

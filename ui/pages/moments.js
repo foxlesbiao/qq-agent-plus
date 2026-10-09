@@ -245,7 +245,7 @@ function renderGroupGameSection(c) {
     <h3 id="settings-groupgame">群游戏</h3>
     <div class="hint">系统负责轮次、计票与判定，模型只负责氛围与解说；卧底的词只走私聊，公开摘要里不含身份。
       默认关、白名单制、每群同时一局。</div>
-    <div class="muted" style="margin:6px 0 10px;font-size:12px">当前状态：<b>${enabled ? '已启用' : '已停用'}</b>
+    <div class="muted" style="margin:6px 0 10px;font-size: var(--fs-sm)">当前状态：<b>${enabled ? '已启用' : '已停用'}</b>
       —— 开关在「实验功能」页（生命周期），这里是详细设置与局面。</div>
     <div class="field-row">
       <div class="field"><label>允许开局的群（勾选机器人已加入的群）</label>

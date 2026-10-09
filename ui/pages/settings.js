@@ -269,7 +269,7 @@ function renderApiSection(c) {
     </div>
     <div class="checkbox-row"><input type="checkbox" id="cfg-vision" ${c.api.vision !== false ? 'checked' : ''} />
       <label for="cfg-vision">图片输入（关闭则移除看图工具，模型只会看到 [图片] 占位符）</label>
-      <span id="vision-switch-hint" class="muted" style="font-size:12px;align-self:center"></span></div>
+      <span id="vision-switch-hint" class="muted" style="font-size: var(--fs-sm);align-self:center"></span></div>
     <details class="collapsible settings-advanced" id="thinking-advanced">
       <summary>高级：思考模式${esc(thinkingAdvancedSummary(c))}</summary>
       <div style="padding-top:8px">
@@ -278,11 +278,11 @@ function renderApiSection(c) {
           <div id="thinking-seg-slot">${isSplitThinking(c) ? splitRowsHtml(c).inner : thinkingSegHtml(c)}</div>
           <div id="thinking-split-note">${isSplitThinking(c) ? splitRowsHtml(c).note : ''}</div>
           <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:6px;flex-wrap:wrap">
-            <label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:normal">
+            <label style="display:flex;align-items:center;gap:6px;font-size: var(--fs-md);font-weight:normal">
               <input class="sw" type="checkbox" id="cfg-thinking-split" ${isSplitThinking(c) ? 'checked' : ''} />
               <span>按任务分别设档（聊天 / 判断总结 / 写作 / 其他）</span>
             </label>
-            <label id="cfg-thinking-default-row" style="display:${isSplitThinking(c) ? 'none' : 'flex'};align-items:center;gap:6px;font-size:13px;font-weight:normal">
+            <label id="cfg-thinking-default-row" style="display:${isSplitThinking(c) ? 'none' : 'flex'};align-items:center;gap:6px;font-size: var(--fs-md);font-weight:normal">
               <input class="sw" type="checkbox" id="cfg-thinking-default" ${thinkingIsDefault(c) ? 'checked' : ''} />
               <span>跟随服务商默认（不干预）</span>
             </label>
@@ -409,7 +409,7 @@ function renderApiSection(c) {
     <div style="display:flex;gap:8px;margin:8px 0">
       <button class="btn btn-small" id="pc-price-btn">给这个模型定价</button>
       <button class="btn btn-small" id="batch-price-btn">批量自定义价格编辑</button>
-      <span class="muted" style="font-size:12px;align-self:center">填你的渠道实付价（覆盖官方价）；也可为多个模型分别设定</span>
+      <span class="muted" style="font-size: var(--fs-sm);align-self:center">填你的渠道实付价（覆盖官方价）；也可为多个模型分别设定</span>
     </div>
     </details>
 
@@ -442,7 +442,7 @@ function renderSearchSection(c) {
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <button class="btn btn-small" id="test-search-provider-btn">测试这个搜索服务</button>
         <button class="btn btn-small btn-danger" id="del-search-provider-btn">删除这个搜索服务</button>
-        <span id="search-provider-action-hint" class="muted" style="font-size:12px"></span>
+        <span id="search-provider-action-hint" class="muted" style="font-size: var(--fs-sm)"></span>
       </div>
     </div>
     <div class="field" id="bing-search-fields" style="${prov === 'bing' ? '' : 'display:none'}"><label>搜索地址（高级：可替换为兼容 Bing 结果格式的引擎）</label><input type="text" id="cfg-searchurl" value="${esc(c.webSearch?.searchUrl || 'https://cn.bing.com/search')}" /></div>
@@ -528,7 +528,7 @@ function renderSearchSection(c) {
     </div>
     <div style="display:flex;gap:8px;align-items:center;margin:8px 0">
       <button class="btn btn-small" id="add-search-provider-btn">＋ 添加并选中</button>
-      <span id="add-search-provider-hint" class="muted" style="font-size:12px"></span>
+      <span id="add-search-provider-hint" class="muted" style="font-size: var(--fs-sm)"></span>
     </div>
   `;
 }
@@ -777,7 +777,7 @@ function thinkingHintText(c) {
       ? `渠道未识别：档位来自你的「自定义档位映射」（${Object.keys(c.api.thinkingParams).join('/')}）。`
       : '渠道未识别：在下面「自定义档位映射」里填 {\"low\":{\"reasoning_effort\":\"low\"}, …} 就能用档位条；或用「额外请求参数」整体自定义。'));
   bits.push('每个供应商各自一条设置：这里改的只对当前这家生效。');
-  bits.push('勾「按任务分别设档」：聊天（含其中的工具调用）/ 判断·总结（记忆整理、身份与关系评估、收不收表情）/ 写作（每日动态、空间互动文案）/ 其他任务，各选各的档；每行选「默认」= 跟随服务商默认。');
+  bits.push('勾「按任务分别设档」：聊天（含其中的工具调用）/ 判断 · 总结（记忆整理、身份与关系评估、收不收表情）/ 写作（每日动态、空间互动文案）/ 其他任务，各选各的档；每行选「默认」= 跟随服务商默认。');
   if (probe) {
     const when = probe.checkedAt ? new Date(probe.checkedAt).toLocaleDateString() : '';
     bits.push(probe.canDisable === true ? `已实测（${when}）：可关闭。`
@@ -947,7 +947,7 @@ function openModelPicker() {
       <div class="mm-model" data-pid="${esc(p.id)}" data-model="${esc(m)}">
         <span class="mm-check">${m === state.config?.api?.model && p.id === current ? '✓' : ''}</span>
         <span>${esc(names[m] || m)}</span>
-        <span class="muted" style="font-size:11px">${esc(m)}</span>
+        <span class="muted" style="font-size: var(--fs-xs)">${esc(m)}</span>
       </div>`).join('') || '<div class="muted" style="padding:10px">该提供商下没有模型</div>';
     right.querySelectorAll('.mm-model').forEach((el) => {
       el.addEventListener('click', async () => {
@@ -1013,7 +1013,7 @@ function openModelAddModal(baseUrl, apiKey, remoteModels) {
     body: `
       <div class="ma-toolbar">
         <input type="text" id="ma-search" placeholder="搜索模型或厂商…" autocomplete="off" />
-        <span class="muted" id="ma-count" style="font-size:12px;white-space:nowrap">${esc(countText)}</span>
+        <span class="muted" id="ma-count" style="font-size: var(--fs-sm);white-space:nowrap">${esc(countText)}</span>
       </div>
       <div class="ma-body ${dual ? 'dual' : 'single'}">
         ${dual ? '<div class="model-modal-left" id="ma-left"></div>' : ''}
@@ -1039,7 +1039,7 @@ function openModelAddModal(baseUrl, apiKey, remoteModels) {
       <label class="mm-model">
         <input type="checkbox" class="ma-check" value="${esc(m)}" ${added ? 'checked disabled' : ''} />
         <span class="mm-model-text">${esc(modelPart)}</span>
-        ${added ? '<span class="muted" style="font-size:11px">已添加</span>' : ''}
+        ${added ? '<span class="muted" style="font-size: var(--fs-xs)">已添加</span>' : ''}
       </label>`;
   };
 
@@ -1066,7 +1066,7 @@ function openModelAddModal(baseUrl, apiKey, remoteModels) {
     left.innerHTML = vendors.length
       ? vendors.map((v) => `
           <div class="mm-prov ${v === activeVendor ? 'active' : ''}" data-vendor="${esc(v)}">
-            ${esc(v)} <span class="muted" style="font-size:11px">${(groups.get(v) || []).filter(matches).length}</span>
+            ${esc(v)} <span class="muted" style="font-size: var(--fs-xs)">${(groups.get(v) || []).filter(matches).length}</span>
           </div>`).join('')
       : '<div class="muted" style="padding:10px">没有匹配的厂商</div>';
     left.querySelectorAll('.mm-prov').forEach((el) => {
@@ -1150,7 +1150,7 @@ function openModelDeleteModal() {
     right.innerHTML = p.models.map((m) => `
       <div class="mm-model" data-model="${esc(m)}">
         <span>${esc(names[m] || m)}</span>
-        <span class="muted" style="font-size:11px">${esc(m)}</span>
+        <span class="muted" style="font-size: var(--fs-xs)">${esc(m)}</span>
         <button class="mm-del">删除</button>
       </div>`).join('') || '<div class="muted" style="padding:10px">该提供商下没有模型</div>';
     right.querySelectorAll('.mm-model').forEach((el) => {
@@ -1260,10 +1260,10 @@ function openBlocklistModal() {
         <div class="model-modal-left" id="bl-left"></div>
         <div class="model-modal-right" id="bl-right"></div>
       </div>
-      <div class="muted" style="font-size:12px;flex-shrink:0;margin-top:8px">
+      <div class="muted" style="font-size: var(--fs-sm);flex-shrink:0;margin-top:8px">
         勾选 = 屏蔽：被屏蔽群员的消息不存档、不触发回复、不进提示词背景。
       </div>`,
-    foot: `<span class="muted" id="bl-status" style="flex:1;text-align:left;font-size:12px"></span>
+    foot: `<span class="muted" id="bl-status" style="flex:1;text-align:left;font-size: var(--fs-sm)"></span>
            <button class="btn" id="bl-cancel">取消</button>
            <button class="btn btn-primary" id="bl-save">保存设置</button>`
   });
@@ -1274,7 +1274,7 @@ function openBlocklistModal() {
   const groupNames = new Map();   // 异步补群名
   function renderLeft() {
     left.innerHTML = allowIds.map((id) =>
-      `<div class="mm-prov ${id === activeGid ? 'active' : ''}" data-gid="${esc(id)}">${esc(groupNames.get(id) || id)}<div class="muted" style="font-size:11px">${esc(id)}</div></div>`).join('');
+      `<div class="mm-prov ${id === activeGid ? 'active' : ''}" data-gid="${esc(id)}">${esc(groupNames.get(id) || id)}<div class="muted" style="font-size: var(--fs-xs)">${esc(id)}</div></div>`).join('');
     left.querySelectorAll('.mm-prov').forEach((el) => {
       el.addEventListener('click', () => { activeGid = el.dataset.gid; renderLeft(); loadMembers(); });
     });
@@ -1300,7 +1300,7 @@ function openBlocklistModal() {
       return `<label class="bl-member">
         <input type="checkbox" class="bl-chk" data-uid="${esc(m.userId)}" ${isBlocked(m.userId) ? 'checked' : ''} />
         <span class="bl-name">${esc(label)}</span>
-        <span class="muted" style="font-size:11px">${esc(m.userId)}</span>
+        <span class="muted" style="font-size: var(--fs-xs)">${esc(m.userId)}</span>
       </label>`;
     }).join('');
     listEl.innerHTML = rows || '<div class="empty-hint" style="padding:18px">没有匹配的群员</div>';

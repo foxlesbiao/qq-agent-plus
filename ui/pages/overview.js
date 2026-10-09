@@ -183,7 +183,7 @@ async function loadOverview() {
 
     <div class="kpi-grid">
       ${kpi({
-        icon: 'zap', label: '机器人',
+        icon: 'zap', label: '机器人', id: 'kpi-bot',
         value: `<span class="dot ${onebot.connected ? 'dot-on' : 'dot-off'}"></span>${esc(modeText)}`,
         sub: onebot.connected
           ? `OneBot 已连接${selfName ? ` · ${esc(selfName)}` : ''}`

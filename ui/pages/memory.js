@@ -390,7 +390,7 @@ async function loadGroupMembers(chatId, chatKey) {
           return `<tr>
             <td>${esc(note || m.card || '—')}${note && (m.card || m.nickname) ? ` <span class="muted">(${esc(m.card || m.nickname)})</span>` : ''}</td>
             <td>${esc(m.nickname || '—')}</td>
-            <td class="muted" style="font-size:11px">${esc(m.userId)}</td>
+            <td class="muted" style="font-size: var(--fs-xs)">${esc(m.userId)}</td>
             <td style="text-align:right"><button class="btn btn-small member-note-edit" data-qq="${esc(m.userId)}">编辑备注</button></td>
           </tr>`;
         }).join('')}
@@ -501,7 +501,7 @@ function openMemoryModelPicker() {
       <div class="mm-model" data-pid="${esc(p.id)}" data-model="${esc(m)}">
         <span class="mm-check">${m === currentModel && p.id === currentProvider ? '✓' : ''}</span>
         <span>${esc(names[m] || m)}</span>
-        <span class="muted" style="font-size:11px">${esc(m)}</span>
+        <span class="muted" style="font-size: var(--fs-xs)">${esc(m)}</span>
       </div>`).join('') || '<div class="muted" style="padding:10px">该提供商下没有模型</div>';
     right.querySelectorAll('.mm-model').forEach((el) => {
       el.addEventListener('click', async () => {

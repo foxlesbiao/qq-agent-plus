@@ -412,7 +412,7 @@ function renderPersonaLibrary(c) {
       </div>
       <div class="persona-grid" id="persona-grid">${renderPersonaGrid(c)}</div>
     </div>
-    <span id="persona-pick-hint" class="muted" style="font-size:12px"></span>`;
+    <span id="persona-pick-hint" class="muted" style="font-size: var(--fs-sm)"></span>`;
 }
 
 function renderPersonaSection(c) {

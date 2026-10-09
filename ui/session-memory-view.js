@@ -17,9 +17,9 @@
       #view-memory .session-memory-note {
         padding:10px 12px;
         margin:0 0 12px;
-        border-radius:8px;
+        border-radius:var(--r-sm);
         background:rgba(127,127,127,.08);
-        font-size:13px;
+        font-size: var(--fs-md);
         line-height:1.5;
       }
     `;
